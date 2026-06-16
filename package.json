@@ -14,9 +14,10 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "test:unit": "npm run compile && node test/run.js",
-    "test:e2e": "npm run compile && node test/e2e/run.js",
-    "test": "npm run compile && node test/run.js && node test/e2e/run.js",
-    "watch": "tsc -watch -p ./"
+    "test:e2e": "npm run compile && npm run prepare:e2e-linux-libs && node test/e2e/run.js",
+    "test": "npm run compile && node test/run.js && npm run prepare:e2e-linux-libs && node test/e2e/run.js",
+    "watch": "tsc -watch -p ./",
+    "prepare:e2e-linux-libs": "node test/e2e/install-linux-libs.js"
   },
   "keywords": [
     "kdb",
