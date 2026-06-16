@@ -23,43 +23,53 @@ export default class KdbDriver extends AbstractDriver<DriverLib, DriverOptions> 
     let host = this.credentials.server || 'localhost';
     let port = Number(this.credentials.port || 5000);
 
-    if (this.credentials.ssh === 'Enabled' && this.credentials.sshOptions) {
-      this.sshTunnel = await this.createSshTunnel(
-        {
-          host: this.credentials.sshOptions.host,
-          port: this.credentials.sshOptions.port,
-          username: this.credentials.sshOptions.username,
-          password: this.credentials.sshOptions.password,
-          privateKeyPath: this.credentials.sshOptions.privateKeyPath,
-          passphrase: this.credentials.sshOptions.passphrase,
-        },
-        { host, port }
-      );
-      host = 'localhost';
-      port = this.sshTunnel.port;
+    let tunnel: { port: number; close(): void } | null = null;
+
+    try {
+      if (this.credentials.ssh === 'Enabled' && this.credentials.sshOptions) {
+        tunnel = await this.createSshTunnel(
+          {
+            host: this.credentials.sshOptions.host,
+            port: this.credentials.sshOptions.port,
+            username: this.credentials.sshOptions.username,
+            password: this.credentials.sshOptions.password,
+            privateKeyPath: this.credentials.sshOptions.privateKeyPath,
+            passphrase: this.credentials.sshOptions.passphrase,
+          },
+          { host, port }
+        );
+        this.sshTunnel = tunnel;
+        host = 'localhost';
+        port = tunnel.port;
+      }
+
+      const client = new KdbIpcClient({
+        host,
+        port,
+        username: this.credentials.username,
+        password: this.credentials.password,
+        timeoutMs: this.connectionTimeoutMs(),
+      });
+
+      await client.connect();
+      this.connection = Promise.resolve(client);
+      return this.connection;
+    } catch (error) {
+      if (tunnel) {
+        tunnel.close();
+      }
+      this.sshTunnel = null;
+      throw error;
     }
-
-    const client = new KdbIpcClient({
-      host,
-      port,
-      username: this.credentials.username,
-      password: this.credentials.password,
-      timeoutMs: this.connectionTimeoutMs(),
-    });
-
-    await client.connect();
-    this.connection = Promise.resolve(client);
-    return this.connection;
   }
 
   public async close(): Promise<void> {
-    if (!this.connection) {
-      return;
+    if (this.connection) {
+      const client = await this.connection;
+      this.connection = null;
+      await client.close();
     }
 
-    const client = await this.connection;
-    this.connection = null;
-    await client.close();
     if (this.sshTunnel) {
       this.sshTunnel.close();
       this.sshTunnel = null;
@@ -177,7 +187,8 @@ export default class KdbDriver extends AbstractDriver<DriverLib, DriverOptions> 
   };
 
   private connectionTimeoutMs(): number {
-    const seconds = Number(this.credentials.connectionTimeout || this.credentials.timeout || 30);
+    const rawSeconds = this.credentials.connectionTimeout ?? this.credentials.timeout ?? 30;
+    const seconds = Number(rawSeconds);
     return Math.max(0, seconds * 1000);
   }
 
