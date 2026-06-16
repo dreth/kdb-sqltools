@@ -1,0 +1,16 @@
+{
+  "ui:order": [
+    "server",
+    "port",
+    "username",
+    "password",
+    "database",
+    "connectionTimeout"
+  ],
+  "password": {
+    "ui:widget": "password"
+  },
+  "database": {
+    "ui:placeholder": "."
+  }
+}
