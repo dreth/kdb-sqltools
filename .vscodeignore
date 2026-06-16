@@ -7,3 +7,8 @@ src/**
 **/.eslintrc.json
 **/*.map
 **/*.ts
+test/**
+CODEX*.md
+GETTING_STARTED.md
+package-lock.json
+.github/**
