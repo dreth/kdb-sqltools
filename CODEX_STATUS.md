@@ -11,7 +11,7 @@
 - Replaced the template README with install, development, connection, feature, and limitation notes.
 - Added a VS Code E2E test pipeline using `@vscode/test-electron`. It downloads a local VS Code build, installs the real `mtxr.sqltools` Marketplace extension into an isolated extensions directory, launches the extension host headlessly, and exercises this extension plus the compiled driver.
 - Added a mock q IPC TCP server for E2E tests. It authenticates the q IPC handshake, receives sync text queries, and returns valid q IPC responses for `1+1`, table metadata, column metadata, counts, functions, views, and a small table result.
-- Added Linux headless handling for E2E runs: `xvfb-run` when usable, direct `Xvfb` fallback when `xauth` is missing, and an optional runtime library path hook for minimal containers.
+- Added Linux headless handling for E2E runs: `xvfb-run` when usable, direct `Xvfb` fallback when `xauth` is missing, an optional runtime library path hook, and a no-root `apt-get download`/`dpkg-deb` bootstrap for missing VS Code GTK runtime libraries in minimal containers.
 
 ## Checks
 
@@ -27,7 +27,7 @@
 - TLS is not implemented or exposed.
 - q IPC support is pragmatic rather than exhaustive. It covers common query and metadata results, including compressed responses, but exotic q runtime objects may be displayed as placeholders.
 - SQLTools database/schema concepts are mapped to a q namespace such as `.` or `.analytics`.
-- Linux E2E runs require VS Code desktop runtime libraries. The runner handles the display server, but CI images still need GTK/Electron shared libraries installed or supplied through `KDB_SQLTOOLS_E2E_RUNTIME_LIB_DIR`.
+- Linux E2E runs require VS Code desktop runtime libraries. The runner handles the display server and can bootstrap the missing GTK-related libraries in this no-root container, but normal CI images should still install Electron/GTK runtime packages directly when possible.
 
 ## Remaining Risks
 

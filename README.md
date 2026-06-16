@@ -109,7 +109,7 @@ Inside that extension host the test suite:
 - verifies query result conversion for a small table;
 - verifies table listing and column metadata through the driver's object explorer methods.
 
-On Linux without a display, the runner uses `xvfb-run` when available with `xauth`; otherwise it starts `Xvfb` directly. The downloaded VS Code desktop binary still needs normal GUI runtime libraries. Debian/Ubuntu CI images typically need packages such as `xvfb`, `libgtk-3-0` or `libgtk-3-0t64`, `libnss3`, `libxss1`, `libasound2`, `libgbm1`, `libxkbcommon0`, `libepoxy0`, `libxinerama1`, and `libcloudproviders0`.
+On Linux without a display, the runner uses `xvfb-run` when available with `xauth`; otherwise it starts `Xvfb` directly. `npm run test:e2e` also runs `npm run prepare:e2e-linux-libs`, which uses `apt-get download` plus `dpkg-deb -x` without sudo to unpack the small set of VS Code desktop libraries this container is missing into `.vscode-test/apt-libs/root`. CI images should still install normal Electron/GTK runtime packages when possible; the bootstrap is a no-root fallback for minimal containers.
 
 Useful E2E environment variables:
 
@@ -118,3 +118,4 @@ Useful E2E environment variables:
 - `KDB_SQLTOOLS_E2E_SKIP_SQLTOOLS_INSTALL=1` skips the install step and uses whatever is already in `.vscode-test/e2e/extensions`.
 - `KDB_SQLTOOLS_E2E_ALLOW_SQLTOOLS_INSTALL_FAILURE=1` allows a driver-only VS Code host fallback when Marketplace access is blocked; the SQLTools activation test is skipped in that mode.
 - `KDB_SQLTOOLS_E2E_RUNTIME_LIB_DIR=/path/to/libs` prepends a custom Linux runtime library directory for minimal containers.
+- `KDB_SQLTOOLS_E2E_SKIP_LINUX_LIBS=1` skips the no-root `apt-get download`/`dpkg-deb` runtime-library bootstrap.
