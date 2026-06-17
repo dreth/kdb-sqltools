@@ -397,7 +397,12 @@ function createHandshake(options: KdbConnectionOptions): Buffer {
   const username = options.username || '';
   const password = options.password || '';
   const auth = username || password ? `${username}:${password}` : '';
-  return Buffer.from(`${auth}\0`, 'utf8');
+
+  // Modern q clients advertise the highest IPC protocol they support by
+  // appending the version byte before the NUL terminator. Older mock servers
+  // also accept this because they only parse up to the NUL. Without this byte,
+  // current kdb+/q 5.x responds with version 0 and rejects the handshake.
+  return Buffer.concat([Buffer.from(auth, 'utf8'), Buffer.from([3, 0])]);
 }
 
 function readMessageLength(buffer: Buffer): number {

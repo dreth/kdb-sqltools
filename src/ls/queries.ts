@@ -55,46 +55,46 @@ const tablePathExpression = '$[ns~".";table;ns,".",table]';
 const fetchTables: IBaseQueries['fetchTables'] = query<NamespaceParams, NSDatabase.ITable>((params) => {
   const namespace = namespaceFromParams(params);
   return `{[ns]
-  ts:tables \`$ns;
-  n:count ts;
-  ([] label:ts;
-      type:n#enlist ${qString(ContextValue.TABLE)};
-      schema:n#enlist ns;
-      database:n#enlist ns;
-      isView:n#0b;
-      childType:n#enlist ${qString(ContextValue.COLUMN)})
+  tbls:tables \`$ns;
+  rowCount:count tbls;
+  \`label\`type\`schema\`database\`isView\`childType xcol ([] label:tbls;
+      typ:rowCount#enlist ${qString(ContextValue.TABLE)};
+      schema:rowCount#enlist ns;
+      database:rowCount#enlist ns;
+      isView:rowCount#0b;
+      childType:rowCount#enlist ${qString(ContextValue.COLUMN)})
 }[${qString(namespace)}]`;
 });
 
 const fetchViews: IBaseQueries['fetchTables'] = query<NamespaceParams, NSDatabase.ITable>((params) => {
   const namespace = namespaceFromParams(params);
   return `{[ns]
-  vs:$[ns~".";views[];system "b ",ns];
-  n:count vs;
-  ([] label:vs;
-      type:n#enlist ${qString(ContextValue.VIEW)};
-      schema:n#enlist ns;
-      database:n#enlist ns;
-      isView:n#1b;
-      childType:n#enlist ${qString(ContextValue.COLUMN)})
+  viewNames:$[ns~".";views[];system "b ",ns];
+  rowCount:count viewNames;
+  \`label\`type\`schema\`database\`isView\`childType xcol ([] label:viewNames;
+      typ:rowCount#enlist ${qString(ContextValue.VIEW)};
+      schema:rowCount#enlist ns;
+      database:rowCount#enlist ns;
+      isView:rowCount#1b;
+      childType:rowCount#enlist ${qString(ContextValue.COLUMN)})
 }[${qString(namespace)}]`;
 });
 
 const fetchFunctions: IBaseQueries['fetchFunctions'] = query<NamespaceParams, NSDatabase.IFunction>((params) => {
   const namespace = namespaceFromParams(params);
   return `{[ns]
-  fs:system "f ",ns;
-  n:count fs;
-  ([] label:fs;
-      name:fs;
-      type:n#enlist ${qString(ContextValue.FUNCTION)};
-      schema:n#enlist ns;
-      database:n#enlist ns;
-      signature:string fs;
-      args:n#enlist "";
-      resultType:n#enlist "function";
-      childType:n#enlist ${qString(ContextValue.NO_CHILD)};
-      iconName:n#enlist "function")
+  fnNames:system "f ",ns;
+  rowCount:count fnNames;
+  \`label\`name\`type\`schema\`database\`signature\`args\`resultType\`childType\`iconName xcol ([] label:fnNames;
+      name:fnNames;
+      typ:rowCount#enlist ${qString(ContextValue.FUNCTION)};
+      schema:rowCount#enlist ns;
+      database:rowCount#enlist ns;
+      signature:string fnNames;
+      args:rowCount#enlist "";
+      resultType:rowCount#enlist "function";
+      childType:rowCount#enlist ${qString(ContextValue.NO_CHILD)};
+      iconName:rowCount#enlist "function")
 }[${qString(namespace)}]`;
 });
 
@@ -102,18 +102,18 @@ const fetchColumns: IBaseQueries['fetchColumns'] = query<TableParams, NSDatabase
   const namespace = namespaceFromParams(params);
   const table = tableNameFromParams(params);
   return `{[ns;table]
-  p:\`$ ${tablePathExpression};
-  m:0!meta p;
-  n:count m;
-  update label:c,
-    type:n#enlist ${qString(ContextValue.COLUMN)},
+  tbl:\`$ ${tablePathExpression};
+  metaRows:0!meta tbl;
+  rowCount:count metaRows;
+  \`label\`dataType\`type\`table\`schema\`database\`isNullable\`childType\`c\`t\`f\`a xcol update label:c,
+    typ:rowCount#enlist ${qString(ContextValue.COLUMN)},
     dataType:t,
-    table:n#enlist table,
-    schema:n#enlist ns,
-    database:n#enlist ns,
-    isNullable:n#1b,
-    childType:n#enlist ${qString(ContextValue.NO_CHILD)}
-    from m
+    table:rowCount#enlist table,
+    schema:rowCount#enlist ns,
+    database:rowCount#enlist ns,
+    isNullable:rowCount#1b,
+    childType:rowCount#enlist ${qString(ContextValue.NO_CHILD)}
+    from metaRows
 }[${qString(namespace)};${qString(table)}]`;
 });
 
@@ -125,8 +125,8 @@ const fetchRecords: IBaseQueries['fetchRecords'] = query<TableParams & { limit: 
   const limit = Number(params.limit || 50);
   const offset = Number(params.offset || 0);
   return `{[ns;table;limit;offset]
-  p:\`$ ${tablePathExpression};
-  limit#offset _ value p
+  tbl:\`$ ${tablePathExpression};
+  limit#offset _ value tbl
 }[${qString(namespace)};${qString(table)};${limit};${offset}]`;
 });
 
@@ -134,8 +134,8 @@ const countRecords: IBaseQueries['countRecords'] = query<TableParams, { total: n
   const namespace = namespaceFromParams(params);
   const table = tableNameFromParams(params);
   return `{[ns;table]
-  p:\`$ ${tablePathExpression};
-  ([] total:enlist count value p)
+  tbl:\`$ ${tablePathExpression};
+  ([] total:enlist count value tbl)
 }[${qString(namespace)};${qString(table)}]`;
 });
 

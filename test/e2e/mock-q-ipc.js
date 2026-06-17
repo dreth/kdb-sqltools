@@ -130,7 +130,7 @@ function responsePayload(query) {
     return longAtom(2);
   }
 
-  if (compact.includes('ts:tables')) {
+  if (compact.includes('ts:tables') || compact.includes('tbls:tables')) {
     return tablesTable();
   }
 
@@ -142,15 +142,15 @@ function responsePayload(query) {
     return functionsTable();
   }
 
-  if (compact.includes('0!meta') || compact.includes('meta p')) {
+  if (compact.includes('0!meta') || compact.includes('meta p') || compact.includes('meta tbl')) {
     return columnsTable();
   }
 
-  if (compact.includes('count value p')) {
+  if (compact.includes('count value p') || compact.includes('count value tbl')) {
     return countTable();
   }
 
-  if (compact.includes('limit#offset _ value p') || compact.includes('select') || compact.includes('trade')) {
+  if (compact.includes('limit#offset _ value p') || compact.includes('limit#offset _ value tbl') || compact.includes('select') || compact.includes('trade')) {
     return sampleTradeTable();
   }
 
