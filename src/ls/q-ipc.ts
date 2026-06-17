@@ -12,10 +12,12 @@ const INT_NULL = -2147483648;
 const INT_INFINITY = 2147483647;
 const SHORT_NULL = -32768;
 const SHORT_INFINITY = 32767;
-const J2P32 = Math.pow(2, 32);
 const Q_EPOCH_DAYS = 10957;
 const MS_PER_DAY = 86400000;
 const NS_PER_DAY = 86400000000000;
+const BIGINT_SHIFT_32 = BigInt(32);
+const MIN_SAFE_BIGINT = BigInt(Number.MIN_SAFE_INTEGER);
+const MAX_SAFE_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
 
 export type QCellValue = string | number | boolean | null;
 
@@ -41,8 +43,10 @@ export interface QDict {
   entries: Array<{ key: QValue; value: QValue }>;
 }
 
-export type QDisplayValue = QCellValue | QDisplayValue[] | { [key: string]: QDisplayValue };
+export type QDisplayValue = QCellValue;
 export type QValue = QCellValue | QValue[] | QTable | QKeyedTable | QDict;
+
+type QNestedDisplayValue = QCellValue | QNestedDisplayValue[] | { [key: string]: QNestedDisplayValue };
 
 export interface QTabularResult {
   cols: string[];
@@ -673,28 +677,42 @@ class QReader {
   }
 
   private readLongAtom(): QValue {
-    const value = this.readLongNumber();
-    if (value === null || !Number.isFinite(value)) {
-      return value;
-    }
-    return Number.isSafeInteger(value) ? value : value.toFixed(0);
-  }
-
-  private readLongNumber(): number | null {
-    const low = this.readInt32Raw();
-    const high = this.readInt32Raw();
-
-    if (low === 0 && high === INT_NULL) {
+    const parts = this.readLongParts();
+    if (parts.low === 0 && parts.high === INT_NULL) {
       return null;
     }
-    if (low === -1 && high === INT_INFINITY) {
+    if (parts.low === -1 && parts.high === INT_INFINITY) {
       return Infinity;
     }
-    if (low === 1 && high === INT_NULL) {
+    if (parts.low === 1 && parts.high === INT_NULL) {
       return -Infinity;
     }
 
-    return high * J2P32 + (low >= 0 ? low : J2P32 + low);
+    const value = longPartsToBigInt(parts.low, parts.high);
+    return value >= MIN_SAFE_BIGINT && value <= MAX_SAFE_BIGINT ? Number(value) : value.toString();
+  }
+
+  private readLongNumber(): number | null {
+    const parts = this.readLongParts();
+
+    if (parts.low === 0 && parts.high === INT_NULL) {
+      return null;
+    }
+    if (parts.low === -1 && parts.high === INT_INFINITY) {
+      return Infinity;
+    }
+    if (parts.low === 1 && parts.high === INT_NULL) {
+      return -Infinity;
+    }
+
+    return Number(longPartsToBigInt(parts.low, parts.high));
+  }
+
+  private readLongParts(): { low: number; high: number } {
+    return {
+      low: this.readInt32Raw(),
+      high: this.readInt32Raw(),
+    };
   }
 
   private nullableInt(value: number, nullValue: number, infinityValue: number): QValue {
@@ -879,6 +897,13 @@ function normalizePlainObject(value: { [key: string]: QValue }): { [key: string]
 }
 
 function normalizeCell(value: QValue): QDisplayValue {
+  if (isPrimitiveCell(value)) {
+    return value;
+  }
+  return stringifyNestedValue(normalizeNestedValue(value));
+}
+
+function normalizeNestedValue(value: QValue): QNestedDisplayValue {
   if (isQTable(value)) {
     return `[table ${value.rows.length} rows]`;
   }
@@ -887,17 +912,34 @@ function normalizeCell(value: QValue): QDisplayValue {
   }
   if (isQDict(value)) {
     return value.entries.reduce((dict, entry) => {
-      dict[valueToColumnName(entry.key)] = normalizeCell(entry.value);
+      dict[valueToColumnName(entry.key)] = normalizeNestedValue(entry.value);
       return dict;
-    }, {} as { [key: string]: QDisplayValue });
+    }, {} as { [key: string]: QNestedDisplayValue });
   }
   if (Array.isArray(value)) {
-    return value.map(normalizeCell);
+    return value.map(normalizeNestedValue);
   }
   if (isPlainObject(value)) {
-    return normalizePlainObject(value as unknown as { [key: string]: QValue });
+    return Object.keys(value).reduce((row, key) => {
+      row[key] = normalizeNestedValue((value as unknown as { [key: string]: QValue })[key]);
+      return row;
+    }, {} as { [key: string]: QNestedDisplayValue });
   }
   return value;
+}
+
+function stringifyNestedValue(value: QNestedDisplayValue): string {
+  const result = JSON.stringify(value, (_key, item) => {
+    if (typeof item === 'number' && !Number.isFinite(item)) {
+      return String(item);
+    }
+    return item;
+  });
+  return result === undefined ? String(value) : result;
+}
+
+function isPrimitiveCell(value: QValue): value is QCellValue {
+  return value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean';
 }
 
 function collectColumns(rows: Array<{ [key: string]: QDisplayValue }>): string[] {
@@ -943,6 +985,10 @@ function isQTyped(value: QValue, qtype: string): boolean {
 
 function isPlainObject(value: QValue): boolean {
   return !!value && typeof value === 'object' && !Array.isArray(value) && !(value as { qtype?: string }).qtype;
+}
+
+function longPartsToBigInt(low: number, high: number): bigint {
+  return (BigInt(high) << BIGINT_SHIFT_32) + BigInt(low >>> 0);
 }
 
 function formatTimestamp(nanoseconds: number): string {

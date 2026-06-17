@@ -1,5 +1,28 @@
 # CODEX Status
 
+## 2026-06-17 Result Conversion Safety Pass
+
+Changed:
+
+- Normalized nested q values inside SQLTools grid cells to primitive display strings so list, dictionary, nested table, and object cells do not reach SQLTools as arrays or objects.
+- Preserved exact display for q long atoms and vectors outside JavaScript's safe integer range by returning decimal strings instead of imprecise rounded numbers.
+- Added unit coverage for keyed tables, empty tables, nested/list columns, char vectors, null symbols, and unsafe long display using q IPC payload fixtures.
+- Expanded the live q fixture and assertions for keyed tables, empty tables, nested/list cells, chars/strings, symbol nulls, temporal values, and large long display.
+- Documented the grid display behavior for nested q cells and unsafe-width longs.
+
+Intentionally out of scope:
+
+- No arbitrary user query limiting or rewriting was added.
+- No q autocomplete/snippet expansion was added.
+
+Verification:
+
+- `npm run test:unit` passed.
+- `npm test` passed.
+- `KDB_SQLTOOLS_LIVE_REQUIRED=1 npm run test:live-kdb` passed using `/opt/data/home/.kx/bin/q`.
+- `npm pack --dry-run --ignore-scripts` passed.
+- `git diff --check` passed.
+
 ## 2026-06-17 Metadata Robustness Pass
 
 Changed:
@@ -81,6 +104,6 @@ Verification:
 ## Remaining Risks
 
 - Metadata expressions using `system "b "` and `system "f "` depend on standard q system commands being enabled on the target process.
-- Very large 64-bit integers and nanosecond temporal values are converted for display and may lose precision beyond JavaScript number limits.
+- Very large 64-bit integers are displayed as exact decimal strings when needed; nanosecond temporal values are converted for display and may lose sub-millisecond precision.
 - npm audit reports inherited dependency vulnerabilities from the SQLTools/template dependency tree; broad audit fixes were not applied to avoid unrelated dependency churn.
 - The SQLTools Marketplace install is network-dependent. By default E2E fails if `mtxr.sqltools` cannot be installed; `KDB_SQLTOOLS_E2E_ALLOW_SQLTOOLS_INSTALL_FAILURE=1` runs the driver-only host fallback and skips the SQLTools activation assertion.
