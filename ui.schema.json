@@ -5,10 +5,20 @@
     "username",
     "password",
     "database",
-    "connectionTimeout"
+    "connectionTimeout",
+    "ssh",
+    "sshOptions"
   ],
   "password": {
     "ui:widget": "password"
+  },
+  "sshOptions": {
+    "password": {
+      "ui:widget": "password"
+    },
+    "passphrase": {
+      "ui:widget": "password"
+    }
   },
   "database": {
     "ui:placeholder": "."
