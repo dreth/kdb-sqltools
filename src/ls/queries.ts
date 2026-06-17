@@ -38,8 +38,18 @@ export function tableNameFromParams(params: TableParams): string {
   return table && table.label ? table.label : (params.label || '');
 }
 
-export function namespaceFromParams(params?: NamespaceParams): string {
-  return normalizeNamespace(params && (params.namespace || params.database || params.schema));
+export function namespaceFromParams(params?: NamespaceParams & { table?: NSDatabase.ITable | string }): string {
+  const directNamespace = params && (params.namespace || params.database || params.schema);
+  if (directNamespace) {
+    return normalizeNamespace(directNamespace);
+  }
+
+  const table = params && params.table;
+  if (table && typeof table !== 'string') {
+    return normalizeNamespace(table.database || table.schema);
+  }
+
+  return normalizeNamespace();
 }
 
 function expected<T>(query: string): IExpectedResult<T> {

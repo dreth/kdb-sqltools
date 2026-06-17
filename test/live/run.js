@@ -159,6 +159,20 @@ async function runLiveAssertions(port) {
     assert.deepStrictEqual(keyedPreview[0].cols, ['sym', 'bid', 'ask']);
     assert.deepStrictEqual(keyedPreview[0].results.map(row => row.sym), ['AAPL', 'MSFT']);
 
+    const nonRootPreview = await driver.showRecords(
+      {
+        label: 'nsTrade',
+        type: ContextValue.TABLE,
+        schema: '.analytics',
+        database: '.analytics',
+        isView: false,
+      },
+      { limit: 1, page: 1 }
+    );
+    assert.strictEqual(nonRootPreview[0].error, undefined);
+    assert.strictEqual(nonRootPreview[0].total, 2);
+    assert.deepStrictEqual(nonRootPreview[0].results, [{ sym: 'ORCL', size: 20 }]);
+
     const views = await driver.getChildrenForItem({ item: viewsGroup, parent: connectionItem });
     const viewLabels = views.map(item => item.label).sort();
     assert.ok(viewLabels.includes('tradeView'), `expected tradeView view in ${viewLabels.join(', ')}`);
