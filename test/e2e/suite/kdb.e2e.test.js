@@ -3,6 +3,7 @@ const vscode = require('vscode');
 const { ContextValue } = require('@sqltools/types');
 const { MockQServer } = require('../mock-q-ipc');
 const KdbDriver = require('../../../out/ls/driver').default;
+const { publisher, name } = require('../../../package.json');
 
 suite('kdb-sqltools VS Code E2E', function () {
   this.timeout(60000);
@@ -29,7 +30,7 @@ suite('kdb-sqltools VS Code E2E', function () {
     const sqltools = vscode.extensions.getExtension('mtxr.sqltools');
     assert.ok(sqltools, 'expected mtxr.sqltools to be installed in the VS Code test host');
 
-    const extension = vscode.extensions.getExtension('kdb-sqltools.kdb-sqltools');
+    const extension = vscode.extensions.getExtension(`${publisher}.${name}`);
     assert.ok(extension, 'expected this extension to be available in the VS Code test host');
 
     const api = await extension.activate();

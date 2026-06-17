@@ -6,7 +6,8 @@
   "engines": {
     "vscode": "^1.42.0"
   },
-  "publisher": "kdb-sqltools",
+  "publisher": "DanielAlonso",
+  "icon": "icons/marketplace.png",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -56,16 +57,5 @@
     "@vscode/test-electron": "^3.0.0",
     "mocha": "^11.7.6",
     "typescript": "^3.7.3"
-  },
-  "files": [
-    "out",
-    "icons",
-    "connection.schema.json",
-    "ui.schema.json",
-    "README.md",
-    "LICENSE",
-    "LICENSE.md",
-    "CHANGELOG.md",
-    "package.json"
-  ]
+  }
 }
