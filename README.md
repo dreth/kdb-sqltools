@@ -42,7 +42,7 @@ The `database` field is used as a q namespace for the object explorer. Use `.` f
 
 - TCP q IPC authentication handshake with optional username/password.
 - Synchronous text query execution.
-- Result grids for q tables, keyed tables, dictionaries, vectors, lists, and scalars.
+- Result grids for q tables, keyed tables, dictionaries, vectors, lists, and scalars. Nested q values inside cells are displayed as compact strings, and unsafe-width q longs are displayed as exact decimal strings.
 - Object explorer groups for tables, views, functions, and table columns.
 - Table preview and count support through SQLTools, using q `sublist` for limit/offset previews.
 - Definition query generation for tables, views, and functions.

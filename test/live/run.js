@@ -56,6 +56,35 @@ async function runLiveAssertions(port) {
     assert.deepStrictEqual(scalar[0].cols, ['value']);
     assert.strictEqual(Number(scalar[0].results[0].value.toFixed(2)), 0.10);
 
+    const keyed = await driver.query('quote');
+    assert.strictEqual(keyed[0].error, undefined);
+    assert.deepStrictEqual(keyed[0].cols, ['sym', 'bid', 'ask']);
+    assert.deepStrictEqual(keyed[0].results, [
+      { sym: 'AAPL', bid: 123.40, ask: 123.50 },
+      { sym: 'MSFT', bid: 234.50, ask: 234.60 },
+    ]);
+
+    const empty = await driver.query('empty');
+    assert.strictEqual(empty[0].error, undefined);
+    assert.deepStrictEqual(empty[0].cols, ['sym', 'size']);
+    assert.deepStrictEqual(empty[0].results, []);
+
+    const edge = await driver.query('select sym,chars,nums,nested,dict,nullSym,longid,day,ts,span from edge');
+    assert.strictEqual(edge[0].error, undefined);
+    assert.deepStrictEqual(edge[0].cols, ['sym', 'chars', 'nums', 'nested', 'dict', 'nullSym', 'longid', 'day', 'ts', 'span']);
+    assert.deepStrictEqual(edge[0].results, [{
+      sym: 'AAPL',
+      chars: 'alpha',
+      nums: '[1,2,3]',
+      nested: '["left","right"]',
+      dict: '{"a":10,"b":20}',
+      nullSym: null,
+      longid: '9007199254740993',
+      day: '2024-01-02',
+      ts: '2024-01-02T09:30:00.123Z',
+      span: '00:00:00.123456789',
+    }]);
+
     const connectionItem = {
       label: 'live q',
       type: ContextValue.CONNECTION,

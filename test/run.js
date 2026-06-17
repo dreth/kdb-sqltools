@@ -1,6 +1,6 @@
 const assert = require('assert');
 
-const { deserializeQMessage, qValueToTabular, serializeTextQuery } = require('../out/ls/q-ipc');
+const { deserializeQMessage, deserializeQPayload, qValueToTabular, serializeTextQuery } = require('../out/ls/q-ipc');
 const queriesModule = require('../out/ls/queries');
 const KdbDriver = require('../out/ls/driver').default;
 const { ContextValue } = require('@sqltools/types');
@@ -60,6 +60,55 @@ function hex(value) {
     { key: 'a', value: 'x' },
     { key: 'b', value: 'y' },
     { key: 'c', value: 'z' },
+  ]);
+
+  const emptyTableResult = qValueToTabular(deserializeQPayload(qTable(
+    ['sym', 'size'],
+    [symbolVector([]), intVector([])]
+  )));
+  assert.deepStrictEqual(emptyTableResult.cols, ['sym', 'size']);
+  assert.deepStrictEqual(emptyTableResult.rows, []);
+
+  const keyedTableResult = qValueToTabular(deserializeQPayload(qDict(
+    qTable(['sym'], [symbolVector(['AAPL', 'MSFT'])]),
+    qTable(['sym', 'size'], [symbolVector(['lit', 'dark']), intVector([100, 250])])
+  )));
+  assert.deepStrictEqual(keyedTableResult.cols, ['sym', 'sym_1', 'size']);
+  assert.deepStrictEqual(keyedTableResult.rows, [
+    { sym: 'AAPL', sym_1: 'lit', size: 100 },
+    { sym: 'MSFT', sym_1: 'dark', size: 250 },
+  ]);
+
+  const nestedTableResult = qValueToTabular(deserializeQPayload(qTable(
+    ['sym', 'chars', 'nums', 'dict'],
+    [
+      symbolVector(['AAPL']),
+      genericList([charVector('alpha')]),
+      genericList([intVector([1, 2, 3])]),
+      genericList([qDict(symbolVector(['a', 'b']), intVector([10, 20]))]),
+    ]
+  )));
+  assert.deepStrictEqual(nestedTableResult.cols, ['sym', 'chars', 'nums', 'dict']);
+  assert.deepStrictEqual(nestedTableResult.rows, [{
+    sym: 'AAPL',
+    chars: 'alpha',
+    nums: '[1,2,3]',
+    dict: '{"a":10,"b":20}',
+  }]);
+
+  const nullSymbolResult = qValueToTabular(deserializeQPayload(qTable(
+    ['sym', 'label'],
+    [symbolVector(['', 'MSFT']), genericList([charVector(''), charVector('ok')])]
+  )));
+  assert.deepStrictEqual(nullSymbolResult.rows, [
+    { sym: null, label: '' },
+    { sym: 'MSFT', label: 'ok' },
+  ]);
+
+  const longResult = qValueToTabular(deserializeQPayload(longVector([9007199254740993n, -9007199254740993n])));
+  assert.deepStrictEqual(longResult.rows, [
+    { index: 0, value: '9007199254740993' },
+    { index: 1, value: '-9007199254740993' },
   ]);
 
   assert.strictEqual(normalizeNamespace('analytics'), '.analytics');
@@ -271,4 +320,61 @@ function createDriver() {
 
 function simulateSqlToolsFormatInsertQuery(insertQuery) {
   return `${insertQuery.substr(0, Math.max(0, insertQuery.length - 2))});`;
+}
+
+function qTable(columns, vectors) {
+  return Buffer.concat([
+    int8(98),
+    Buffer.from([0]),
+    int8(99),
+    symbolVector(columns),
+    genericList(vectors),
+  ]);
+}
+
+function qDict(keys, values) {
+  return Buffer.concat([int8(99), keys, values]);
+}
+
+function genericList(items) {
+  return Buffer.concat([vectorHeader(0, items.length)].concat(items));
+}
+
+function symbolVector(values) {
+  return Buffer.concat([vectorHeader(11, values.length)].concat(values.map(value => cString(value))));
+}
+
+function charVector(value) {
+  const body = Buffer.from(value, 'utf8');
+  return Buffer.concat([vectorHeader(10, body.length), body]);
+}
+
+function intVector(values) {
+  const body = Buffer.alloc(values.length * 4);
+  values.forEach((value, index) => body.writeInt32LE(value, index * 4));
+  return Buffer.concat([vectorHeader(6, values.length), body]);
+}
+
+function longVector(values) {
+  const body = Buffer.alloc(values.length * 8);
+  values.forEach((value, index) => body.writeBigInt64LE(BigInt(value), index * 8));
+  return Buffer.concat([vectorHeader(7, values.length), body]);
+}
+
+function vectorHeader(type, length) {
+  const header = Buffer.alloc(6);
+  header.writeInt8(type, 0);
+  header.writeUInt8(0, 1);
+  header.writeInt32LE(length, 2);
+  return header;
+}
+
+function int8(value) {
+  const buffer = Buffer.alloc(1);
+  buffer.writeInt8(value, 0);
+  return buffer;
+}
+
+function cString(value) {
+  return Buffer.from(`${value}\0`, 'utf8');
 }

@@ -17,4 +17,18 @@ quote:([sym:`AAPL`MSFT]
   bid:123.40 234.50;
   ask:123.50 234.60)
 
+empty:([] sym:`symbol$(); size:`int$())
+
+edge:([]
+  sym:enlist `AAPL;
+  chars:enlist "alpha";
+  nums:enlist 1 2 3;
+  nested:enlist ("left";"right");
+  dict:enlist `a`b!10 20;
+  nullSym:enlist `;
+  longid:enlist 9007199254740993j;
+  day:enlist 2024.01.02;
+  ts:enlist 2024.01.02D09:30:00.123456789;
+  span:enlist 0D00:00:00.123456789)
+
 calcSpread:{[bid;ask] ask-bid}
