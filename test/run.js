@@ -123,6 +123,20 @@ function hex(value) {
     offset: 5,
   }).toString();
   assert.ok(fetchRecords.includes('}[".analytics";"trade";10;5]'));
+  assert.ok(
+    queries.fetchRecords({
+      table: { label: 'trade', schema: '.analytics', database: '.analytics' },
+      limit: 10,
+      offset: 5,
+    }).toString().includes('}[".analytics";"trade";10;5]'),
+    'preview query should use the selected table namespace from SQLTools table metadata'
+  );
+  assert.ok(
+    queries.countRecords({
+      table: { label: 'trade', schema: '.analytics', database: '.analytics' },
+    }).toString().includes('}[".analytics";"trade"]'),
+    'count query should use the selected table namespace from SQLTools table metadata'
+  );
 
   assert.ok(
     queries.fetchTables({ namespace: '.missing' }).toString().includes('tbls:@[tables;`$ns;{`symbol$()}]'),
@@ -168,6 +182,8 @@ function hex(value) {
   assert.strictEqual(previewQueries.length, 2);
   assert.ok(previewQueries.some(text => text.includes('(offset;limit) sublist value tbl')));
   assert.ok(previewQueries.some(text => text.includes('count value tbl')));
+  assert.ok(previewQueries.some(text => text.includes('}[".analytics";"trade";25;50]')));
+  assert.ok(previewQueries.some(text => text.includes('}[".analytics";"trade"]')));
   assert.strictEqual(preview[0].pageSize, 25);
   assert.strictEqual(preview[0].page, 2);
   assert.strictEqual(preview[0].total, 1000000);

@@ -1,5 +1,25 @@
 # CODEX Status
 
+## 2026-06-17 Final SQLTools Compatibility Pass
+
+Changed:
+
+- Fixed SQLTools table preview/count query generation for non-root q namespaces when SQLTools calls `showRecords()` with namespace metadata on the table item instead of top-level query params.
+- Added unit and live q regressions covering non-root table preview/count through SQLTools' base-driver path.
+
+Intentionally out of scope:
+
+- No q autocomplete/snippet expansion was added.
+- Arbitrary user queries are still sent exactly as written and are not rewritten or limited by the driver.
+- No additional SQLTools feature areas were added beyond the final preview/count blocker fix.
+
+Verification:
+
+- `npm test` passed.
+- `KDB_SQLTOOLS_LIVE_REQUIRED=1 npm run test:live-kdb` passed using `/opt/data/home/.kx/bin/q`.
+- `npm pack --dry-run --ignore-scripts` passed.
+- `git diff --check` passed.
+
 ## 2026-06-17 Live Metadata Edge Cases Pass
 
 Changed:

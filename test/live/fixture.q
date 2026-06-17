@@ -37,3 +37,7 @@ edge:([]
   span:enlist 0D00:00:00.123456789)
 
 calcSpread:{[bid;ask] ask-bid}
+
+\d .analytics
+nsTrade:([] sym:`IBM`ORCL; size:10 20i)
+\d .
