@@ -54,7 +54,7 @@ The `database` field is used as a q namespace for the object explorer. Use `.` f
 - TLS is not implemented by this driver, so no TLS option is exposed in the connection UI.
 - The driver does not translate SQL to q. Write q/qSQL directly.
 - kdb has namespaces rather than SQL catalogs and schemas; SQLTools `database`/`schema` fields are mapped to the selected q namespace.
-- The automated E2E suite uses a mock q IPC server, not a real kdb+/q binary. It proves the VS Code/SQLTools/driver TCP path, but not q runtime semantics.
+- The default automated E2E suite uses a mock q IPC server so it can run without licensed kdb+/q tooling. Use `npm run test:live-kdb` for an opt-in live q process smoke test.
 
 ## Development
 
@@ -86,6 +86,20 @@ Run compile, unit tests, and E2E tests:
 
 ```sh
 npm test
+```
+
+Run the opt-in live kdb+/q integration test when a local `q` binary is available:
+
+```sh
+KDB_Q_BIN=/path/to/q npm run test:live-kdb
+```
+
+The live test starts a real local `q -p <free-port>` process with `test/live/fixture.q`, then exercises the driver over real q IPC for handshake, query execution, table listing, column metadata, scalar results, and preview queries. It skips cleanly if no `q` binary is found unless `KDB_SQLTOOLS_LIVE_REQUIRED=1` is set.
+
+Run everything, including live q, and fail if q is unavailable:
+
+```sh
+KDB_SQLTOOLS_LIVE_REQUIRED=1 npm run test:all
 ```
 
 Start the compiler in watch mode while launching the extension host from VS Code:
