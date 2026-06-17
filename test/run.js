@@ -129,12 +129,16 @@ function hex(value) {
     'table metadata query should treat missing q namespaces as empty'
   );
   assert.ok(
-    queries.fetchViews({ namespace: '.analytics' }).toString().includes('viewNames:$[ns~".";@[views;();{`symbol$()}];@[system;"b ",ns;{`symbol$()}]]'),
+    queries.fetchViews({ namespace: '.analytics' }).toString().includes('viewNames:$[ns~".";@[views;(::);{`symbol$()}];@[system;"b ",ns;{`symbol$()}]]'),
     'view metadata query should tolerate disabled system "b" calls'
   );
   assert.ok(
     queries.fetchFunctions({ namespace: '.analytics' }).toString().includes('fnNames:@[system;"f ",ns;{`symbol$()}]'),
     'function metadata query should tolerate disabled system "f" calls'
+  );
+  assert.ok(
+    queries.fetchColumns({ namespace: '.analytics', table: { label: 'trade' } }).toString().includes('([] label:metaRows`c;'),
+    'column metadata query should build a stable column order instead of positional update/xcol drift'
   );
 
   const driver = createDriver();
@@ -183,6 +187,22 @@ function hex(value) {
   );
   assert.deepStrictEqual(described[0].results.map(column => column.dataType), ['symbol', 'long list']);
   assert.strictEqual(described[0].results[1].detail, 'long list, attr s');
+
+  const listDescribeDriver = createDriver();
+  listDescribeDriver.query = async () => [{
+    cols: ['label', 'dataType', 't', 'a'],
+    messages: [],
+    results: [
+      { label: 'chars', dataType: 'C', t: 'C', a: '' },
+      { label: 'nums', dataType: 'J', t: 'J', a: '' },
+      { label: 'nested', dataType: ' ', t: ' ', a: '' },
+    ],
+  }];
+  const listDescribed = await listDescribeDriver.describeTable(
+    { label: 'edge', type: ContextValue.TABLE, schema: '.', database: '.' },
+    {}
+  );
+  assert.deepStrictEqual(listDescribed[0].results.map(column => column.dataType), ['char list', 'long list', 'mixed']);
 
   const definitionDriver = createDriver();
   assert.strictEqual(

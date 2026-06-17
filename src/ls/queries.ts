@@ -69,7 +69,7 @@ const fetchTables: IBaseQueries['fetchTables'] = query<NamespaceParams, NSDataba
 const fetchViews: IBaseQueries['fetchTables'] = query<NamespaceParams, NSDatabase.ITable>((params) => {
   const namespace = namespaceFromParams(params);
   return `{[ns]
-  viewNames:$[ns~".";@[views;();{\`symbol$()}];@[system;"b ",ns;{\`symbol$()}]];
+  viewNames:$[ns~".";@[views;(::);{\`symbol$()}];@[system;"b ",ns;{\`symbol$()}]];
   rowCount:count viewNames;
   \`label\`type\`schema\`database\`isView\`childType xcol ([] label:viewNames;
       typ:rowCount#enlist ${qString(ContextValue.VIEW)};
@@ -105,15 +105,18 @@ const fetchColumns: IBaseQueries['fetchColumns'] = query<TableParams, NSDatabase
   tbl:\`$ ${tablePathExpression};
   metaRows:0!meta tbl;
   rowCount:count metaRows;
-  \`label\`dataType\`type\`table\`schema\`database\`isNullable\`childType\`c\`t\`f\`a xcol update label:c,
-    typ:rowCount#enlist ${qString(ContextValue.COLUMN)},
-    dataType:t,
-    table:rowCount#enlist table,
-    schema:rowCount#enlist ns,
-    database:rowCount#enlist ns,
-    isNullable:rowCount#1b,
-    childType:rowCount#enlist ${qString(ContextValue.NO_CHILD)}
-    from metaRows
+  \`label\`dataType\`type\`table\`schema\`database\`isNullable\`childType\`c\`t\`f\`a xcol ([] label:metaRows\`c;
+    dataType:metaRows\`t;
+    typ:rowCount#enlist ${qString(ContextValue.COLUMN)};
+    table:rowCount#enlist table;
+    schema:rowCount#enlist ns;
+    database:rowCount#enlist ns;
+    isNullable:rowCount#1b;
+    childType:rowCount#enlist ${qString(ContextValue.NO_CHILD)};
+    c:metaRows\`c;
+    t:metaRows\`t;
+    f:metaRows\`f;
+    a:metaRows\`a)
 }[${qString(namespace)};${qString(table)}]`;
 });
 

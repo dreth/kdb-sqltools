@@ -43,7 +43,7 @@ The `database` field is used as a q namespace for the object explorer. Use `.` f
 - TCP q IPC authentication handshake with optional username/password.
 - Synchronous text query execution.
 - Result grids for q tables, keyed tables, dictionaries, vectors, lists, and scalars. Nested q values inside cells are displayed as compact strings, and unsafe-width q longs are displayed as exact decimal strings.
-- Object explorer groups for tables, views, functions, and table columns.
+- Object explorer groups for tables, root q views, functions, and table columns. Column metadata preserves q `meta` type, foreign-key, and attribute fields for SQLTools describe/explorer views.
 - Table preview and count support through SQLTools, using q `sublist` for limit/offset previews.
 - Definition query generation for tables, views, and functions.
 - Insert snippet generation using q `insert` syntax compatible with SQLTools' insert formatter.
@@ -57,6 +57,7 @@ The `database` field is used as a q namespace for the object explorer. Use `.` f
 - Arbitrary editor queries are sent exactly as written. The driver does not add hidden limits; SQLTools will render however many rows the q expression returns.
 - SQLTools' "execute current query" command uses SQL-style semicolon/`GO` statement parsing before the driver is called. For q expressions that contain semicolons inside lambdas, projections, or multi-statement blocks, select the intended q text and run the normal execute command so it is sent as one q expression.
 - kdb has namespaces rather than SQL catalogs and schemas; SQLTools `database`/`schema` fields are mapped to the selected q namespace.
+- Root q views are listed with protected `views[]`; non-root view listing depends on what the target process returns for protected `system "b <namespace>"`.
 - The default automated E2E suite uses a mock q IPC server so it can run without licensed kdb+/q tooling. Use `npm run test:live-kdb` for an opt-in live q process smoke test.
 
 ## Development
@@ -97,7 +98,7 @@ Run the opt-in live kdb+/q integration test when a local `q` binary is available
 KDB_Q_BIN=/path/to/q npm run test:live-kdb
 ```
 
-The live test starts a real local `q -p <free-port>` process with `test/live/fixture.q`, then exercises the driver over real q IPC for handshake, query execution, table listing, column metadata, scalar results, and preview queries. It skips cleanly if no `q` binary is found unless `KDB_SQLTOOLS_LIVE_REQUIRED=1` is set.
+The live test starts a real local `q -p <free-port>` process with `test/live/fixture.q`, then exercises the driver over real q IPC for handshake, query execution, table/view/function listing, column metadata, scalar results, definitions, and preview queries. It skips cleanly if no `q` binary is found unless `KDB_SQLTOOLS_LIVE_REQUIRED=1` is set.
 
 Run everything, including live q, and fail if q is unavailable:
 

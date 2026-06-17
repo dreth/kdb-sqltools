@@ -1,5 +1,27 @@
 # CODEX Status
 
+## 2026-06-17 Live Metadata Edge Cases Pass
+
+Changed:
+
+- Fixed protected root view listing by calling q `views[]` with the correct null argument form under `@[...]`.
+- Reworked generated column metadata to build a stable q table projection, preserving original `meta` `c`, `t`, `f`, and `a` fields for SQLTools describe/explorer details.
+- Expanded the live q fixture and assertions for root views, functions, empty table columns, keyed-table previews, list/mixed column metadata, q column attributes, definitions, and missing namespace tables/views/functions.
+- Added unit guards for protected view query generation, stable column metadata query shape, and uppercase list type display.
+
+Intentionally out of scope:
+
+- No q language autocomplete/snippet expansion was added.
+- Non-root q view discovery remains limited to what the target q process returns for protected `system "b <namespace>"`.
+- Arbitrary user queries are still sent exactly as written and are not rewritten or limited by the driver.
+
+Verification:
+
+- `npm test` passed.
+- `KDB_SQLTOOLS_LIVE_REQUIRED=1 npm run test:live-kdb` passed using `/opt/data/home/.kx/bin/q`.
+- `npm pack --dry-run --ignore-scripts` passed.
+- `git diff --check` passed.
+
 ## 2026-06-17 Result Conversion Safety Pass
 
 Changed:

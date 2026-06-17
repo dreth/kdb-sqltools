@@ -93,14 +93,22 @@ async function runLiveAssertions(port) {
     };
     const groups = await driver.getChildrenForItem({ item: connectionItem });
     const tablesGroup = groups.find(item => item.label === 'Tables');
+    const viewsGroup = groups.find(item => item.label === 'Views');
+    const functionsGroup = groups.find(item => item.label === 'Functions');
     assert.ok(tablesGroup, 'expected Tables explorer group');
+    assert.ok(viewsGroup, 'expected Views explorer group');
+    assert.ok(functionsGroup, 'expected Functions explorer group');
 
     const tables = await driver.getChildrenForItem({ item: tablesGroup, parent: connectionItem });
     const labels = tables.map(item => item.label).sort();
     assert.ok(labels.includes('trade'), `expected trade table in ${labels.join(', ')}`);
     assert.ok(labels.includes('quote'), `expected quote table in ${labels.join(', ')}`);
+    assert.ok(labels.includes('empty'), `expected empty table in ${labels.join(', ')}`);
+    assert.ok(labels.includes('edge'), `expected edge table in ${labels.join(', ')}`);
+    assert.ok(labels.includes('attrTrade'), `expected attrTrade table in ${labels.join(', ')}`);
 
     const tradeItem = tables.find(item => item.label === 'trade');
+    assert.ok(tradeItem, 'expected trade table item');
     const columnGroups = await driver.getChildrenForItem({ item: tradeItem, parent: tablesGroup });
     const columns = await driver.getChildrenForItem({ item: columnGroups[0], parent: tradeItem });
     const columnTypes = Object.fromEntries(columns.map(column => [column.label, column.dataType]));
@@ -109,16 +117,99 @@ async function runLiveAssertions(port) {
       { sym: 'symbol', size: 'int', price: 'float', day: 'date', ts: 'timestamp' }
     );
 
+    const emptyItem = tables.find(item => item.label === 'empty');
+    assert.ok(emptyItem, 'expected empty table item');
+    const emptyColumnGroups = await driver.getChildrenForItem({ item: emptyItem, parent: tablesGroup });
+    const emptyColumns = await driver.getChildrenForItem({ item: emptyColumnGroups[0], parent: emptyItem });
+    assert.deepStrictEqual(
+      Object.fromEntries(emptyColumns.map(column => [column.label, column.dataType])),
+      { sym: 'symbol', size: 'int' }
+    );
+
+    const edgeItem = tables.find(item => item.label === 'edge');
+    assert.ok(edgeItem, 'expected edge table item');
+    const edgeColumnGroups = await driver.getChildrenForItem({ item: edgeItem, parent: tablesGroup });
+    const edgeColumns = await driver.getChildrenForItem({ item: edgeColumnGroups[0], parent: edgeItem });
+    const edgeColumnTypes = Object.fromEntries(edgeColumns.map(column => [column.label, column.dataType]));
+    assert.deepStrictEqual(
+      { chars: edgeColumnTypes.chars, nums: edgeColumnTypes.nums, nested: edgeColumnTypes.nested, dict: edgeColumnTypes.dict },
+      { chars: 'char list', nums: 'long list', nested: 'mixed', dict: 'mixed' }
+    );
+
+    const attrItem = tables.find(item => item.label === 'attrTrade');
+    assert.ok(attrItem, 'expected attrTrade table item');
+    const attrColumnGroups = await driver.getChildrenForItem({ item: attrItem, parent: tablesGroup });
+    const attrColumns = await driver.getChildrenForItem({ item: attrColumnGroups[0], parent: attrItem });
+    const attrSym = attrColumns.find(column => column.label === 'sym');
+    assert.ok(attrSym, 'expected attrTrade sym column');
+    assert.strictEqual(attrSym.dataType, 'symbol');
+    assert.ok(attrSym.detail.includes('attr s'), `expected sorted attribute detail, got ${attrSym.detail}`);
+
     const preview = await driver.queries.fetchRecords({ namespace: '.', table: { label: 'trade' }, limit: 2, offset: 1 }).toString();
     const previewResult = await driver.query(preview);
     assert.strictEqual(previewResult[0].results.length, 2);
     assert.deepStrictEqual(previewResult[0].results.map(row => row.sym), ['MSFT', 'GOOG']);
+
+    const quoteItem = tables.find(item => item.label === 'quote');
+    assert.ok(quoteItem, 'expected quote keyed table item');
+    const keyedPreview = await driver.query(
+      driver.queries.fetchRecords({ namespace: '.', table: quoteItem, limit: 2, offset: 0 }).toString()
+    );
+    assert.strictEqual(keyedPreview[0].error, undefined);
+    assert.deepStrictEqual(keyedPreview[0].cols, ['sym', 'bid', 'ask']);
+    assert.deepStrictEqual(keyedPreview[0].results.map(row => row.sym), ['AAPL', 'MSFT']);
+
+    const views = await driver.getChildrenForItem({ item: viewsGroup, parent: connectionItem });
+    const viewLabels = views.map(item => item.label).sort();
+    assert.ok(viewLabels.includes('tradeView'), `expected tradeView view in ${viewLabels.join(', ')}`);
+    const tradeViewItem = views.find(item => item.label === 'tradeView');
+    const viewColumnGroups = await driver.getChildrenForItem({ item: tradeViewItem, parent: viewsGroup });
+    const viewColumns = await driver.getChildrenForItem({ item: viewColumnGroups[0], parent: tradeViewItem });
+    assert.ok(viewColumns.some(column => column.label === 'sym' && column.dataType === 'symbol'));
+    const viewPreview = await driver.query(
+      driver.queries.fetchRecords({ namespace: '.', table: tradeViewItem, limit: 5, offset: 0 }).toString()
+    );
+    assert.strictEqual(viewPreview[0].error, undefined);
+    assert.deepStrictEqual(viewPreview[0].results.map(row => row.sym), ['MSFT']);
+
+    const functions = await driver.getChildrenForItem({ item: functionsGroup, parent: connectionItem });
+    const calcFunction = functions.find(item => item.label === 'calcSpread');
+    assert.ok(calcFunction, `expected calcSpread function in ${functions.map(item => item.label).join(', ')}`);
+    const functionDefinition = await driver.query(
+      await driver.getDefinitionForItem({ item: calcFunction })
+    );
+    assert.strictEqual(functionDefinition[0].error, undefined);
+    assert.ok(String(functionDefinition[0].results[0].value).includes('ask-bid'));
+
+    const tableDefinition = await driver.query(
+      await driver.getDefinitionForItem({ item: tradeItem })
+    );
+    assert.strictEqual(tableDefinition[0].error, undefined);
+    assert.ok(tableDefinition[0].results.some(row => row.c === 'sym'));
+
+    const viewDefinition = await driver.query(
+      await driver.getDefinitionForItem({ item: tradeViewItem })
+    );
+    assert.strictEqual(viewDefinition[0].error, undefined);
+    assert.ok(viewDefinition[0].results.some(row => row.c === 'sym'));
 
     const missingNamespaceTables = await driver.query(
       driver.queries.fetchTables({ namespace: '.missing' }).toString()
     );
     assert.strictEqual(missingNamespaceTables[0].error, undefined);
     assert.deepStrictEqual(missingNamespaceTables[0].results, []);
+
+    const missingNamespaceViews = await driver.query(
+      driver.queries.fetchViews({ namespace: '.missing' }).toString()
+    );
+    assert.strictEqual(missingNamespaceViews[0].error, undefined);
+    assert.deepStrictEqual(missingNamespaceViews[0].results, []);
+
+    const missingNamespaceFunctions = await driver.query(
+      driver.queries.fetchFunctions({ namespace: '.missing' }).toString()
+    );
+    assert.strictEqual(missingNamespaceFunctions[0].error, undefined);
+    assert.deepStrictEqual(missingNamespaceFunctions[0].results, []);
   } finally {
     await driver.close();
   }

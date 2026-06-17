@@ -13,6 +13,11 @@ trade:([]
   day:2024.01.01 2024.01.02 2024.01.03;
   ts:2024.01.01D09:30:00.000000000 2024.01.01D09:31:00.000000000 2024.01.01D09:32:00.000000000)
 
+tradeView::select from trade where size>100
+
+attrTrade:`sym xasc trade
+attrTrade:update `s#sym from attrTrade
+
 quote:([sym:`AAPL`MSFT]
   bid:123.40 234.50;
   ask:123.50 234.60)
