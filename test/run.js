@@ -75,6 +75,19 @@ function hex(value) {
   }).toString();
   assert.ok(fetchRecords.includes('}[".analytics";"trade";10;5]'));
 
+  assert.ok(
+    queries.fetchTables({ namespace: '.missing' }).toString().includes('tbls:@[tables;`$ns;{`symbol$()}]'),
+    'table metadata query should treat missing q namespaces as empty'
+  );
+  assert.ok(
+    queries.fetchViews({ namespace: '.analytics' }).toString().includes('viewNames:$[ns~".";@[views;();{`symbol$()}];@[system;"b ",ns;{`symbol$()}]]'),
+    'view metadata query should tolerate disabled system "b" calls'
+  );
+  assert.ok(
+    queries.fetchFunctions({ namespace: '.analytics' }).toString().includes('fnNames:@[system;"f ",ns;{`symbol$()}]'),
+    'function metadata query should tolerate disabled system "f" calls'
+  );
+
   const driver = createDriver();
 
   const previewQueries = [];
@@ -161,6 +174,76 @@ function hex(value) {
   assert.strictEqual(
     simulateSqlToolsFormatInsertQuery(insert),
     '(`$".analytics.trade") insert (`; 0Ni; 0n);'
+  );
+
+  const optionalMetadataDriver = createDriver();
+  optionalMetadataDriver.query = async (query) => {
+    const text = query.toString();
+    if (text.includes('isView:rowCount#1b') || text.includes('resultType:rowCount#enlist "function"')) {
+      return [{
+        cols: [],
+        messages: [],
+        results: [],
+        error: true,
+        rawError: new Error('metadata command disabled'),
+      }];
+    }
+    throw new Error(`unexpected optional metadata query: ${text}`);
+  };
+
+  const connectionItem = {
+    label: 'test',
+    type: ContextValue.CONNECTION,
+    schema: '.analytics',
+    database: '.analytics',
+  };
+  assert.deepStrictEqual(
+    await optionalMetadataDriver.getChildrenForItem({
+      item: {
+        label: 'Views',
+        type: ContextValue.RESOURCE_GROUP,
+        childType: ContextValue.VIEW,
+        schema: '.analytics',
+        database: '.analytics',
+      },
+      parent: connectionItem,
+    }),
+    []
+  );
+  assert.deepStrictEqual(
+    await optionalMetadataDriver.getChildrenForItem({
+      item: {
+        label: 'Functions',
+        type: ContextValue.RESOURCE_GROUP,
+        childType: ContextValue.FUNCTION,
+        schema: '.analytics',
+        database: '.analytics',
+      },
+      parent: connectionItem,
+    }),
+    []
+  );
+
+  const tableFailureDriver = createDriver();
+  tableFailureDriver.query = async () => [{
+    cols: [],
+    messages: [],
+    results: [],
+    error: true,
+    rawError: new Error('table listing failed'),
+  }];
+  await assert.rejects(
+    () => tableFailureDriver.getChildrenForItem({
+      item: {
+        label: 'Tables',
+        type: ContextValue.RESOURCE_GROUP,
+        childType: ContextValue.TABLE,
+        schema: '.analytics',
+        database: '.analytics',
+      },
+      parent: connectionItem,
+    }),
+    /table listing failed/
   );
 
   assert.ok(connectionSchema.properties.ssh, 'connection schema should expose SSH when the driver supports SSH tunnels');

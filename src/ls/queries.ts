@@ -55,7 +55,7 @@ const tablePathExpression = '$[ns~".";table;ns,".",table]';
 const fetchTables: IBaseQueries['fetchTables'] = query<NamespaceParams, NSDatabase.ITable>((params) => {
   const namespace = namespaceFromParams(params);
   return `{[ns]
-  tbls:tables \`$ns;
+  tbls:@[tables;\`$ns;{\`symbol$()}];
   rowCount:count tbls;
   \`label\`type\`schema\`database\`isView\`childType xcol ([] label:tbls;
       typ:rowCount#enlist ${qString(ContextValue.TABLE)};
@@ -69,7 +69,7 @@ const fetchTables: IBaseQueries['fetchTables'] = query<NamespaceParams, NSDataba
 const fetchViews: IBaseQueries['fetchTables'] = query<NamespaceParams, NSDatabase.ITable>((params) => {
   const namespace = namespaceFromParams(params);
   return `{[ns]
-  viewNames:$[ns~".";views[];system "b ",ns];
+  viewNames:$[ns~".";@[views;();{\`symbol$()}];@[system;"b ",ns;{\`symbol$()}]];
   rowCount:count viewNames;
   \`label\`type\`schema\`database\`isView\`childType xcol ([] label:viewNames;
       typ:rowCount#enlist ${qString(ContextValue.VIEW)};
@@ -83,7 +83,7 @@ const fetchViews: IBaseQueries['fetchTables'] = query<NamespaceParams, NSDatabas
 const fetchFunctions: IBaseQueries['fetchFunctions'] = query<NamespaceParams, NSDatabase.IFunction>((params) => {
   const namespace = namespaceFromParams(params);
   return `{[ns]
-  fnNames:system "f ",ns;
+  fnNames:@[system;"f ",ns;{\`symbol$()}];
   rowCount:count fnNames;
   \`label\`name\`type\`schema\`database\`signature\`args\`resultType\`childType\`iconName xcol ([] label:fnNames;
       name:fnNames;

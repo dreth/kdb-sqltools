@@ -261,7 +261,15 @@ export default class KdbDriver extends AbstractDriver<DriverLib, DriverOptions> 
     const query = type === ContextValue.VIEW
       ? this.queries.fetchViews({ namespace } as any)
       : this.queries.fetchTables({ namespace } as any);
-    const results = await this.queryResults<any>(query);
+    let results: any[];
+    try {
+      results = await this.queryResults<any>(query);
+    } catch (error) {
+      if (type === ContextValue.VIEW) {
+        return [];
+      }
+      throw error;
+    }
     return results.map(row => this.tableItem(row, type, namespace));
   }
 
@@ -271,7 +279,12 @@ export default class KdbDriver extends AbstractDriver<DriverLib, DriverOptions> 
     if (!fetchFunctions) {
       return [];
     }
-    const results = await this.queryResults<any>(fetchFunctions({ namespace } as any));
+    let results: any[];
+    try {
+      results = await this.queryResults<any>(fetchFunctions({ namespace } as any));
+    } catch {
+      return [];
+    }
     return results.map(row => ({
       label: String(row.label || row.name || ''),
       name: String(row.name || row.label || ''),
