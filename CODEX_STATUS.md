@@ -1,5 +1,30 @@
 # CODEX Status
 
+## 2026-06-17 Metadata Robustness Pass
+
+Changed:
+
+- Protected generated q metadata calls for table, view, and function listing with `@[...]`, so missing q namespaces and rejected `system "b"`/`system "f"` calls return empty metadata rows instead of q errors.
+- Added driver-side fallback for optional Views and Functions explorer groups: if those metadata queries still fail, SQLTools gets an empty group instead of an explorer error. Table listing failures still propagate because a broken table listing should remain visible.
+- Added unit coverage for protected metadata query generation, optional group fallback behavior, and the retained table-listing error path.
+- Updated the E2E mock IPC server to recognize protected metadata query forms.
+- Added a live q assertion that listing tables in a missing namespace returns an empty SQLTools result, not an error.
+- Documented SQLTools' current-query semicolon/`GO` parsing limitation for q expressions that contain semicolons internally.
+
+Intentionally out of scope:
+
+- No q autocomplete/snippet expansion was added.
+- The driver still does not rewrite arbitrary q editor text or bypass SQLTools' current-query parser; users should select complex q blocks explicitly when needed.
+- Arbitrary query results remain unbounded by the driver.
+- TLS remains unsupported.
+
+Verification:
+
+- `npm test` passed.
+- `KDB_SQLTOOLS_LIVE_REQUIRED=1 npm run test:live-kdb` passed using `/opt/data/home/.kx/bin/q`.
+- `npm pack --dry-run --ignore-scripts` passed.
+- `git diff --check` passed.
+
 ## 2026-06-17 SQLTools Compatibility Pass
 
 Changed:

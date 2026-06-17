@@ -84,6 +84,12 @@ async function runLiveAssertions(port) {
     const previewResult = await driver.query(preview);
     assert.strictEqual(previewResult[0].results.length, 2);
     assert.deepStrictEqual(previewResult[0].results.map(row => row.sym), ['MSFT', 'GOOG']);
+
+    const missingNamespaceTables = await driver.query(
+      driver.queries.fetchTables({ namespace: '.missing' }).toString()
+    );
+    assert.strictEqual(missingNamespaceTables[0].error, undefined);
+    assert.deepStrictEqual(missingNamespaceTables[0].results, []);
   } finally {
     await driver.close();
   }

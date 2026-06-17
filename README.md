@@ -55,6 +55,7 @@ The `database` field is used as a q namespace for the object explorer. Use `.` f
 - TLS is not implemented by this driver, so no TLS option is exposed in the connection UI.
 - The driver does not translate SQL to q. Write q/qSQL directly.
 - Arbitrary editor queries are sent exactly as written. The driver does not add hidden limits; SQLTools will render however many rows the q expression returns.
+- SQLTools' "execute current query" command uses SQL-style semicolon/`GO` statement parsing before the driver is called. For q expressions that contain semicolons inside lambdas, projections, or multi-statement blocks, select the intended q text and run the normal execute command so it is sent as one q expression.
 - kdb has namespaces rather than SQL catalogs and schemas; SQLTools `database`/`schema` fields are mapped to the selected q namespace.
 - The default automated E2E suite uses a mock q IPC server so it can run without licensed kdb+/q tooling. Use `npm run test:live-kdb` for an opt-in live q process smoke test.
 

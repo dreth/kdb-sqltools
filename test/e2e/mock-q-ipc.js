@@ -130,15 +130,15 @@ function responsePayload(query) {
     return longAtom(2);
   }
 
-  if (compact.includes('ts:tables') || compact.includes('tbls:tables')) {
+  if (compact.includes('ts:tables') || compact.includes('tbls:tables') || compact.includes('tbls:@[tables')) {
     return tablesTable();
   }
 
-  if (compact.includes('views[]') || compact.includes('system "b ')) {
+  if (compact.includes('views[]') || compact.includes('system "b ') || compact.includes('@[views') || compact.includes('@[system;"b "')) {
     return viewsTable();
   }
 
-  if (compact.includes('system "f ')) {
+  if (compact.includes('system "f ') || compact.includes('@[system;"f "')) {
     return functionsTable();
   }
 
