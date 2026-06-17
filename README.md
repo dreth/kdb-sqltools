@@ -44,15 +44,17 @@ The `database` field is used as a q namespace for the object explorer. Use `.` f
 - Synchronous text query execution.
 - Result grids for q tables, keyed tables, dictionaries, vectors, lists, and scalars.
 - Object explorer groups for tables, views, functions, and table columns.
-- Table preview and count support through SQLTools.
-- Insert snippet generation using q `insert` syntax.
-- Basic q keyword completions.
+- Table preview and count support through SQLTools, using q `sublist` for limit/offset previews.
+- Definition query generation for tables, views, and functions.
+- Insert snippet generation using q `insert` syntax compatible with SQLTools' insert formatter.
+- Minimal q keyword completions only; q language extensions should handle language-level autocomplete.
 - SSH tunneling through SQLTools common connection settings.
 
 ## Limitations
 
 - TLS is not implemented by this driver, so no TLS option is exposed in the connection UI.
 - The driver does not translate SQL to q. Write q/qSQL directly.
+- Arbitrary editor queries are sent exactly as written. The driver does not add hidden limits; SQLTools will render however many rows the q expression returns.
 - kdb has namespaces rather than SQL catalogs and schemas; SQLTools `database`/`schema` fields are mapped to the selected q namespace.
 - The default automated E2E suite uses a mock q IPC server so it can run without licensed kdb+/q tooling. Use `npm run test:live-kdb` for an opt-in live q process smoke test.
 

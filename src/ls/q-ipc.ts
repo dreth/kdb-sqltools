@@ -336,7 +336,7 @@ export function qValueToTabular(value: QValue): QTabularResult {
   if (isQTable(value)) {
     return {
       cols: value.columns,
-      rows: value.rows.map(row => normalizeRow(row, value.columns)),
+      rows: value.rows,
       kind: 'table',
     };
   }
@@ -344,7 +344,7 @@ export function qValueToTabular(value: QValue): QTabularResult {
   if (isQKeyedTable(value)) {
     return {
       cols: value.columns,
-      rows: value.rows.map(row => normalizeRow(row, value.columns)),
+      rows: value.rows,
       kind: 'keyed table',
     };
   }
@@ -869,14 +869,6 @@ function vectorValueAt(value: QValue | undefined, index: number): QValue {
 function valueToColumnName(value: QValue): string {
   const base = normalizeCell(value);
   return base === null ? 'null' : String(base);
-}
-
-function normalizeRow(row: { [key: string]: QDisplayValue }, columns: string[]): { [key: string]: QDisplayValue } {
-  const normalized: { [key: string]: QDisplayValue } = {};
-  columns.forEach(column => {
-    normalized[column] = normalizeCell(row[column] as QValue);
-  });
-  return normalized;
 }
 
 function normalizePlainObject(value: { [key: string]: QValue }): { [key: string]: QDisplayValue } {

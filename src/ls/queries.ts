@@ -126,7 +126,7 @@ const fetchRecords: IBaseQueries['fetchRecords'] = query<TableParams & { limit: 
   const offset = Number(params.offset || 0);
   return `{[ns;table;limit;offset]
   tbl:\`$ ${tablePathExpression};
-  limit#offset _ value tbl
+  (offset;limit) sublist value tbl
 }[${qString(namespace)};${qString(table)};${limit};${offset}]`;
 });
 

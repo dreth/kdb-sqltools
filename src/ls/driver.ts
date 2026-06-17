@@ -1,5 +1,5 @@
 import AbstractDriver from '@sqltools/base-driver';
-import { IConnectionDriver, MConnectionExplorer, NSDatabase, ContextValue, Arg0 } from '@sqltools/types';
+import { IConnectionDriver, MConnectionExplorer, NSDatabase, ContextValue, Arg0, IQueryOptions } from '@sqltools/types';
 import { v4 as generateId } from 'uuid';
 import queries, { normalizeNamespace, qSymbolExpression, TableParams } from './queries';
 import { KdbIpcClient, qValueToTabular } from './q-ipc';
@@ -163,11 +163,31 @@ export default class KdbDriver extends AbstractDriver<DriverLib, DriverOptions> 
     return [];
   }
 
+  public async describeTable(metadata: NSDatabase.ITable, opt: IQueryOptions = {}): Promise<NSDatabase.IResult[]> {
+    const results = await super.describeTable(metadata, opt);
+    const namespace = this.namespaceFor(metadata);
+    results.forEach(result => {
+      result.results = result.results.map(row => this.columnItem(row, metadata, namespace));
+    });
+    return results;
+  }
+
+  public async getDefinitionForItem({ item }: Arg0<IConnectionDriver['getDefinitionForItem']>): Promise<string> {
+    switch (item.type) {
+      case ContextValue.TABLE:
+      case ContextValue.VIEW:
+      case ContextValue.MATERIALIZED_VIEW:
+        return `meta ${qSymbolExpression(this.itemPath(item))}`;
+      case ContextValue.FUNCTION:
+        return `.Q.s1 value ${qSymbolExpression(this.itemPath(item))}`;
+    }
+    return '';
+  }
+
   public async getInsertQuery({ item, columns }: Arg0<IConnectionDriver['getInsertQuery']>): Promise<string> {
-    const namespace = this.namespaceFor(item);
-    const tablePath = item.label.startsWith('.') || namespace === '.' ? item.label : `${namespace}.${item.label}`;
+    const tablePath = this.itemPath(item);
     const values = columns.map(column => placeholderForQType(column.dataType)).join('; ');
-    return `(${qSymbolExpression(tablePath)}) insert (${values})`;
+    return `(${qSymbolExpression(tablePath)}) insert (${values}, `;
   }
 
   public getStaticCompletions: IConnectionDriver['getStaticCompletions'] = async () => {
@@ -270,23 +290,7 @@ export default class KdbDriver extends AbstractDriver<DriverLib, DriverOptions> 
     const namespace = this.namespaceFor(parent);
     const params: TableParams = { namespace, table: parent };
     const results = await this.queryResults<any>(this.queries.fetchColumns(params as any));
-    return results.map(row => {
-      const label = String(row.label || row.c || '');
-      const dataType = qTypeName(String(row.dataType || row.t || ''));
-      return {
-        ...row,
-        label,
-        type: ContextValue.COLUMN,
-        dataType,
-        detail: [dataType, row.a ? `attr ${row.a}` : null, row.f ? `fk ${row.f}` : null].filter(Boolean).join(', '),
-        schema: namespace,
-        database: namespace,
-        table: parent,
-        isNullable: true,
-        childType: ContextValue.NO_CHILD,
-        iconName: 'column',
-      };
-    });
+    return results.map(row => this.columnItem(row, parent, namespace));
   }
 
   private async searchColumns(needle: string, limit: number, extraParams: any): Promise<NSDatabase.IColumn[]> {
@@ -336,10 +340,39 @@ export default class KdbDriver extends AbstractDriver<DriverLib, DriverOptions> 
         : this.credentials.database
     );
   }
+
+  private itemPath(item: Partial<MConnectionExplorer.IChildItem>): string {
+    const namespace = this.namespaceFor(item);
+    return (item.label && item.label.startsWith('.')) || namespace === '.'
+      ? String(item.label || '')
+      : `${namespace}.${item.label || ''}`;
+  }
+
+  private columnItem(row: any, table: NSDatabase.ITable, namespace: string): NSDatabase.IColumn {
+    const label = String(row.label || row.c || '');
+    const dataType = qTypeName(String(row.dataType || row.t || ''));
+    return {
+      ...row,
+      label,
+      type: ContextValue.COLUMN,
+      dataType,
+      detail: [dataType, row.a ? `attr ${row.a}` : null, row.f ? `fk ${row.f}` : null].filter(Boolean).join(', '),
+      schema: namespace,
+      database: namespace,
+      table,
+      isNullable: row.isNullable === undefined ? true : row.isNullable,
+      childType: ContextValue.NO_CHILD,
+      iconName: 'column',
+    };
+  }
 }
 
 function qTypeName(type: string): string {
-  const normalized = type.toLowerCase();
+  const trimmed = type.trim();
+  if (!trimmed) {
+    return 'mixed';
+  }
+  const normalized = trimmed.toLowerCase();
   const names: { [key: string]: string } = {
     b: 'boolean',
     g: 'guid',
@@ -360,7 +393,10 @@ function qTypeName(type: string): string {
     v: 'second',
     t: 'time',
   };
-  return names[normalized] || type || 'mixed';
+  if (names[normalized] && trimmed.length === 1 && trimmed !== normalized) {
+    return `${names[normalized]} list`;
+  }
+  return names[normalized] || trimmed;
 }
 
 function placeholderForQType(type: string): string {

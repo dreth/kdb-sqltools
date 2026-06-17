@@ -150,7 +150,7 @@ function responsePayload(query) {
     return countTable();
   }
 
-  if (compact.includes('limit#offset _ value p') || compact.includes('limit#offset _ value tbl') || compact.includes('select') || compact.includes('trade')) {
+  if (compact.includes('sublist value p') || compact.includes('sublist value tbl') || compact.includes('select') || compact.includes('trade')) {
     return sampleTradeTable();
   }
 

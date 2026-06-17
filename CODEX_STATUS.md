@@ -1,5 +1,29 @@
 # CODEX Status
 
+## 2026-06-17 SQLTools Compatibility Pass
+
+Changed:
+
+- Made generated q insert snippets survive SQLTools' `formatInsertQuery` behavior, which strips the final two characters and appends `);`.
+- Added table/view/function definition text generation for SQLTools' definition command: tables/views return `meta <symbol>`, functions return `.Q.s1 value <symbol>`.
+- Normalized `describeTable` rows through the same q type-name conversion used by object explorer columns, including uppercase list type codes such as `J`.
+- Changed table preview queries to use `(offset;limit) sublist value <table>` and kept SQLTools' separate count query path.
+- Avoided an extra row-copy pass when converting already-normalized q table and keyed-table results for the SQLTools grid.
+- Exposed SSH tunnel settings in the connection schema because the driver already supports `createSshTunnel`.
+
+Intentionally out of scope:
+
+- No TLS fields are exposed; q IPC/TLS is not implemented or tested in this driver.
+- Arbitrary user queries are not limited or rewritten. Large result sets remain the user's responsibility and SQLTools will render the rows returned by q.
+- No new q language autocomplete/snippet features were added beyond keeping the existing minimal static keywords functional.
+
+Verification:
+
+- `npm test` passed.
+- `KDB_SQLTOOLS_LIVE_REQUIRED=1 npm run test:live-kdb` passed using `/opt/data/home/.kx/bin/q`.
+- `npm pack --dry-run --ignore-scripts` passed.
+- `git diff --check` passed.
+
 ## Implementation
 
 - Converted the SQLTools template into `kdb-sqltools` with kdb+/q package metadata, driver alias registration, and host/port/auth/namespace connection assistant fields.
