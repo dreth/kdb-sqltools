@@ -2,6 +2,7 @@ const assert = require('assert');
 
 const { deserializeQMessage, deserializeQPayload, qValueToTabular, serializeTextQuery } = require('../out/ls/q-ipc');
 const queriesModule = require('../out/ls/queries');
+const { currentQBlock, selectedTextOrCurrentBlock } = require('../out/q-text');
 const KdbDriver = require('../out/ls/driver').default;
 const { ContextValue } = require('@sqltools/types');
 const connectionSchema = require('../connection.schema.json');
@@ -18,6 +19,11 @@ function hex(value) {
     serializeTextQuery('1+1').toString('hex'),
     '01010000110000000a0003000000312b31'
   );
+
+  const qScript = '.data.gateway:{[query;db]\n  neg[gatewayHandle](`.gw.asyncExec;query;db)\n}\n\nselect from trade';
+  assert.strictEqual(currentQBlock(qScript, 1), '.data.gateway:{[query;db]\n  neg[gatewayHandle](`.gw.asyncExec;query;db)\n}');
+  assert.strictEqual(currentQBlock(qScript, 4), 'select from trade');
+  assert.strictEqual(selectedTextOrCurrentBlock(qScript, '1+1', 0), '1+1');
 
   assert.strictEqual(
     deserializeQMessage(hex('010000000d000000fa01000000')),
