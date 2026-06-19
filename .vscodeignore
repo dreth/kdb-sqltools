@@ -12,3 +12,5 @@ CODEX*.md
 GETTING_STARTED.md
 package-lock.json
 .github/**
+*.vsix
+*.zip
