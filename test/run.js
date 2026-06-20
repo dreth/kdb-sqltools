@@ -267,6 +267,45 @@ function hex(value) {
     '(`$".analytics.trade") insert (`; 0Ni; 0n);'
   );
 
+  const sqlToolsInsertDriver = createDriver();
+  const sqlToolsInsertQueries = [];
+  sqlToolsInsertDriver.query = async (query) => {
+    sqlToolsInsertQueries.push(query.toString());
+    return [{
+      cols: ['label', 'dataType', 't', 'a'],
+      messages: [],
+      results: [
+        { label: 'sym', dataType: 's', t: 's', a: '' },
+        { label: 'size', dataType: 'i', t: 'i', a: '' },
+        { label: 'price', dataType: 'f', t: 'f', a: '' },
+      ],
+    }];
+  };
+  const sqlToolsInsert = await sqlToolsInsertDriver.getInsertQuery({
+    item: {
+      label: 'trade',
+      type: ContextValue.TABLE,
+      schema: '.analytics',
+      database: '.analytics',
+      isView: false,
+    },
+    columns: [
+      {
+        label: 'Columns',
+        type: ContextValue.RESOURCE_GROUP,
+        iconId: 'folder',
+        childType: ContextValue.COLUMN,
+        schema: '.analytics',
+        database: '.analytics',
+      },
+    ],
+  });
+  assert.strictEqual(sqlToolsInsert, '(`$".analytics.trade") insert (`; 0Ni; 0n, ');
+  assert.ok(
+    sqlToolsInsertQueries.some(text => text.includes('0!meta tbl')),
+    'SQLTools insert generation should resolve the Columns group to real table columns'
+  );
+
   const optionalMetadataDriver = createDriver();
   optionalMetadataDriver.query = async (query) => {
     const text = query.toString();
