@@ -186,7 +186,8 @@ export default class KdbDriver extends AbstractDriver<DriverLib, DriverOptions> 
 
   public async getInsertQuery({ item, columns }: Arg0<IConnectionDriver['getInsertQuery']>): Promise<string> {
     const tablePath = this.itemPath(item);
-    const values = columns.map(column => placeholderForQType(column.dataType)).join('; ');
+    const insertColumns = await this.columnsForInsert(item, columns);
+    const values = insertColumns.map(column => placeholderForQType(column.dataType)).join('; ');
     return `(${qSymbolExpression(tablePath)}) insert (${values}, `;
   }
 
@@ -304,6 +305,20 @@ export default class KdbDriver extends AbstractDriver<DriverLib, DriverOptions> 
     const params: TableParams = { namespace, table: parent };
     const results = await this.queryResults<any>(this.queries.fetchColumns(params as any));
     return results.map(row => this.columnItem(row, parent, namespace));
+  }
+
+  private async columnsForInsert(item: NSDatabase.ITable, columns: NSDatabase.IColumn[]): Promise<NSDatabase.IColumn[]> {
+    const first = columns[0] as MConnectionExplorer.IChildItem | undefined;
+    if (
+      columns.length === 1 &&
+      first &&
+      first.type === ContextValue.RESOURCE_GROUP &&
+      first.childType === ContextValue.COLUMN
+    ) {
+      return this.getColumns(item);
+    }
+
+    return columns;
   }
 
   private async searchColumns(needle: string, limit: number, extraParams: any): Promise<NSDatabase.IColumn[]> {
