@@ -125,6 +125,10 @@ async function runLiveAssertions(port) {
       Object.fromEntries(emptyColumns.map(column => [column.label, column.dataType])),
       { sym: 'symbol', size: 'int' }
     );
+    assert.strictEqual(
+      simulateSqlToolsFormatInsertQuery(await driver.getInsertQuery({ item: emptyItem, columns: emptyColumns })),
+      '(`$"empty") insert (`; 0Ni);'
+    );
 
     const edgeItem = tables.find(item => item.label === 'edge');
     assert.ok(edgeItem, 'expected edge table item');
@@ -134,6 +138,10 @@ async function runLiveAssertions(port) {
     assert.deepStrictEqual(
       { chars: edgeColumnTypes.chars, nums: edgeColumnTypes.nums, nested: edgeColumnTypes.nested, dict: edgeColumnTypes.dict },
       { chars: 'char list', nums: 'long list', nested: 'mixed', dict: 'mixed' }
+    );
+    assert.strictEqual(
+      simulateSqlToolsFormatInsertQuery(await driver.getInsertQuery({ item: edgeItem, columns: edgeColumns })),
+      '(`$"edge") insert (`; ::; ::; ::; ::; `; 0Nj; .z.D; .z.P; 00:00:00.000000000);'
     );
 
     const attrItem = tables.find(item => item.label === 'attrTrade');
@@ -152,6 +160,16 @@ async function runLiveAssertions(port) {
 
     const quoteItem = tables.find(item => item.label === 'quote');
     assert.ok(quoteItem, 'expected quote keyed table item');
+    const quoteColumnGroups = await driver.getChildrenForItem({ item: quoteItem, parent: tablesGroup });
+    const quoteColumns = await driver.getChildrenForItem({ item: quoteColumnGroups[0], parent: quoteItem });
+    assert.deepStrictEqual(
+      Object.fromEntries(quoteColumns.map(column => [column.label, column.dataType])),
+      { sym: 'symbol', bid: 'float', ask: 'float' }
+    );
+    assert.strictEqual(
+      simulateSqlToolsFormatInsertQuery(await driver.getInsertQuery({ item: quoteItem, columns: quoteColumns })),
+      '(`$"quote") insert (`; 0n; 0n);'
+    );
     const keyedPreview = await driver.query(
       driver.queries.fetchRecords({ namespace: '.', table: quoteItem, limit: 2, offset: 0 }).toString()
     );
@@ -172,6 +190,29 @@ async function runLiveAssertions(port) {
     assert.strictEqual(nonRootPreview[0].error, undefined);
     assert.strictEqual(nonRootPreview[0].total, 2);
     assert.deepStrictEqual(nonRootPreview[0].results, [{ sym: 'ORCL', size: 20 }]);
+
+    const analyticsConnectionItem = {
+      label: 'analytics',
+      type: ContextValue.CONNECTION,
+      database: '.analytics',
+      schema: '.analytics',
+    };
+    const analyticsGroups = await driver.getChildrenForItem({ item: analyticsConnectionItem });
+    const analyticsTablesGroup = analyticsGroups.find(item => item.label === 'Tables');
+    const analyticsFunctionsGroup = analyticsGroups.find(item => item.label === 'Functions');
+    assert.ok(analyticsTablesGroup, 'expected analytics Tables explorer group');
+    assert.ok(analyticsFunctionsGroup, 'expected analytics Functions explorer group');
+
+    const analyticsTables = await driver.getChildrenForItem({ item: analyticsTablesGroup, parent: analyticsConnectionItem });
+    assert.deepStrictEqual(analyticsTables.map(item => item.label), ['nsTrade']);
+    const analyticsFunctions = await driver.getChildrenForItem({ item: analyticsFunctionsGroup, parent: analyticsConnectionItem });
+    const nsFunction = analyticsFunctions.find(item => item.label === 'nsFunc');
+    assert.ok(nsFunction, `expected nsFunc function in ${analyticsFunctions.map(item => item.label).join(', ')}`);
+    const nsFunctionDefinition = await driver.query(
+      await driver.getDefinitionForItem({ item: nsFunction })
+    );
+    assert.strictEqual(nsFunctionDefinition[0].error, undefined);
+    assert.ok(String(nsFunctionDefinition[0].results[0].value).includes('x+1'));
 
     const views = await driver.getChildrenForItem({ item: viewsGroup, parent: connectionItem });
     const viewLabels = views.map(item => item.label).sort();
@@ -243,6 +284,10 @@ function createDriver(port) {
     isConnected: false,
     isActive: false,
   }, async () => []);
+}
+
+function simulateSqlToolsFormatInsertQuery(insertQuery) {
+  return `${insertQuery.substr(0, Math.max(0, insertQuery.length - 2))});`;
 }
 
 function resolveQPath() {

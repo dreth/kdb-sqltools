@@ -40,4 +40,5 @@ calcSpread:{[bid;ask] ask-bid}
 
 \d .analytics
 nsTrade:([] sym:`IBM`ORCL; size:10 20i)
+nsFunc:{[x] x+1}
 \d .
