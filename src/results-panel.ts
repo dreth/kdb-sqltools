@@ -67,6 +67,7 @@ interface KdbPanelSettings {
   showRowIndex: boolean;
   includeHeaders: boolean;
   includeRowIndex: boolean;
+  hideLargeResultWarnings: boolean;
 }
 
 interface CopyExportEstimate {
@@ -100,6 +101,7 @@ const DEFAULT_PANEL_SETTINGS: KdbPanelSettings = {
   showRowIndex: true,
   includeHeaders: true,
   includeRowIndex: true,
+  hideLargeResultWarnings: false,
 };
 
 export class KdbResultsPanel {
@@ -264,6 +266,7 @@ export class KdbResultsPanel {
   private metadataForResult(result: KdbPanelResult): KdbPanelMetadata {
     const columns = this.visibleColumnNames(result);
     const hiddenColumnNames = this.activeHiddenColumnNames(result);
+    const settings = panelSettings();
     return {
       columns,
       allColumns: result.table.columns.slice(),
@@ -276,9 +279,9 @@ export class KdbResultsPanel {
       messages: result.messages,
       error: result.error,
       version: this.version,
-      settings: panelSettings(),
+      settings,
       sort: this.visibleSortState(result),
-      guardrailMessage: resultSizeGuardrailMessage(result.table.rowCount, result.table.columns.length),
+      guardrailMessage: settings.hideLargeResultWarnings ? undefined : resultSizeGuardrailMessage(result.table.rowCount, result.table.columns.length),
     };
   }
 
@@ -1070,16 +1073,25 @@ export class KdbResultsPanel {
       }
     }
     .message {
+      display: grid;
+      gap: 8px;
       padding: 10px;
       color: var(--vscode-descriptionForeground);
       border-bottom: 1px solid var(--vscode-panel-border);
-      white-space: pre-wrap;
       max-height: 80px;
       overflow: auto;
       box-sizing: border-box;
     }
     .message.error {
       color: var(--vscode-errorForeground);
+    }
+    .message-text {
+      white-space: pre-wrap;
+    }
+    .message-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
     }
     #viewport {
       position: relative;
@@ -1125,6 +1137,18 @@ export class KdbResultsPanel {
       font-weight: 600;
       background: var(--vscode-editorGroupHeader-tabsBackground);
     }
+    .resize-handle {
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 8px;
+      height: 100%;
+      cursor: col-resize;
+      background: transparent;
+    }
+    .resize-handle:hover {
+      background: var(--vscode-focusBorder);
+    }
     .index {
       color: var(--vscode-descriptionForeground);
       text-align: right;
@@ -1148,15 +1172,7 @@ export class KdbResultsPanel {
 </head>
 <body>
   <div class="toolbar">
-    <select id="copyFormat" aria-label="Copy format" disabled>
-      <option value="csv">CSV</option>
-      <option value="tsv">TSV</option>
-      <option value="json">JSON</option>
-      <option value="ndjson">NDJSON</option>
-      <option value="html">HTML</option>
-    </select>
-    <button id="copy" disabled>Copy</button>
-    <select id="exportFormat" aria-label="Export format" disabled>
+    <select id="actionFormat" aria-label="Copy/export format" disabled>
       <option value="csv">CSV</option>
       <option value="xlsx">XLSX</option>
       <option value="tsv">TSV</option>
@@ -1164,6 +1180,7 @@ export class KdbResultsPanel {
       <option value="ndjson">NDJSON</option>
       <option value="html">HTML</option>
     </select>
+    <button id="copy" disabled>Copy</button>
     <button id="export" disabled>Export</button>
     <label class="checkbox"><input id="includeRowIndex" type="checkbox" checked>Row #</label>
     <label class="checkbox"><input id="includeHeaders" type="checkbox" checked>Headers</label>
@@ -1184,6 +1201,7 @@ export class KdbResultsPanel {
         <label class="checkbox"><input id="settingsShowRowIndex" type="checkbox">Show row #</label>
         <label class="checkbox"><input id="settingsIncludeHeaders" type="checkbox">Include headers</label>
         <label class="checkbox"><input id="settingsIncludeRowIndex" type="checkbox">Include row #</label>
+        <label class="checkbox"><input id="settingsHideLargeResultWarnings" type="checkbox">Hide large-result warnings</label>
         <label class="settings-row"><span>Density</span><select id="settingsDensity">
           <option value="compact">Compact</option>
           <option value="standard">Standard</option>
@@ -1196,6 +1214,7 @@ export class KdbResultsPanel {
           <div class="settings-heading"><span>Columns</span><span id="hiddenColumns">All visible</span></div>
           <div id="columnList" class="column-list" role="list"></div>
           <button id="resetColumns" class="reset-columns" disabled>Reset hidden columns</button>
+          <button id="resetColumnWidths" class="reset-columns" disabled>Reset column widths</button>
         </div>
       </div>
     </details>
@@ -1219,6 +1238,9 @@ export class KdbResultsPanel {
       const OVERSCAN_ROWS = 8;
       const OVERSCAN_COLUMNS = 2;
       const MAX_SCROLL_PIXELS = 24000000;
+      const MIN_COLUMN_WIDTH = 80;
+      const MAX_COLUMN_WIDTH = 2000;
+      const AUTO_COLUMN_WIDTH_CAP = 1200;
       const DEFAULT_SETTINGS = {
         cellWidth: 160,
         rowHeight: 28,
@@ -1226,15 +1248,15 @@ export class KdbResultsPanel {
         density: 'standard',
         showRowIndex: true,
         includeHeaders: true,
-        includeRowIndex: true
+        includeRowIndex: true,
+        hideLargeResultWarnings: false
       };
       const viewport = document.getElementById('viewport');
       const canvas = document.getElementById('canvas');
       const header = document.getElementById('header');
       const rowsLayer = document.getElementById('rows');
-      const copyFormat = document.getElementById('copyFormat');
+      const actionFormat = document.getElementById('actionFormat');
       const copyButton = document.getElementById('copy');
-      const exportFormat = document.getElementById('exportFormat');
       const exportButton = document.getElementById('export');
       const includeRowIndex = document.getElementById('includeRowIndex');
       const includeHeaders = document.getElementById('includeHeaders');
@@ -1247,6 +1269,7 @@ export class KdbResultsPanel {
       const settingsShowRowIndex = document.getElementById('settingsShowRowIndex');
       const settingsIncludeHeaders = document.getElementById('settingsIncludeHeaders');
       const settingsIncludeRowIndex = document.getElementById('settingsIncludeRowIndex');
+      const settingsHideLargeResultWarnings = document.getElementById('settingsHideLargeResultWarnings');
       const settingsDensity = document.getElementById('settingsDensity');
       const settingsCellWidth = document.getElementById('settingsCellWidth');
       const settingsRowHeight = document.getElementById('settingsRowHeight');
@@ -1254,6 +1277,7 @@ export class KdbResultsPanel {
       const hiddenColumns = document.getElementById('hiddenColumns');
       const columnList = document.getElementById('columnList');
       const resetColumns = document.getElementById('resetColumns');
+      const resetColumnWidths = document.getElementById('resetColumnWidths');
       const spinner = document.getElementById('spinner');
       const summary = document.getElementById('summary');
       const status = document.getElementById('status');
@@ -1272,6 +1296,10 @@ export class KdbResultsPanel {
       let search = emptySearch();
       let settings = normalizeSettings(DEFAULT_SETTINGS);
       let layout = layoutFromSettings(settings);
+      let columnWidthOverrides = Object.create(null);
+      let autoColumnWidths = Object.create(null);
+      let columnWidthSchema = [];
+      let resizeState = null;
 
       window.addEventListener('message', event => {
         const msg = event.data || {};
@@ -1304,6 +1332,12 @@ export class KdbResultsPanel {
         }
       });
 
+      actionFormat.addEventListener('change', () => {
+        updateActionState();
+        if (String(actionFormat.value || '') === 'xlsx') {
+          status.textContent = 'XLSX is export-only';
+        }
+      });
       copyButton.addEventListener('click', copySelection);
       exportButton.addEventListener('click', exportSelection);
       includeHeaders.addEventListener('change', () => updateSetting('includeHeaders', !!includeHeaders.checked));
@@ -1327,11 +1361,13 @@ export class KdbResultsPanel {
       settingsShowRowIndex.addEventListener('change', () => updateSetting('showRowIndex', !!settingsShowRowIndex.checked));
       settingsIncludeHeaders.addEventListener('change', () => updateSetting('includeHeaders', !!settingsIncludeHeaders.checked));
       settingsIncludeRowIndex.addEventListener('change', () => updateSetting('includeRowIndex', !!settingsIncludeRowIndex.checked));
+      settingsHideLargeResultWarnings.addEventListener('change', () => updateSetting('hideLargeResultWarnings', !!settingsHideLargeResultWarnings.checked));
       settingsDensity.addEventListener('change', () => updateSetting('density', String(settingsDensity.value || 'standard')));
       settingsCellWidth.addEventListener('change', () => updateNumberSetting('cellWidth', settingsCellWidth, 80, 600));
       settingsRowHeight.addEventListener('change', () => updateNumberSetting('rowHeight', settingsRowHeight, 20, 80));
       settingsFontSize.addEventListener('change', () => updateNumberSetting('fontSize', settingsFontSize, 0, 32));
       resetColumns.addEventListener('click', () => vscode.postMessage({ type: 'resetHiddenColumns' }));
+      resetColumnWidths.addEventListener('click', resetColumnWidthOverrides);
       viewport.addEventListener('scroll', requestRender);
       window.addEventListener('keydown', event => {
         if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c' && hasTableCells()) {
@@ -1339,7 +1375,19 @@ export class KdbResultsPanel {
           copySelection();
         }
       });
+      window.addEventListener('mousemove', event => {
+        if (!resizeState) {
+          return;
+        }
+        const width = clampInteger(resizeState.startWidth + event.clientX - resizeState.startX, MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH);
+        setColumnWidthOverride(resizeState.column, width);
+        event.preventDefault();
+      });
       window.addEventListener('mouseup', () => {
+        if (resizeState) {
+          resizeState = null;
+          document.body.style.cursor = '';
+        }
         dragging = false;
         dragMode = '';
       });
@@ -1367,9 +1415,15 @@ export class KdbResultsPanel {
 
       function setResultMeta(result) {
         applySettings(result.settings);
+        const nextColumns = Array.isArray(result.columns) ? result.columns.map(String) : [];
+        if (!sameColumnNames(columnWidthSchema, nextColumns)) {
+          columnWidthOverrides = Object.create(null);
+          autoColumnWidths = Object.create(null);
+          columnWidthSchema = nextColumns.slice();
+        }
         data = {
           version: toNonNegativeInteger(result.version, data.version + 1),
-          columns: Array.isArray(result.columns) ? result.columns.map(String) : [],
+          columns: nextColumns,
           allColumns: Array.isArray(result.allColumns) ? result.allColumns.map(String) : [],
           hiddenColumnNames: Array.isArray(result.hiddenColumnNames) ? result.hiddenColumnNames.map(String) : [],
           hiddenColumnCount: toNonNegativeInteger(result.hiddenColumnCount, 0),
@@ -1413,6 +1467,7 @@ export class KdbResultsPanel {
         }
         slice = normalizeSlice(msg.slice || {});
         pendingRequestKey = '';
+        updateAutoColumnWidthsFromSlice();
         renderNow();
       }
 
@@ -1610,9 +1665,9 @@ export class KdbResultsPanel {
       }
 
       function setActionsDisabled(disabled) {
-        copyFormat.disabled = disabled;
-        copyButton.disabled = disabled;
-        exportFormat.disabled = disabled;
+        actionFormat.disabled = disabled;
+        copyButton.disabled = disabled || String(actionFormat.value || '') === 'xlsx';
+        copyButton.title = String(actionFormat.value || '') === 'xlsx' ? 'XLSX is export-only' : '';
         exportButton.disabled = disabled;
         includeRowIndex.disabled = false;
         includeHeaders.disabled = false;
@@ -1659,7 +1714,8 @@ export class KdbResultsPanel {
           density: normalizeDensity(value.density),
           showRowIndex: typeof value.showRowIndex === 'boolean' ? value.showRowIndex : DEFAULT_SETTINGS.showRowIndex,
           includeHeaders: typeof value.includeHeaders === 'boolean' ? value.includeHeaders : DEFAULT_SETTINGS.includeHeaders,
-          includeRowIndex: typeof value.includeRowIndex === 'boolean' ? value.includeRowIndex : DEFAULT_SETTINGS.includeRowIndex
+          includeRowIndex: typeof value.includeRowIndex === 'boolean' ? value.includeRowIndex : DEFAULT_SETTINGS.includeRowIndex,
+          hideLargeResultWarnings: typeof value.hideLargeResultWarnings === 'boolean' ? value.hideLargeResultWarnings : DEFAULT_SETTINGS.hideLargeResultWarnings
         };
       }
 
@@ -1669,6 +1725,7 @@ export class KdbResultsPanel {
         settingsShowRowIndex.checked = settings.showRowIndex;
         settingsIncludeHeaders.checked = settings.includeHeaders;
         settingsIncludeRowIndex.checked = settings.includeRowIndex;
+        settingsHideLargeResultWarnings.checked = settings.hideLargeResultWarnings;
         settingsDensity.value = settings.density;
         settingsCellWidth.value = String(settings.cellWidth);
         settingsRowHeight.value = String(settings.rowHeight);
@@ -1683,10 +1740,14 @@ export class KdbResultsPanel {
           density: settings.density,
           showRowIndex: settings.showRowIndex,
           includeHeaders: settings.includeHeaders,
-          includeRowIndex: settings.includeRowIndex
+          includeRowIndex: settings.includeRowIndex,
+          hideLargeResultWarnings: settings.hideLargeResultWarnings
         };
         next[key] = value;
         applySettings(next);
+        if (key === 'cellWidth' || key === 'fontSize' || key === 'density') {
+          autoColumnWidths = Object.create(null);
+        }
         requestRender();
         vscode.postMessage({ type: 'updateSetting', key, value });
       }
@@ -1704,6 +1765,7 @@ export class KdbResultsPanel {
         const hidden = columnNameLookup(data.hiddenColumnNames);
         hiddenColumns.textContent = data.hiddenColumnCount > 0 ? data.hiddenColumnCount + ' hidden' : 'All visible';
         resetColumns.disabled = data.hiddenColumnCount <= 0;
+        resetColumnWidths.disabled = !hasColumnWidthOverrides();
         columnList.textContent = '';
         const fragment = document.createDocumentFragment();
         data.allColumns.forEach(column => {
@@ -1724,6 +1786,65 @@ export class KdbResultsPanel {
           fragment.appendChild(label);
         });
         columnList.appendChild(fragment);
+      }
+
+      function updateAutoColumnWidthsFromSlice() {
+        let changed = false;
+        for (let column = slice.startColumn; column <= slice.endColumn; column++) {
+          if (column < 0 || column >= data.columns.length) {
+            continue;
+          }
+          const key = columnWidthKey(column);
+          if (Number.isFinite(columnWidthOverrides[key])) {
+            continue;
+          }
+          let desired = Math.max(settings.cellWidth, measuredColumnTextWidth(data.columns[column]));
+          for (let rowOffset = 0; rowOffset < slice.cells.length; rowOffset++) {
+            const row = slice.cells[rowOffset] || [];
+            const text = String(row[column - slice.startColumn] || '');
+            if (isArrayDisplayText(text)) {
+              desired = Math.max(desired, measuredColumnTextWidth(text));
+            }
+          }
+          desired = clampInteger(desired, MIN_COLUMN_WIDTH, AUTO_COLUMN_WIDTH_CAP);
+          if (!Number.isFinite(autoColumnWidths[key]) || desired > autoColumnWidths[key]) {
+            autoColumnWidths[key] = desired;
+            changed = true;
+          }
+        }
+        if (changed) {
+          requestRender();
+        }
+      }
+
+      function isArrayDisplayText(text) {
+        const value = String(text || '').trim();
+        return value.indexOf(' , ') !== -1 && value.charAt(0) !== '{';
+      }
+
+      function measuredColumnTextWidth(text) {
+        const fontSize = settings.fontSize > 0 ? settings.fontSize : 13;
+        const charWidth = Math.max(7, fontSize * 0.58);
+        return Math.ceil(String(text || '').length * charWidth + layout.cellPaddingX * 2 + 18);
+      }
+
+      function setColumnWidthOverride(column, width) {
+        const key = columnWidthKey(column);
+        columnWidthOverrides[key] = clampInteger(width, MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH);
+        status.textContent = data.columns[column] + ' width: ' + columnWidthOverrides[key] + 'px';
+        resetColumnWidths.disabled = false;
+        renderNow();
+      }
+
+      function resetColumnWidthOverrides() {
+        columnWidthOverrides = Object.create(null);
+        status.textContent = 'Column widths reset';
+        renderColumnSettings();
+        requestRender();
+      }
+
+      function hasColumnWidthOverrides() {
+        return Object.keys(columnWidthOverrides).length > 0;
       }
 
       function headerMode() {
@@ -1752,6 +1873,18 @@ export class KdbResultsPanel {
         return lookup;
       }
 
+      function sameColumnNames(left, right) {
+        if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+          return false;
+        }
+        for (let index = 0; index < left.length; index++) {
+          if (left[index] !== right[index]) {
+            return false;
+          }
+        }
+        return true;
+      }
+
       function boundedSetting(value, fallback, min, max) {
         const number = Number(value);
         return Number.isFinite(number) ? clampInteger(number, min, max) : fallback;
@@ -1763,8 +1896,37 @@ export class KdbResultsPanel {
 
       function showMessage(text, isError) {
         message.hidden = !text;
-        message.textContent = text || '';
+        message.textContent = '';
         message.className = isError ? 'message error' : 'message';
+        if (!text) {
+          return;
+        }
+        const textElement = document.createElement('div');
+        textElement.className = 'message-text';
+        textElement.textContent = text;
+        message.appendChild(textElement);
+        if (!isError && data.guardrailMessage) {
+          const actions = document.createElement('div');
+          actions.className = 'message-actions';
+          const hideOnce = document.createElement('button');
+          hideOnce.type = 'button';
+          hideOnce.textContent = 'Hide once';
+          hideOnce.addEventListener('click', () => {
+            data.guardrailMessage = '';
+            showMessage(resultMessageText(data), data.error);
+          });
+          const hideForever = document.createElement('button');
+          hideForever.type = 'button';
+          hideForever.textContent = 'Hide forever';
+          hideForever.addEventListener('click', () => {
+            data.guardrailMessage = '';
+            updateSetting('hideLargeResultWarnings', true);
+            showMessage(resultMessageText(data), data.error);
+          });
+          actions.appendChild(hideOnce);
+          actions.appendChild(hideForever);
+          message.appendChild(actions);
+        }
       }
 
       function resultMessageText(value) {
@@ -1789,21 +1951,25 @@ export class KdbResultsPanel {
       function renderNow() {
         const columnCount = data.columns.length;
         const rowCount = data.rowCount;
-        const totalWidth = layout.indexWidth + columnCount * layout.cellWidth;
-        const state = scrollStateForViewport();
-        canvas.style.width = Math.max(totalWidth, viewport.clientWidth) + 'px';
-        canvas.style.height = state.canvasHeight + 'px';
-        if (viewport.scrollTop !== state.physicalTop) {
-          viewport.scrollTop = state.physicalTop;
+        const metrics = columnMetrics();
+        const verticalState = scrollStateForViewport();
+        const horizontalState = horizontalScrollState(viewport.scrollLeft, viewport.clientWidth, metrics.totalWidth);
+        canvas.style.width = Math.max(horizontalState.canvasWidth, viewport.clientWidth) + 'px';
+        canvas.style.height = verticalState.canvasHeight + 'px';
+        if (viewport.scrollTop !== verticalState.physicalTop) {
+          viewport.scrollTop = verticalState.physicalTop;
+        }
+        if (viewport.scrollLeft !== horizontalState.physicalLeft) {
+          viewport.scrollLeft = horizontalState.physicalLeft;
         }
         empty.hidden = rowCount !== 0 || columnCount !== 0;
         empty.style.top = layout.headerHeight + 'px';
 
-        const rows = visibleRange(state.rowOffset, viewport.clientHeight, layout.rowHeight, rowCount, OVERSCAN_ROWS);
-        const columns = visibleColumns();
-        renderHeader(columns);
+        const rows = visibleRange(verticalState.rowOffset, viewport.clientHeight, layout.rowHeight, rowCount, OVERSCAN_ROWS);
+        const columns = visibleColumns(horizontalState, metrics);
+        renderHeader(columns, horizontalState, metrics);
         requestSlice(rows, columns);
-        renderRows(rows, columns);
+        renderRows(rows, columns, verticalState, horizontalState, metrics);
       }
 
       function scrollStateForViewport() {
@@ -1840,9 +2006,34 @@ export class KdbResultsPanel {
         return target * (state.physicalScrollableHeight / state.virtualScrollableHeight);
       }
 
-      function visibleColumns() {
-        const offset = Math.max(0, viewport.scrollLeft - layout.indexWidth);
-        return visibleRange(offset, viewport.clientWidth, layout.cellWidth, data.columns.length, OVERSCAN_COLUMNS);
+      function horizontalScrollState(physicalScrollLeft, viewportWidth, totalWidth) {
+        const virtualContentWidth = Math.max(0, totalWidth);
+        const physicalContentWidth = Math.min(virtualContentWidth, MAX_SCROLL_PIXELS);
+        const canvasWidth = Math.max(physicalContentWidth, viewportWidth);
+        const virtualScrollableWidth = Math.max(0, virtualContentWidth - viewportWidth);
+        const physicalScrollableWidth = Math.max(0, canvasWidth - viewportWidth);
+        const compressed = virtualScrollableWidth > physicalScrollableWidth && physicalScrollableWidth > 0;
+        const physicalLeft = clampNumber(physicalScrollLeft, 0, physicalScrollableWidth);
+        const virtualLeft = compressed
+          ? physicalLeft * (virtualScrollableWidth / physicalScrollableWidth)
+          : physicalLeft;
+        return {
+          canvasWidth,
+          compressed,
+          physicalLeft,
+          virtualLeft,
+          virtualScrollableWidth,
+          physicalScrollableWidth
+        };
+      }
+
+      function physicalLeftForVirtual(state, virtualLeft) {
+        return state.physicalLeft + virtualLeft - state.virtualLeft;
+      }
+
+      function visibleColumns(horizontalState, metrics) {
+        const offset = Math.max(0, horizontalState.virtualLeft - layout.indexWidth);
+        return variableVisibleColumnRange(offset, viewport.clientWidth, metrics, OVERSCAN_COLUMNS);
       }
 
       function visibleRange(offset, size, itemSize, count, overscan) {
@@ -1852,6 +2043,92 @@ export class KdbResultsPanel {
         const start = Math.max(0, Math.floor(offset / itemSize) - overscan);
         const end = Math.min(count - 1, Math.ceil((offset + size) / itemSize) + overscan);
         return { start, end };
+      }
+
+      function variableVisibleColumnRange(offset, size, metrics, overscan) {
+        const count = data.columns.length;
+        if (count <= 0 || size <= 0) {
+          return { start: 0, end: -1 };
+        }
+        const safeOverscan = Math.max(0, Math.floor(overscan));
+        const start = clampInteger(firstVisibleColumn(offset, metrics) - safeOverscan, 0, count - 1);
+        const end = clampInteger(lastVisibleColumn(offset + size, metrics) + safeOverscan, 0, count - 1);
+        return start <= end ? { start, end } : { start: 0, end: -1 };
+      }
+
+      function firstVisibleColumn(offset, metrics) {
+        let low = 0;
+        let high = data.columns.length - 1;
+        let result = high;
+        while (low <= high) {
+          const middle = Math.floor((low + high) / 2);
+          if (columnLeft(metrics, middle) + columnWidthAt(metrics, middle) > offset) {
+            result = middle;
+            high = middle - 1;
+          } else {
+            low = middle + 1;
+          }
+        }
+        return result;
+      }
+
+      function lastVisibleColumn(offset, metrics) {
+        let low = 0;
+        let high = data.columns.length - 1;
+        let result = low;
+        while (low <= high) {
+          const middle = Math.floor((low + high) / 2);
+          if (columnLeft(metrics, middle) < offset) {
+            result = middle;
+            low = middle + 1;
+          } else {
+            high = middle - 1;
+          }
+        }
+        return result;
+      }
+
+      function columnMetrics() {
+        const lefts = [];
+        const widths = [];
+        let left = 0;
+        for (let column = 0; column < data.columns.length; column++) {
+          const width = columnWidth(column);
+          lefts[column] = left;
+          widths[column] = width;
+          left += width;
+        }
+        return {
+          lefts,
+          widths,
+          totalColumnsWidth: left,
+          totalWidth: layout.indexWidth + left
+        };
+      }
+
+      function columnLeft(metrics, column) {
+        return metrics.lefts[column] || 0;
+      }
+
+      function columnWidthAt(metrics, column) {
+        return metrics.widths[column] || settings.cellWidth;
+      }
+
+      function columnWidth(column) {
+        const key = columnWidthKey(column);
+        const override = columnWidthOverrides[key];
+        if (Number.isFinite(override)) {
+          return clampInteger(override, MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH);
+        }
+        const autoWidth = autoColumnWidths[key];
+        if (Number.isFinite(autoWidth)) {
+          return clampInteger(autoWidth, MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH);
+        }
+        return clampInteger(settings.cellWidth, MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH);
+      }
+
+      function columnWidthKey(column) {
+        return String(data.columns[column] || column);
       }
 
       function requestSlice(rows, columns) {
@@ -1878,32 +2155,33 @@ export class KdbResultsPanel {
         });
       }
 
-      function renderHeader(columns) {
+      function renderHeader(columns, horizontalState, metrics) {
         const range = normalizedSelection();
         const cells = layout.showRowIndex ? [createCell({
           text: '#',
           row: -1,
           column: -1,
-          left: 0,
+          left: physicalLeftForVirtual(horizontalState, 0),
           top: 0,
           width: layout.indexWidth,
           headerCell: true,
           selected: isAllSelected(range),
           className: 'cell index'
         })] : [];
-        replaceChildren(header, cells.concat(headerCells(columns, range)));
+        replaceChildren(header, cells.concat(headerCells(columns, range, horizontalState, metrics)));
       }
 
-      function headerCells(columns, range) {
+      function headerCells(columns, range, horizontalState, metrics) {
         const cells = [];
         for (let column = columns.start; column <= columns.end; column++) {
+          const width = columnWidthAt(metrics, column);
           cells.push(createCell({
             text: data.columns[column],
             row: -1,
             column,
-            left: layout.indexWidth + column * layout.cellWidth,
+            left: physicalLeftForVirtual(horizontalState, layout.indexWidth + columnLeft(metrics, column)),
             top: 0,
-            width: layout.cellWidth,
+            width,
             headerCell: true,
             selected: isColumnSelected(column, range),
             className: 'cell'
@@ -1912,8 +2190,7 @@ export class KdbResultsPanel {
         return cells;
       }
 
-      function renderRows(rows, columns) {
-        const state = scrollStateForViewport();
+      function renderRows(rows, columns, verticalState, horizontalState, metrics) {
         const range = normalizedSelection();
         const hasCells = sliceCovers(slice, rows, columns);
         const fragment = document.createDocumentFragment();
@@ -1921,7 +2198,7 @@ export class KdbResultsPanel {
           const rowElement = document.createElement('div');
           rowElement.className = 'row';
           rowElement.setAttribute('role', 'row');
-          rowElement.style.top = renderedRowTop(row, state, layout) + 'px';
+          rowElement.style.top = renderedRowTop(row, verticalState, layout) + 'px';
           rowElement.style.width = canvas.style.width;
           const searchMatched = isSearchMatchedRow(row);
           const searchActive = isActiveSearchRow(row);
@@ -1930,7 +2207,7 @@ export class KdbResultsPanel {
               text: String(row + 1),
               row,
               column: -1,
-              left: 0,
+              left: physicalLeftForVirtual(horizontalState, 0),
               top: 0,
               width: layout.indexWidth,
               headerCell: false,
@@ -1943,13 +2220,14 @@ export class KdbResultsPanel {
           for (let column = columns.start; column <= columns.end; column++) {
             const selected = isSelected(row, column, range);
             const value = hasCells ? cellText(row, column) : '';
+            const width = columnWidthAt(metrics, column);
             rowElement.appendChild(createCell({
               text: value,
               row,
               column,
-              left: layout.indexWidth + column * layout.cellWidth,
+              left: physicalLeftForVirtual(horizontalState, layout.indexWidth + columnLeft(metrics, column)),
               top: 0,
-              width: layout.cellWidth,
+              width,
               headerCell: false,
               selected,
               searchMatch: searchMatched,
@@ -1979,6 +2257,15 @@ export class KdbResultsPanel {
         cell.style.width = options.width + 'px';
         cell.title = String(options.text || '');
         cell.textContent = String(options.text || '');
+        if (options.headerCell && options.column >= 0) {
+          const handle = document.createElement('span');
+          handle.className = 'resize-handle';
+          handle.title = 'Drag to resize column';
+          handle.dataset.column = String(options.column);
+          handle.addEventListener('mousedown', onColumnResizeMouseDown);
+          handle.addEventListener('dblclick', onColumnResizeDoubleClick);
+          cell.appendChild(handle);
+        }
         if (options.row >= 0) {
           cell.dataset.row = String(options.row);
         }
@@ -1998,6 +2285,35 @@ export class KdbResultsPanel {
           cell.addEventListener('mouseenter', onRowMouseEnter);
         }
         return cell;
+      }
+
+      function onColumnResizeMouseDown(event) {
+        if (event.button !== 0 || !hasTableCells()) {
+          return;
+        }
+        const column = Number(event.currentTarget.dataset.column);
+        resizeState = {
+          column,
+          startX: event.clientX,
+          startWidth: columnWidth(column)
+        };
+        dragging = false;
+        dragMode = 'resize';
+        document.body.style.cursor = 'col-resize';
+        viewport.focus();
+        event.stopPropagation();
+        event.preventDefault();
+      }
+
+      function onColumnResizeDoubleClick(event) {
+        const column = Number(event.currentTarget.dataset.column);
+        const key = columnWidthKey(column);
+        delete columnWidthOverrides[key];
+        status.textContent = data.columns[column] + ' width reset';
+        renderColumnSettings();
+        requestRender();
+        event.stopPropagation();
+        event.preventDefault();
       }
 
       function onCellMouseDown(event) {
@@ -2199,12 +2515,18 @@ export class KdbResultsPanel {
         if (!hasTableCells()) {
           return;
         }
+        const format = String(actionFormat.value || 'csv');
+        if (format === 'xlsx') {
+          status.textContent = 'XLSX is export-only';
+          updateActionState();
+          return;
+        }
         const range = normalizedSelection();
         vscode.postMessage({
           type: 'copyRange',
           version: data.version,
           range,
-          format: String(copyFormat.value || 'csv'),
+          format,
           includeHeaders: !!includeHeaders.checked,
           includeRowIndex: !!includeRowIndex.checked
         });
@@ -2219,7 +2541,7 @@ export class KdbResultsPanel {
           type: 'exportRange',
           version: data.version,
           range,
-          format: String(exportFormat.value || 'csv'),
+          format: String(actionFormat.value || 'csv'),
           includeHeaders: !!includeHeaders.checked,
           includeRowIndex: !!includeRowIndex.checked
         });
@@ -2340,6 +2662,10 @@ function panelSettings(): KdbPanelSettings {
     showRowIndex: booleanSetting(config.get<boolean>('showRowIndex'), DEFAULT_PANEL_SETTINGS.showRowIndex),
     includeHeaders: booleanSetting(config.get<boolean>('includeHeaders'), DEFAULT_PANEL_SETTINGS.includeHeaders),
     includeRowIndex: booleanSetting(config.get<boolean>('includeRowIndex'), DEFAULT_PANEL_SETTINGS.includeRowIndex),
+    hideLargeResultWarnings: booleanSetting(
+      config.get<boolean>('hideLargeResultWarnings'),
+      DEFAULT_PANEL_SETTINGS.hideLargeResultWarnings
+    ),
   };
 }
 
@@ -2354,6 +2680,7 @@ const RESULT_SETTING_UPDATE_ALLOWLIST: { [key: string]: PanelSettingUpdateValida
   showRowIndex: booleanSettingUpdate,
   includeHeaders: booleanSettingUpdate,
   includeRowIndex: booleanSettingUpdate,
+  hideLargeResultWarnings: booleanSettingUpdate,
 };
 
 function normalizePanelSettingUpdate(key: any, value: any): { key: string; value: PanelSettingUpdateValue } | null {

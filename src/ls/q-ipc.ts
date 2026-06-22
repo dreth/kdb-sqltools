@@ -1,5 +1,5 @@
 import * as net from 'net';
-import { ColumnarPanelResult, createColumnarPanelResult } from '../kdb-results';
+import { ColumnarPanelResult, cellValueToText, createColumnarPanelResult } from '../kdb-results';
 import { endPerfSpan, isPerfTraceEnabled, perfMark, perfSpan } from '../perf';
 import type { PerfDetails, PerfSpan } from '../perf';
 
@@ -751,7 +751,7 @@ export function qValueToColumnarPanel(value: QValue): QColumnarPanelResult {
       if (!entry) {
         return null;
       }
-      return columnIndex === 0 ? normalizeCell(entry.key) : normalizeCell(entry.value);
+      return columnIndex === 0 ? normalizePanelCell(entry.key) : normalizePanelCell(entry.value);
     });
     return {
       cols: result.columns,
@@ -763,7 +763,7 @@ export function qValueToColumnarPanel(value: QValue): QColumnarPanelResult {
 
   if (Array.isArray(value)) {
     if (value.length > 0 && value.every(isPlainObject)) {
-      const rows = value.map(row => normalizePlainObject(row as unknown as { [key: string]: QValue }));
+      const rows = value.map(row => normalizePanelPlainObject(row as unknown as { [key: string]: QValue }));
       const cols = collectColumns(rows);
       return {
         cols,
@@ -777,7 +777,7 @@ export function qValueToColumnarPanel(value: QValue): QColumnarPanelResult {
     }
 
     const result = createColumnarPanelResult(['index', 'value'], value.length, (rowIndex, columnIndex) => {
-      return columnIndex === 0 ? rowIndex : normalizeCell(value[rowIndex]);
+      return columnIndex === 0 ? rowIndex : normalizePanelCell(value[rowIndex]);
     });
     return {
       cols: result.columns,
@@ -788,7 +788,7 @@ export function qValueToColumnarPanel(value: QValue): QColumnarPanelResult {
   }
 
   if (isPlainObject(value)) {
-    const row = normalizePlainObject(value as unknown as { [key: string]: QValue });
+    const row = normalizePanelPlainObject(value as unknown as { [key: string]: QValue });
     const cols = Object.keys(row);
     return {
       cols,
@@ -798,7 +798,7 @@ export function qValueToColumnarPanel(value: QValue): QColumnarPanelResult {
     };
   }
 
-  const result = createColumnarPanelResult(['value'], 1, () => normalizeCell(value));
+  const result = createColumnarPanelResult(['value'], 1, () => normalizePanelCell(value));
   return {
     cols: result.columns,
     result,
@@ -1442,16 +1442,16 @@ function materializeQKeyedTableRows(table: QKeyedTable): Array<{ [key: string]: 
 
 function qTableToColumnarPanel(table: QTable): ColumnarPanelResult {
   return createColumnarPanelResult(table.columns, qTableRowCount(table), (rowIndex, columnIndex) => {
-    return qTableCellValue(table, rowIndex, columnIndex);
+    return qTablePanelCellValue(table, rowIndex, columnIndex);
   });
 }
 
 function qKeyedTableToColumnarPanel(table: QKeyedTable): ColumnarPanelResult {
   return createColumnarPanelResult(table.columns, qKeyedTableRowCount(table), (rowIndex, columnIndex) => {
     if (columnIndex < table.keyTable.columns.length) {
-      return qTableCellValue(table.keyTable, rowIndex, columnIndex);
+      return qTablePanelCellValue(table.keyTable, rowIndex, columnIndex);
     }
-    return qTableCellValue(table.valueTable, rowIndex, columnIndex - table.keyTable.columns.length);
+    return qTablePanelCellValue(table.valueTable, rowIndex, columnIndex - table.keyTable.columns.length);
   });
 }
 
@@ -1464,6 +1464,17 @@ function qTableCellValue(table: QTable, rowIndex: number, columnIndex: number): 
   }
   const row = table.rows[rowIndex];
   return row ? normalizeCell(row[table.columns[columnIndex]] as QValue) : null;
+}
+
+function qTablePanelCellValue(table: QTable, rowIndex: number, columnIndex: number): unknown {
+  if (columnIndex < 0 || columnIndex >= table.columns.length) {
+    return null;
+  }
+  if (table.columnData && columnIndex < table.columnData.length) {
+    return normalizePanelCell(vectorValueAt(table.columnData[columnIndex], rowIndex));
+  }
+  const row = table.rows[rowIndex];
+  return row ? normalizePanelCell(row[table.columns[columnIndex]] as QValue) : null;
 }
 
 function qTableRowCount(table: QTable): number {
@@ -1545,11 +1556,25 @@ function normalizePlainObject(value: { [key: string]: QValue }): { [key: string]
   }, {} as { [key: string]: QDisplayValue });
 }
 
+function normalizePanelPlainObject(value: { [key: string]: QValue }): { [key: string]: unknown } {
+  return Object.keys(value).reduce((row, key) => {
+    row[key] = normalizePanelCell(value[key]);
+    return row;
+  }, {} as { [key: string]: unknown });
+}
+
 function normalizeCell(value: QValue): QDisplayValue {
   if (isPrimitiveCell(value)) {
     return value;
   }
-  return stringifyNestedValue(normalizeNestedValue(value));
+  return cellValueToText(normalizeNestedValue(value));
+}
+
+function normalizePanelCell(value: QValue): unknown {
+  if (isPrimitiveCell(value)) {
+    return value;
+  }
+  return normalizeNestedValue(value);
 }
 
 function normalizeNestedValue(value: QValue): QNestedDisplayValue {
@@ -1577,21 +1602,11 @@ function normalizeNestedValue(value: QValue): QNestedDisplayValue {
   return value;
 }
 
-function stringifyNestedValue(value: QNestedDisplayValue): string {
-  const result = JSON.stringify(value, (_key, item) => {
-    if (typeof item === 'number' && !Number.isFinite(item)) {
-      return String(item);
-    }
-    return item;
-  });
-  return result === undefined ? String(value) : result;
-}
-
 function isPrimitiveCell(value: QValue): value is QCellValue {
   return value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean';
 }
 
-function collectColumns(rows: Array<{ [key: string]: QDisplayValue }>): string[] {
+function collectColumns(rows: Array<{ [key: string]: unknown }>): string[] {
   const columns: string[] = [];
   rows.forEach(row => {
     Object.keys(row).forEach(column => {

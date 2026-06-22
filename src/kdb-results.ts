@@ -188,10 +188,10 @@ export function rowsToCsv(
   if (options.includeHeaders) {
     const headers: string[] = [];
     if (options.includeRowIndex) {
-      headers.push(escapeCsvCell(cellValueToExportText(rowIndexColumnName(columns, clamped))));
+      headers.push(escapeCsvCell(cellValueToCsvText(rowIndexColumnName(columns, clamped))));
     }
     for (let columnIndex = clamped.startColumn; columnIndex <= clamped.endColumn; columnIndex++) {
-      headers.push(escapeCsvCell(cellValueToExportText(columns[columnIndex])));
+      headers.push(escapeCsvCell(cellValueToCsvText(columns[columnIndex])));
     }
     lines.push(headers.join(','));
   }
@@ -203,7 +203,7 @@ export function rowsToCsv(
       values.push(String(rowIndex + 1));
     }
     for (let columnIndex = clamped.startColumn; columnIndex <= clamped.endColumn; columnIndex++) {
-      values.push(escapeCsvCell(cellValueToExportText(row[columns[columnIndex]])));
+      values.push(escapeCsvCell(cellValueToCsvText(row[columns[columnIndex]])));
     }
     lines.push(values.join(','));
   }
@@ -256,10 +256,10 @@ export function rowsToHtml(
   if (options.includeHeaders) {
     parts.push('<thead><tr>');
     if (options.includeRowIndex) {
-      parts.push('<th>', escapeHtml(cellValueToExportText(rowIndexColumnName(columns, clamped))), '</th>');
+      parts.push('<th>', escapeHtml(cellValueToCsvText(rowIndexColumnName(columns, clamped))), '</th>');
     }
     for (let columnIndex = clamped.startColumn; columnIndex <= clamped.endColumn; columnIndex++) {
-      parts.push('<th>', escapeHtml(cellValueToExportText(columns[columnIndex])), '</th>');
+      parts.push('<th>', escapeHtml(cellValueToCsvText(columns[columnIndex])), '</th>');
     }
     parts.push('</tr></thead>');
   }
@@ -272,7 +272,7 @@ export function rowsToHtml(
       parts.push('<td>', String(rowIndex + 1), '</td>');
     }
     for (let columnIndex = clamped.startColumn; columnIndex <= clamped.endColumn; columnIndex++) {
-      parts.push('<td>', escapeHtml(cellValueToExportText(row[columns[columnIndex]])), '</td>');
+      parts.push('<td>', escapeHtml(cellValueToCsvText(row[columns[columnIndex]])), '</td>');
     }
     parts.push('</tr>');
   }
@@ -519,10 +519,10 @@ function columnarToCsv(result: ColumnarPanelResult, range: CellRange, options: N
   if (options.includeHeaders) {
     const headers: string[] = [];
     if (options.includeRowIndex) {
-      headers.push(escapeCsvCell(cellValueToExportText(rowIndexColumnName(result.columns, clamped))));
+      headers.push(escapeCsvCell(cellValueToCsvText(rowIndexColumnName(result.columns, clamped))));
     }
     for (let columnIndex = clamped.startColumn; columnIndex <= clamped.endColumn; columnIndex++) {
-      headers.push(escapeCsvCell(cellValueToExportText(result.columns[columnIndex])));
+      headers.push(escapeCsvCell(cellValueToCsvText(result.columns[columnIndex])));
     }
     lines.push(headers.join(','));
   }
@@ -533,7 +533,7 @@ function columnarToCsv(result: ColumnarPanelResult, range: CellRange, options: N
       values.push(String(rowIndex + 1));
     }
     for (let columnIndex = clamped.startColumn; columnIndex <= clamped.endColumn; columnIndex++) {
-      values.push(escapeCsvCell(cellValueToExportText(result.cellValue(rowIndex, columnIndex))));
+      values.push(escapeCsvCell(cellValueToCsvText(result.cellValue(rowIndex, columnIndex))));
     }
     lines.push(values.join(','));
   }
@@ -568,10 +568,10 @@ function columnarToHtml(result: ColumnarPanelResult, range: CellRange, options: 
   if (options.includeHeaders) {
     parts.push('<thead><tr>');
     if (options.includeRowIndex) {
-      parts.push('<th>', escapeHtml(cellValueToExportText(rowIndexColumnName(result.columns, clamped))), '</th>');
+      parts.push('<th>', escapeHtml(cellValueToCsvText(rowIndexColumnName(result.columns, clamped))), '</th>');
     }
     for (let columnIndex = clamped.startColumn; columnIndex <= clamped.endColumn; columnIndex++) {
-      parts.push('<th>', escapeHtml(cellValueToExportText(result.columns[columnIndex])), '</th>');
+      parts.push('<th>', escapeHtml(cellValueToCsvText(result.columns[columnIndex])), '</th>');
     }
     parts.push('</tr></thead>');
   }
@@ -583,7 +583,7 @@ function columnarToHtml(result: ColumnarPanelResult, range: CellRange, options: 
       parts.push('<td>', String(rowIndex + 1), '</td>');
     }
     for (let columnIndex = clamped.startColumn; columnIndex <= clamped.endColumn; columnIndex++) {
-      parts.push('<td>', escapeHtml(cellValueToExportText(result.cellValue(rowIndex, columnIndex))), '</td>');
+      parts.push('<td>', escapeHtml(cellValueToCsvText(result.cellValue(rowIndex, columnIndex))), '</td>');
     }
     parts.push('</tr>');
   }
@@ -632,7 +632,7 @@ export function rowsToCellWindow(
 }
 
 export function cellValueToText(value: unknown): string {
-  return sanitizeTsvCell(cellValueToExportText(value));
+  return sanitizeTsvCell(cellValueToReadableText(value));
 }
 
 export function visibleIndexRange(
@@ -699,6 +699,46 @@ function numericSortValue(value: string): number | null {
 
   const number = Number(normalized);
   return Number.isFinite(number) ? number : null;
+}
+
+function cellValueToCsvText(value: unknown): string {
+  return cellValueToReadableText(value);
+}
+
+function cellValueToReadableText(value: unknown): string {
+  return readableValueText(value, true);
+}
+
+function readableValueText(value: unknown, topLevel: boolean): string {
+  if (value === null || value === undefined) {
+    return '';
+  }
+
+  if (typeof value === 'string') {
+    return value;
+  }
+
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+    return String(value);
+  }
+
+  if (Array.isArray(value)) {
+    const text = value.map(item => readableValueText(item, false)).join(' , ');
+    return topLevel ? text : `[${text}]`;
+  }
+
+  if (isPlainObject(value)) {
+    const parts = Object.keys(value as { [key: string]: unknown }).map(key => {
+      return `${JSON.stringify(key)}: ${readableValueText((value as { [key: string]: unknown })[key], false)}`;
+    });
+    return `{${parts.join(', ')}}`;
+  }
+
+  return cellValueToExportText(value);
+}
+
+function isPlainObject(value: unknown): value is { [key: string]: unknown } {
+  return Object.prototype.toString.call(value) === '[object Object]';
 }
 
 function cellValueToExportText(value: unknown): string {

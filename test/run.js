@@ -19,6 +19,7 @@ const { currentQBlock, selectedTextOrCurrentBlock, selectedTextOrCurrentLine } =
 const {
   allCellsRange,
   applyColumnarRowOrder,
+  cellValueToText,
   columnarToCellWindow,
   compareColumnarCellText,
   exportShape,
@@ -233,8 +234,10 @@ function htmlSelectOptions(source, selectId) {
   );
   assert.strictEqual(
     rowsToCsv(exportRows, exportColumns, exportRange, { includeHeaders: true, includeRowIndex: true }),
-    '#,note,size,meta\n1,"line\nbreak",100,"{""venue"":""lit""}"\n2,,200,"[1,2]"'
+    '#,note,size,meta\n1,"line\nbreak",100,"{""venue"": lit}"\n2,,200,"1 , 2"'
   );
+  assert.strictEqual(cellValueToText([1, 2, 3]), '1 , 2 , 3');
+  assert.strictEqual(cellValueToText({ path: ['a', 'b'], count: 2 }), '{"path": [a , b], "count": 2}');
   assert.strictEqual(
     rowsToTsv(exportRows, exportColumns, { startRow: 0, endRow: 1, startColumn: 1, endColumn: 2 }, {
       includeHeaders: true,
@@ -264,11 +267,11 @@ function htmlSelectOptions(source, selectId) {
   );
   assert.strictEqual(
     rowsToHtml(
-      [{ sym: 'A&B', note: '<tag "x" \'' }],
-      ['sym', 'note'],
-      { startRow: 0, endRow: 0, startColumn: 0, endColumn: 1 }
+      [{ sym: 'A&B', note: '<tag "x" \'', nums: [1, 2, 3] }],
+      ['sym', 'note', 'nums'],
+      { startRow: 0, endRow: 0, startColumn: 0, endColumn: 2 }
     ),
-    '<table><thead><tr><th>sym</th><th>note</th></tr></thead><tbody><tr><td>A&amp;B</td><td>&lt;tag &quot;x&quot; &#39;</td></tr></tbody></table>'
+    '<table><thead><tr><th>sym</th><th>note</th><th>nums</th></tr></thead><tbody><tr><td>A&amp;B</td><td>&lt;tag &quot;x&quot; &#39;</td><td>1 , 2 , 3</td></tr></tbody></table>'
   );
   assert.strictEqual(
     rowsToHtml(
@@ -489,12 +492,19 @@ function htmlSelectOptions(source, selectId) {
   assert.strictEqual(resultsPanelSource.includes('physicalTop * (virtualScrollableHeight / physicalScrollableHeight)'), true);
   assert.strictEqual(resultsPanelSource.includes('function physicalScrollTopForVirtual(state, virtualTop)'), true);
   assert.strictEqual(resultsPanelSource.includes('target * (state.physicalScrollableHeight / state.virtualScrollableHeight)'), true);
-  assert.strictEqual(resultsPanelSource.includes("canvas.style.height = state.canvasHeight + 'px';"), true);
-  assert.strictEqual(resultsPanelSource.includes('const rows = visibleRange(state.rowOffset'), true);
-  assert.strictEqual(resultsPanelSource.includes('rowElement.style.top = renderedRowTop(row, state, layout)'), true);
+  assert.strictEqual(resultsPanelSource.includes('function horizontalScrollState(physicalScrollLeft, viewportWidth, totalWidth)'), true);
+  assert.strictEqual(resultsPanelSource.includes('const physicalContentWidth = Math.min(virtualContentWidth, MAX_SCROLL_PIXELS);'), true);
+  assert.strictEqual(resultsPanelSource.includes('function physicalLeftForVirtual(state, virtualLeft)'), true);
+  assert.strictEqual(resultsPanelSource.includes("canvas.style.height = verticalState.canvasHeight + 'px';"), true);
+  assert.strictEqual(resultsPanelSource.includes('const rows = visibleRange(verticalState.rowOffset'), true);
+  assert.strictEqual(resultsPanelSource.includes('function variableVisibleColumnRange(offset, size, metrics, overscan)'), true);
+  assert.strictEqual(resultsPanelSource.includes('column * layout.cellWidth'), false);
+  assert.strictEqual(resultsPanelSource.includes('rowElement.style.top = renderedRowTop(row, verticalState, layout)'), true);
   assert.strictEqual(resultsPanelSource.includes('rowElement.style.top = (layout.headerHeight + row * layout.rowHeight)'), false);
-  assert.deepStrictEqual(htmlSelectOptions(resultsPanelSource, 'copyFormat'), ['csv', 'tsv', 'json', 'ndjson', 'html']);
-  assert.deepStrictEqual(htmlSelectOptions(resultsPanelSource, 'exportFormat'), ['csv', 'xlsx', 'tsv', 'json', 'ndjson', 'html']);
+  assert.deepStrictEqual(htmlSelectOptions(resultsPanelSource, 'actionFormat'), ['csv', 'xlsx', 'tsv', 'json', 'ndjson', 'html']);
+  assert.strictEqual(resultsPanelSource.includes('id="copyFormat"'), false);
+  assert.strictEqual(resultsPanelSource.includes('id="exportFormat"'), false);
+  assert.strictEqual(resultsPanelSource.includes("format === 'xlsx'"), true);
   assert.strictEqual(/parquet/i.test([resultsPanelSource, kdbResultsSource, readmeSource, packageSource].join('\n')), false);
   assert.strictEqual(packageJson.contributes.commands.some(command => /Run q Block|Run block/.test(command.title)), false);
   assert.strictEqual(commandTitle('kdb-sqltools.runFile'), 'Run q Script');
@@ -529,6 +539,10 @@ function htmlSelectOptions(source, selectId) {
   assert.strictEqual(resultSettings['kdb-sqltools.results.includeHeaders'].default, true);
   assert.strictEqual(resultSettings['kdb-sqltools.results.includeRowIndex'].type, 'boolean');
   assert.strictEqual(resultSettings['kdb-sqltools.results.includeRowIndex'].default, true);
+  assert.strictEqual(resultSettings['kdb-sqltools.results.hideLargeResultWarnings'].type, 'boolean');
+  assert.strictEqual(resultSettings['kdb-sqltools.results.hideLargeResultWarnings'].default, false);
+  assert.strictEqual(resultsPanelSource.includes('settingsHideLargeResultWarnings'), true);
+  assert.strictEqual(resultsPanelSource.includes('Hide forever'), true);
   assert.deepStrictEqual(
     [
       resultSettings['kdb-sqltools.results.cellWidth'].default,
@@ -561,6 +575,7 @@ function htmlSelectOptions(source, selectId) {
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('density', 'spacious'), null);
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('includeHeaders', false), { key: 'includeHeaders', value: false });
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('includeHeaders', 'false'), null);
+  assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('hideLargeResultWarnings', true), { key: 'hideLargeResultWarnings', value: true });
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('constructor', 1), null);
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('__proto__', true), null);
   const xlsxColumnar = rowsToColumnarPanelResult([{ note: 'x\u0001<&>"\'' }], ['note']);
@@ -866,7 +881,7 @@ function htmlSelectOptions(source, selectId) {
     )
   );
 
-  const nestedTableResult = qValueToTabular(deserializeQPayload(qTable(
+  const nestedTablePayload = qTable(
     ['sym', 'chars', 'nums', 'dict'],
     [
       symbolVector(['AAPL']),
@@ -874,14 +889,24 @@ function htmlSelectOptions(source, selectId) {
       genericList([intVector([1, 2, 3])]),
       genericList([qDict(symbolVector(['a', 'b']), intVector([10, 20]))]),
     ]
-  )));
+  );
+  const nestedTableResult = qValueToTabular(deserializeQPayload(nestedTablePayload));
   assert.deepStrictEqual(nestedTableResult.cols, ['sym', 'chars', 'nums', 'dict']);
   assert.deepStrictEqual(nestedTableResult.rows, [{
     sym: 'AAPL',
     chars: 'alpha',
-    nums: '[1,2,3]',
-    dict: '{"a":10,"b":20}',
+    nums: '1 , 2 , 3',
+    dict: '{"a": 10, "b": 20}',
   }]);
+  const nestedColumnarResult = qValueToColumnarPanel(deserializeQPayload(nestedTablePayload));
+  assert.deepStrictEqual(
+    nestedColumnarResult.result.cellWindow({ start: 0, end: 0 }, { start: 0, end: 3 }).cells,
+    [['AAPL', 'alpha', '1 , 2 , 3', '{"a": 10, "b": 20}']]
+  );
+  assert.strictEqual(
+    nestedColumnarResult.result.toText('json', { startRow: 0, endRow: 0, startColumn: 0, endColumn: 3 }),
+    '[{"sym":"AAPL","chars":"alpha","nums":[1,2,3],"dict":{"a":10,"b":20}}]'
+  );
 
   const nullSymbolResult = qValueToTabular(deserializeQPayload(qTable(
     ['sym', 'label'],
