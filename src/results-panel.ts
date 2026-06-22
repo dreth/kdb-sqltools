@@ -506,55 +506,128 @@ export class KdbResultsPanel {
       }
 
       function renderHeader(columns) {
-        const parts = [cellHtml('#', -1, -1, 0, 0, INDEX_WIDTH, true, false, 'cell index')];
+        replaceChildren(header, [createCell({
+          text: '#',
+          row: -1,
+          column: -1,
+          left: 0,
+          top: 0,
+          width: INDEX_WIDTH,
+          headerCell: true,
+          selected: false,
+          className: 'cell index'
+        })].concat(headerCells(columns)));
+      }
+
+      function headerCells(columns) {
+        const cells = [];
         for (let column = columns.start; column <= columns.end; column++) {
-          parts.push(cellHtml(data.columns[column], -1, column, INDEX_WIDTH + column * CELL_WIDTH, 0, CELL_WIDTH, true, false, 'cell'));
+          cells.push(createCell({
+            text: data.columns[column],
+            row: -1,
+            column,
+            left: INDEX_WIDTH + column * CELL_WIDTH,
+            top: 0,
+            width: CELL_WIDTH,
+            headerCell: true,
+            selected: false,
+            className: 'cell'
+          }));
         }
-        header.innerHTML = parts.join('');
+        return cells;
       }
 
       function renderRows(rows, columns) {
-        const parts = [];
         const range = normalizedSelection();
         const hasCells = sliceCovers(slice, rows, columns);
+        const fragment = document.createDocumentFragment();
         for (let row = rows.start; row <= rows.end; row++) {
-          const top = HEADER_HEIGHT + row * ROW_HEIGHT;
-          parts.push('<div class="row" role="row" style="top:' + top + 'px;width:' + canvas.style.width + '">');
-          parts.push(cellHtml(String(row + 1), row, -1, 0, 0, INDEX_WIDTH, false, false, 'cell index'));
+          const rowElement = document.createElement('div');
+          rowElement.className = 'row';
+          rowElement.setAttribute('role', 'row');
+          rowElement.style.top = (HEADER_HEIGHT + row * ROW_HEIGHT) + 'px';
+          rowElement.style.width = canvas.style.width;
+          rowElement.appendChild(createCell({
+            text: String(row + 1),
+            row,
+            column: -1,
+            left: 0,
+            top: 0,
+            width: INDEX_WIDTH,
+            headerCell: false,
+            selected: false,
+            className: 'cell index'
+          }));
           for (let column = columns.start; column <= columns.end; column++) {
             const selected = isSelected(row, column, range);
             const value = hasCells ? cellText(row, column) : '';
-            parts.push(cellHtml(value, row, column, INDEX_WIDTH + column * CELL_WIDTH, 0, CELL_WIDTH, false, selected, 'cell'));
+            rowElement.appendChild(createCell({
+              text: value,
+              row,
+              column,
+              left: INDEX_WIDTH + column * CELL_WIDTH,
+              top: 0,
+              width: CELL_WIDTH,
+              headerCell: false,
+              selected,
+              className: 'cell'
+            }));
           }
-          parts.push('</div>');
+          fragment.appendChild(rowElement);
         }
-        rowsLayer.innerHTML = parts.join('');
-        rowsLayer.querySelectorAll('[data-row][data-column]').forEach(el => {
-          el.addEventListener('mousedown', event => {
-            const cell = event.currentTarget;
-            const row = Number(cell.dataset.row);
-            const column = Number(cell.dataset.column);
-            dragging = true;
-            if (event.shiftKey && selection) {
-              selection.focusRow = row;
-              selection.focusColumn = column;
-            } else {
-              selection = { anchorRow: row, anchorColumn: column, focusRow: row, focusColumn: column };
-            }
-            viewport.focus();
-            updateSelection();
-            event.preventDefault();
-          });
-          el.addEventListener('mouseenter', event => {
-            if (!dragging || !selection) {
-              return;
-            }
-            const cell = event.currentTarget;
-            selection.focusRow = Number(cell.dataset.row);
-            selection.focusColumn = Number(cell.dataset.column);
-            updateSelection();
-          });
-        });
+        rowsLayer.textContent = '';
+        rowsLayer.appendChild(fragment);
+      }
+
+      function createCell(options) {
+        const cell = document.createElement('div');
+        cell.className = options.className + (options.selected ? ' selected' : '');
+        cell.setAttribute('role', options.headerCell ? 'columnheader' : 'cell');
+        cell.style.left = options.left + 'px';
+        cell.style.top = options.top + 'px';
+        cell.style.width = options.width + 'px';
+        cell.title = String(options.text || '');
+        cell.textContent = String(options.text || '');
+        if (options.row >= 0 && options.column >= 0) {
+          cell.dataset.row = String(options.row);
+          cell.dataset.column = String(options.column);
+          cell.addEventListener('mousedown', onCellMouseDown);
+          cell.addEventListener('mouseenter', onCellMouseEnter);
+        }
+        return cell;
+      }
+
+      function onCellMouseDown(event) {
+        const cell = event.currentTarget;
+        const row = Number(cell.dataset.row);
+        const column = Number(cell.dataset.column);
+        dragging = true;
+        if (event.shiftKey && selection) {
+          selection.focusRow = row;
+          selection.focusColumn = column;
+        } else {
+          selection = { anchorRow: row, anchorColumn: column, focusRow: row, focusColumn: column };
+        }
+        viewport.focus();
+        updateSelection();
+        event.preventDefault();
+      }
+
+      function onCellMouseEnter(event) {
+        if (!dragging || !selection) {
+          return;
+        }
+        const cell = event.currentTarget;
+        selection.focusRow = Number(cell.dataset.row);
+        selection.focusColumn = Number(cell.dataset.column);
+        updateSelection();
+      }
+
+      function replaceChildren(element, children) {
+        element.textContent = '';
+        const fragment = document.createDocumentFragment();
+        children.forEach(child => fragment.appendChild(child));
+        element.appendChild(fragment);
       }
 
       function cellText(row, column) {
@@ -562,15 +635,6 @@ export class KdbResultsPanel {
         const columnOffset = column - slice.startColumn;
         const rowCells = slice.cells[rowOffset] || [];
         return rowCells[columnOffset] || '';
-      }
-
-      function cellHtml(text, row, column, left, top, width, headerCell, selected, className) {
-        const attrs = row >= 0 && column >= 0 ? ' data-row="' + row + '" data-column="' + column + '"' : '';
-        const role = headerCell ? 'columnheader' : 'cell';
-        const selectedClass = selected ? ' selected' : '';
-        return '<div class="' + className + selectedClass + '" role="' + role + '"' + attrs +
-          ' style="left:' + left + 'px;top:' + top + 'px;width:' + width + 'px" title="' + escapeAttr(text) + '">' +
-          escapeHtml(text) + '</div>';
       }
 
       function updateSelection() {
@@ -669,17 +733,6 @@ export class KdbResultsPanel {
       function toInteger(value, fallback) {
         const number = Number(value);
         return Number.isFinite(number) ? Math.floor(number) : fallback;
-      }
-
-      function escapeHtml(value) {
-        return String(value)
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;');
-      }
-
-      function escapeAttr(value) {
-        return escapeHtml(value).replace(/"/g, '&quot;');
       }
 
       vscode.postMessage({ type: 'ready' });
