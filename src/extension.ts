@@ -91,14 +91,14 @@ class QRunCodeLensProvider implements vscode.CodeLensProvider {
     const top = new vscode.Range(0, 0, 0, 0);
     const lenses = [
       new vscode.CodeLens(top, {
-        title: '$(run) Run q file in SQLTools',
+        title: '$(play) Run q',
         command: 'kdb-sqltools.runFile',
       }),
     ];
 
     if (document.lineCount > 1) {
       lenses.push(new vscode.CodeLens(top, {
-        title: '$(play) Run q selection/block in SQLTools',
+        title: '$(run) Run block',
         command: 'kdb-sqltools.runSelectionOrBlock',
       }));
     }
