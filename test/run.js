@@ -79,6 +79,33 @@ function htmlSelectOptions(source, selectId) {
   assert.strictEqual(receiveBuffer.copyCount, 1);
   assert.strictEqual(receiveBuffer.copyBytesCopied, scalarMessage.length);
 
+  const invalidEndianReceiveBuffer = new QIpcReceiveBuffer();
+  const invalidEndianMessage = Buffer.from(scalarMessage);
+  invalidEndianMessage[0] = 2;
+  invalidEndianReceiveBuffer.append(invalidEndianMessage);
+  assert.throws(() => invalidEndianReceiveBuffer.readMessage(), /Invalid q IPC endian flag 2/);
+
+  const invalidLengthMessage = Buffer.from(scalarMessage);
+  invalidLengthMessage.writeInt32LE(scalarMessage.length + 1, 4);
+  assert.throws(
+    () => deserializeQMessage(invalidLengthMessage),
+    /Invalid q IPC message length 14 for buffer length 13/
+  );
+  assert.throws(
+    () => deserializeQPayload(hex('0a00ffffffff')),
+    /Invalid q IPC vector length -1/
+  );
+  const truncatedCompressedMessage = Buffer.alloc(12);
+  truncatedCompressedMessage.writeUInt8(1, 0);
+  truncatedCompressedMessage.writeUInt8(2, 1);
+  truncatedCompressedMessage.writeUInt8(1, 2);
+  truncatedCompressedMessage.writeInt32LE(12, 4);
+  truncatedCompressedMessage.writeInt32LE(16, 8);
+  assert.throws(
+    () => deserializeQMessage(truncatedCompressedMessage),
+    /Invalid compressed q IPC message: truncated flag byte/
+  );
+
   const queryMessage = serializeTextQuery('select from trade');
   const coalescedReceiveBuffer = new QIpcReceiveBuffer();
   coalescedReceiveBuffer.append(Buffer.concat([scalarMessage, queryMessage]));
@@ -389,6 +416,24 @@ function htmlSelectOptions(source, selectId) {
   assert.strictEqual(resultsPanelSource.includes('RESULT_SETTING_UPDATE_ALLOWLIST'), true);
   assert.strictEqual(resultsPanelSource.includes("message.type === 'updateSetting'"), true);
   assert.strictEqual(resultsPanelSource.includes('vscode.ConfigurationTarget.Global'), true);
+  assert.strictEqual(resultsPanelSource.includes('await this.copyRange(\n        message.version,'), true);
+  assert.strictEqual(resultsPanelSource.includes('await this.exportRange(\n        message.version,'), true);
+  assert.strictEqual(resultsPanelSource.includes('const requestVersion = integerOrNull(version);'), true);
+  assert.strictEqual(resultsPanelSource.includes('await this.exportRange(requestVersion, clamped, format, includeHeaders, includeRowIndex)'), true);
+  const copySelectionSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function copySelection'),
+    resultsPanelSource.indexOf('function exportSelection')
+  );
+  const exportSelectionSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function exportSelection'),
+    resultsPanelSource.indexOf('function sliceCovers')
+  );
+  assert.strictEqual(copySelectionSource.includes('version: data.version'), true);
+  assert.strictEqual(exportSelectionSource.includes('version: data.version'), true);
+  assert.strictEqual(
+    resultsPanelSource.includes("value.replace(/[\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F&<>\"']/g"),
+    true
+  );
   assert.strictEqual(resultsPanelSource.includes('layout.showRowIndex'), true);
   assert.strictEqual(resultsPanelSource.includes('settings.showRowIndex ? INDEX_WIDTH : 0'), true);
   assert.strictEqual(kdbResultsSource.includes('filterColumnarPanelResult'), true);
@@ -518,6 +563,28 @@ function htmlSelectOptions(source, selectId) {
     { a: 3, b: true, c: 3 },
   ]);
 
+  const duplicateColumnPayload = qTable(
+    ['a', 'a', 'a_1'],
+    [intVector([1, 2]), intVector([3, 4]), intVector([5, 6])]
+  );
+  const duplicateColumnarTable = deserializeQPayload(duplicateColumnPayload);
+  const duplicateColumnarResult = qValueToColumnarPanel(duplicateColumnarTable);
+  assert.deepStrictEqual(duplicateColumnarResult.cols, ['a', 'a_1', 'a_1_1']);
+  assert.strictEqual(qValueRowsMaterialized(duplicateColumnarTable), false);
+  assert.deepStrictEqual(
+    duplicateColumnarResult.result.cellWindow({ start: 0, end: 1 }, { start: 0, end: 2 }).cells,
+    [
+      ['1', '3', '5'],
+      ['2', '4', '6'],
+    ]
+  );
+  const duplicateTableResult = qValueToTabular(deserializeQPayload(duplicateColumnPayload));
+  assert.deepStrictEqual(duplicateTableResult.cols, ['a', 'a_1', 'a_1_1']);
+  assert.deepStrictEqual(duplicateTableResult.rows, [
+    { a: 1, a_1: 3, a_1_1: 5 },
+    { a: 2, a_1: 4, a_1_1: 6 },
+  ]);
+
   const alreadyNormalizedRows = [{ a: 1 }, { a: 2 }];
   const efficientTableResult = qValueToTabular({
     qtype: 'table',
@@ -537,7 +604,7 @@ function htmlSelectOptions(source, selectId) {
   ]);
 
   const charDict = deserializeQMessage(hex(
-    '010000001f000000630b00030000006100620063000a000300000078797a'
+    '010000001e000000630b00030000006100620063000a000300000078797a'
   ));
   assert.deepStrictEqual(qValueToTabular(charDict).rows, [
     { key: 'a', value: 'x' },
