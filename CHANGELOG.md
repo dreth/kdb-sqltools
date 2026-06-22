@@ -1,5 +1,13 @@
 # Change Log
 
+## 0.2.3
+
+- Added hide-once and hide-forever controls for large-result guardrail messages, backed by `kdb-sqltools.results.hideLargeResultWarnings`.
+- Improved array/list cell display to use readable spaced separators like `1 , 2 , 3` while preserving structured JSON/NDJSON exports.
+- Added session-only per-column resizing, reset width controls, and auto-widening for visible array-like values.
+- Added horizontal virtual-scroll compression to avoid browser maximum scroll-width issues on very wide result sets.
+- Replaced separate copy/export format selectors with one shared format selector plus adjacent Copy and Export buttons; XLSX remains export-only.
+
 ## 0.2.2
 
 - Fixed large kdb panel tables stopping around ~932k rows in VS Code webviews by compressing physical scroll coordinates below Chromium's max scroll-height limit while preserving real row indexes.
