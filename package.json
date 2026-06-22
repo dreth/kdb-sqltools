@@ -229,6 +229,11 @@
           "type": "boolean",
           "default": true,
           "description": "Include 1-based row numbers by default when copying or exporting from the kdb results panel."
+        },
+        "kdb-sqltools.results.hideLargeResultWarnings": {
+          "type": "boolean",
+          "default": false,
+          "description": "Hide large-result guardrail messages in the kdb results panel."
         }
       }
     }
