@@ -1,5 +1,39 @@
 # CODEX Status
 
+## 2026-06-22 Pass 3 Connection Persistence UX + 0.0.7 Package
+
+Changed:
+
+- Investigated SQLTools 0.28.5 connection persistence behavior from the installed extension bundle.
+- Found SQLTools stores connections in `sqltools.connections` and its settings webview saves with `globalSetting: false` by default; SQLTools only forces `ConfigurationTarget.Global` when no workspace is open. With a workspace open, the connection can be saved to a workspace-scoped settings target, so it may appear missing after a restart into a different workspace or after switching folders.
+- No driver-side parse/save normalization bug was found in this driver. The SQLTools save path already strips runtime fields before persistence, and this driver's `KDB` alias/connection schema are consistent with SQLTools' driver registration.
+- Added README documentation explaining User/global versus Workspace/Workspace Folder `sqltools.connections` behavior and how to persist a kdb connection globally.
+- Added `kdb-sqltools.copyExampleConnectionSettings` / `kdb+: Copy Example Global Connection Settings`, which copies a User-settings JSON fragment and offers to open User settings JSON or SQLTools settings.
+- Kept SQLTools as the default result target; the optional kdb panel remains opt-in through `kdb-sqltools.results.target`.
+- Bumped package version to `0.0.7` with `npm version 0.0.7 --no-git-tag-version`.
+- Updated `CHANGELOG.md` with 0.0.7 notes.
+- Updated `.vscodeignore` so local credential files are excluded from VSIX packaging.
+
+Verification:
+
+- `npm run compile` passed.
+- `npm test` passed.
+- `KDB_SQLTOOLS_LIVE_REQUIRED=1 npm run test:live-kdb` passed using `/opt/data/home/.kx/bin/q`.
+- `npx @vscode/vsce package` passed after excluding the local `.github-token` file from VSIX contents.
+- `git diff --check` passed.
+
+Artifacts:
+
+- `/opt/data/home/projects/kdb-sqltools/kdb-sqltools-0.0.7.vsix`
+  - SHA256: `6046e3f7e5e9450dff7448450485098e96f116c6322034206f95ecfc901cb5de`
+- `/opt/data/home/projects/kdb-sqltools/kdb-sqltools-0.0.7-vsix.zip`
+  - SHA256: `7999bcbc63834a9b37ec447382c89c60317fd1efdcc11930d2350a2417d40d3e`
+
+Remaining limitations:
+
+- q IPC query execution still materializes the full q result in the extension process before SQLTools or the optional kdb panel display it.
+- The optional kdb panel windows webview transfer and DOM rendering only; it is not true q IPC streaming.
+
 ## 2026-06-22 Pass 2 kdb Panel Windowing
 
 Changed:

@@ -38,6 +38,31 @@ Example SQLTools connection:
 
 The `database` field is used as a q namespace for the object explorer. Use `.` for the root namespace or values such as `.analytics`. Queries are sent exactly as written to the remote q process.
 
+### Persisting Connections
+
+SQLTools stores connections in the VS Code setting `sqltools.connections`. That setting can exist at User/global scope, Workspace scope, or Workspace Folder scope. User-scope connections follow you across VS Code restarts and workspaces. Workspace-scope connections only appear when that workspace is open, so a connection can look missing after switching folders or opening VS Code without the same workspace.
+
+If you create a connection through SQLTools while a workspace is open, check whether it was saved to the workspace settings. To make a kdb connection global, put it in User settings JSON:
+
+```json
+{
+  "sqltools.connections": [
+    {
+      "name": "local kdb",
+      "driver": "KDB",
+      "server": "localhost",
+      "port": 5000,
+      "username": "",
+      "password": "",
+      "database": ".",
+      "connectionTimeout": 30
+    }
+  ]
+}
+```
+
+The `kdb+: Copy Example Global Connection Settings` command copies this User-settings fragment and can open settings for you. If you already have SQLTools connections, merge the example object into the existing `sqltools.connections` array instead of replacing the array.
+
 ## Features
 
 - TCP q IPC authentication handshake with optional username/password.
