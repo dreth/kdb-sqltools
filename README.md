@@ -75,23 +75,42 @@ The `kdb+: Copy Example Global Connection Settings` command copies this User-set
 - Minimal q keyword completions only; q language extensions should handle language-level autocomplete.
 - SSH tunneling through SQLTools common connection settings.
 
-## Optional kdb Results Panel
+## kdb Results Panel
 
-SQLTools remains the default results target. To use the lightweight kdb panel for q file/block runs, set:
+The kdb results panel is the default target for `kdb+: Run q` and `kdb+: Run q Block`. It runs through this extension's direct driver path and avoids SQLTools `*.session.sql` editor documents.
+
+To use SQLTools' own results target instead, set:
 
 ```json
-"kdb-sqltools.results.target": "kdbPanel"
+"kdb-sqltools.results.target": "sqltools"
 ```
 
-You can also run the explicit `kdb+: Run q in kdb Panel` and `kdb+: Run q Block in kdb Panel` commands.
+SQLTools target commands remain available: `kdb+: Run q in SQLTools Results` and `kdb+: Run q Block in SQLTools Results`. SQLTools may open `.session.sql` editors there; that is SQLTools core behavior, not this driver's panel path.
 
-The kdb panel virtualizes rows and columns, transfers only the visible cell window from the extension to the webview, supports range selection, and can copy selected cells as TSV with or without headers. The q IPC result is still fully materialized in extension memory before display, so use q-side limits for truly massive query results.
+The kdb panel virtualizes rows and columns and transfers only the visible cell window from the extension to the webview. The q IPC result is still fully materialized in extension memory before display, so use q-side limits for truly massive query results.
+
+Selection supports individual ranges, whole rows, whole columns, and all cells. With no selection, copy/export actions use all cells.
+
+Copy formats: TSV, CSV, JSON, NDJSON, HTML. Export formats: TSV, CSV, XLSX, JSON, NDJSON, HTML. XLSX export writes a real `.xlsx` workbook. Parquet export is not available in this build.
+
+Minimal panel cosmetics:
+
+```json
+{
+  "kdb-sqltools.results.cellWidth": 160,
+  "kdb-sqltools.results.rowHeight": 28,
+  "kdb-sqltools.results.fontSize": 0,
+  "kdb-sqltools.results.density": "standard"
+}
+```
+
+`fontSize: 0` uses the VS Code default. Density can be `compact`, `standard`, or `comfortable`.
 
 ## Limitations
 
 - TLS is not implemented by this driver, so no TLS option is exposed in the connection UI.
 - The driver does not translate SQL to q. Write q/qSQL directly.
-- Arbitrary editor queries are sent exactly as written. The driver does not add hidden limits; SQLTools will render however many rows the q expression returns. The optional kdb panel reduces webview transfer and DOM work, but it does not stream q execution.
+- Arbitrary editor queries are sent exactly as written. The driver does not add hidden limits; the kdb panel reduces webview transfer and DOM work, but it does not stream q execution. The SQLTools target renders however many rows SQLTools receives.
 - SQLTools' "execute current query" command uses SQL-style semicolon/`GO` statement parsing before the driver is called. For q expressions that contain semicolons inside lambdas, projections, or multi-statement blocks, select the intended q text and run the normal execute command so it is sent as one q expression.
 - kdb has namespaces rather than SQL catalogs and schemas; SQLTools `database`/`schema` fields are mapped to the selected q namespace.
 - Root q views are listed with protected `views[]`; non-root view listing depends on what the target process returns for protected `system "b <namespace>"`.

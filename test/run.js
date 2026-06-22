@@ -5,10 +5,23 @@ const path = require('path');
 const { deserializeQMessage, deserializeQPayload, qValueToTabular, serializeTextQuery } = require('../out/ls/q-ipc');
 const queriesModule = require('../out/ls/queries');
 const { currentQBlock, selectedTextOrCurrentBlock } = require('../out/q-text');
-const { isCellInRange, normalizeCellRange, rowsToCellWindow, rowsToTsv, visibleIndexRange } = require('../out/kdb-results');
+const {
+  allCellsRange,
+  isCellInRange,
+  normalizeCellRange,
+  rowsToCellWindow,
+  rowsToCsv,
+  rowsToHtml,
+  rowsToJson,
+  rowsToNdjson,
+  rowsToTextFormat,
+  rowsToTsv,
+  visibleIndexRange,
+} = require('../out/kdb-results');
 const KdbDriver = require('../out/ls/driver').default;
 const { ContextValue } = require('@sqltools/types');
 const connectionSchema = require('../connection.schema.json');
+const packageJson = require('../package.json');
 
 const queries = queriesModule.default;
 const { normalizeNamespace, qString, qSymbolExpression } = queriesModule;
@@ -33,6 +46,7 @@ function hex(value) {
   );
   assert.strictEqual(isCellInRange(3, 4, { startRow: 2, endRow: 4, startColumn: 3, endColumn: 6 }), true);
   assert.strictEqual(isCellInRange(1, 4, { startRow: 2, endRow: 4, startColumn: 3, endColumn: 6 }), false);
+  assert.deepStrictEqual(allCellsRange(2, 3), { startRow: 0, endRow: 1, startColumn: 0, endColumn: 2 });
   assert.strictEqual(
     rowsToTsv(
       [
@@ -56,6 +70,40 @@ function hex(value) {
     ),
     'sym\tnote\nAAPL\tline break\nMSFT\t'
   );
+  const exportRows = [
+    { sym: 'AAPL', note: 'line\nbreak', size: 100, meta: { venue: 'lit' } },
+    { sym: 'MSFT', note: null, size: 200, meta: [1, 2] },
+  ];
+  const exportColumns = ['sym', 'note', 'size', 'meta'];
+  const exportRange = { startRow: 0, endRow: 1, startColumn: 1, endColumn: 3 };
+  assert.strictEqual(
+    rowsToCsv(
+      [
+        { sym: 'AAPL', note: 'plain', quote: 'a"b' },
+        { sym: 'MSFT', note: 'comma, newline\nnext', quote: 'carriage\rreturn' },
+      ],
+      ['sym', 'note', 'quote'],
+      { startRow: 0, endRow: 1, startColumn: 1, endColumn: 2 }
+    ),
+    'note,quote\nplain,"a""b"\n"comma, newline\nnext","carriage\rreturn"'
+  );
+  assert.strictEqual(
+    rowsToJson(exportRows, exportColumns, exportRange),
+    '[{"note":"line\\nbreak","size":100,"meta":{"venue":"lit"}},{"note":null,"size":200,"meta":[1,2]}]'
+  );
+  assert.strictEqual(
+    rowsToNdjson(exportRows, exportColumns, { startRow: 0, endRow: 1, startColumn: 1, endColumn: 2 }),
+    '{"note":"line\\nbreak","size":100}\n{"note":null,"size":200}'
+  );
+  assert.strictEqual(
+    rowsToHtml(
+      [{ sym: 'A&B', note: '<tag "x" \'' }],
+      ['sym', 'note'],
+      { startRow: 0, endRow: 0, startColumn: 0, endColumn: 1 }
+    ),
+    '<table><thead><tr><th>sym</th><th>note</th></tr></thead><tbody><tr><td>A&amp;B</td><td>&lt;tag &quot;x&quot; &#39;</td></tr></tbody></table>'
+  );
+  assert.strictEqual(rowsToTextFormat(exportRows, exportColumns, exportRange, 'ndjson'), rowsToNdjson(exportRows, exportColumns, exportRange));
   assert.deepStrictEqual(
     rowsToCellWindow(
       [
@@ -83,6 +131,23 @@ function hex(value) {
   assert.strictEqual(resultsPanelSource.includes('innerHTML'), false, 'kdb results panel must not render grid cells via innerHTML');
   assert.strictEqual(resultsPanelSource.includes(' style="'), false, 'kdb results panel must not rely on inline style attributes for virtual grid positioning');
   assert.strictEqual(resultsPanelSource.includes('createElement'), true, 'kdb results panel should create positioned grid cells as DOM nodes');
+  const resultSettings = packageJson.contributes.configuration.properties;
+  assert.strictEqual(resultSettings['kdb-sqltools.results.target'].default, 'kdbPanel');
+  assert.deepStrictEqual(resultSettings['kdb-sqltools.results.density'].enum, ['compact', 'standard', 'comfortable']);
+  assert.deepStrictEqual(
+    [
+      resultSettings['kdb-sqltools.results.cellWidth'].default,
+      resultSettings['kdb-sqltools.results.cellWidth'].minimum,
+      resultSettings['kdb-sqltools.results.cellWidth'].maximum,
+      resultSettings['kdb-sqltools.results.rowHeight'].default,
+      resultSettings['kdb-sqltools.results.rowHeight'].minimum,
+      resultSettings['kdb-sqltools.results.rowHeight'].maximum,
+      resultSettings['kdb-sqltools.results.fontSize'].default,
+      resultSettings['kdb-sqltools.results.fontSize'].minimum,
+      resultSettings['kdb-sqltools.results.fontSize'].maximum,
+    ],
+    [160, 80, 600, 28, 20, 80, 0, 0, 32]
+  );
 
   assert.strictEqual(
     deserializeQMessage(hex('010000000d000000fa01000000')),
