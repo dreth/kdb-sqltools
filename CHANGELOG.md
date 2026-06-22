@@ -1,5 +1,9 @@
 # Change Log
 
+## 0.0.9
+
+- Reworked optional kdb results panel grid rendering to create DOM cells directly instead of using `innerHTML`/inline `style=` strings, fixing collapsed rows/columns and broken visible-cell selection in VS Code webviews.
+
 ## 0.0.8
 
 - Fixed optional kdb results panel cells collapsing/stacking in VS Code webviews by allowing the panel's dynamic virtual-grid positioning styles.
