@@ -1,8 +1,21 @@
 # Change Log
 
+## 0.2.0
+
+- Made the kdb results panel the default target for `Run q Script` and `Run Selection`, with a direct columnar panel path that avoids SQLTools row-object materialization.
+- Optimized q IPC receive buffering to reduce repeated copying while reading large responses.
+- Added opt-in performance tracing for q IPC, driver conversion, and kdb panel slice timings via `kdb-sqltools.performance.trace` or `KDB_SQLTOOLS_PERF=1`.
+- Made CSV the first/default copy and export format, kept CSV/XLSX/TSV/JSON/NDJSON/HTML export support, and removed the unimplemented Parquet export placeholder.
+- Added row-number copy/export, hideable row numbers, and a kdb panel settings menu with global persistence for row-number visibility, copy/export defaults, density, and sizing.
+- Added session-scoped hidden columns to the kdb results panel.
+- Added visible-column toolbar search for the kdb results panel without bulk cell transfer to the webview.
+- Added explicit Select/Sort header mode with Select as the default and extension-side visible-column sorting.
+- Added large-result warnings, copy/export confirmations, and XLSX sheet-limit checks for the kdb results panel.
+- Changed `Run Selection` to execute selected text exactly, or only the current physical line when no text is selected.
+
 ## 0.1.0
 
-- Made the kdb results panel the default result target for q file/block runs while keeping SQLTools results commands/settings available.
+- Made the kdb results panel the default result target for q script/selection runs while keeping SQLTools results commands/settings available.
 - Expanded kdb panel selection to ranges, rows, columns, and all cells.
 - Added copy/export formats for TSV, CSV, JSON, NDJSON, and HTML, plus real XLSX export.
 - Added minimal kdb panel cosmetics for cell width, row height, font size, and density.

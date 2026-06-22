@@ -3,6 +3,7 @@ import { IConnectionDriver, MConnectionExplorer, NSDatabase, ContextValue, Arg0,
 import { v4 as generateId } from 'uuid';
 import queries, { normalizeNamespace, qSymbolExpression, TableParams } from './queries';
 import { KdbIpcClient, qValueToTabular } from './q-ipc';
+import { endPerfSpan, perfSpan } from '../perf';
 
 interface KdbDriverOptions {
   timeout?: number;
@@ -80,11 +81,29 @@ export default class KdbDriver extends AbstractDriver<DriverLib, DriverOptions> 
     const client = await this.open();
     const text = query.toString();
     const started = Date.now();
+    const querySpan = perfSpan('driver.query.total', { queryChars: text.length });
 
     try {
       const value = await client.query(text);
-      const tabular = qValueToTabular(value);
+      const tabularSpan = perfSpan('driver.qValueToTabular', { queryChars: text.length });
+      let tabular: ReturnType<typeof qValueToTabular> | undefined;
+      try {
+        tabular = qValueToTabular(value);
+      } finally {
+        endPerfSpan(tabularSpan, tabular ? {
+          rows: tabular.rows.length,
+          columns: tabular.cols.length,
+          kind: tabular.kind,
+          error: false,
+        } : { error: true });
+      }
       const elapsed = Date.now() - started;
+      endPerfSpan(querySpan, {
+        rows: tabular.rows.length,
+        columns: tabular.cols.length,
+        kind: tabular.kind,
+        error: false,
+      });
       return [<NSDatabase.IResult>{
         requestId: opt.requestId,
         resultId: generateId(),
@@ -99,6 +118,7 @@ export default class KdbDriver extends AbstractDriver<DriverLib, DriverOptions> 
       }];
     } catch (error) {
       const err = toError(error);
+      endPerfSpan(querySpan, { error: true, errorName: err.name });
       return [<NSDatabase.IResult>{
         requestId: opt.requestId,
         resultId: generateId(),
