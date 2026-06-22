@@ -15,6 +15,14 @@ export interface VisibleIndexRange {
   end: number;
 }
 
+export interface CellWindow {
+  startRow: number;
+  endRow: number;
+  startColumn: number;
+  endColumn: number;
+  cells: string[][];
+}
+
 export type RowValue = { [key: string]: unknown };
 
 export function normalizeCellRange(anchor: CellPosition, focus: CellPosition): CellRange {
@@ -55,13 +63,21 @@ export function clampCellRange(range: CellRange, rowCount: number, columnCount: 
   return clamped;
 }
 
-export function rowsToTsv(rows: RowValue[], columns: string[], range: CellRange): string {
+export function rowsToTsv(rows: RowValue[], columns: string[], range: CellRange, includeHeaders = false): string {
   const clamped = clampCellRange(range, rows.length, columns.length);
   if (!clamped) {
     return '';
   }
 
   const lines: string[] = [];
+  if (includeHeaders) {
+    const headers: string[] = [];
+    for (let columnIndex = clamped.startColumn; columnIndex <= clamped.endColumn; columnIndex++) {
+      headers.push(cellValueToText(columns[columnIndex]));
+    }
+    lines.push(headers.join('\t'));
+  }
+
   for (let rowIndex = clamped.startRow; rowIndex <= clamped.endRow; rowIndex++) {
     const row = rows[rowIndex] || {};
     const values: string[] = [];
@@ -71,6 +87,46 @@ export function rowsToTsv(rows: RowValue[], columns: string[], range: CellRange)
     lines.push(values.join('\t'));
   }
   return lines.join('\n');
+}
+
+export function rowsToCellWindow(
+  rows: RowValue[],
+  columns: string[],
+  rowRange: VisibleIndexRange,
+  columnRange: VisibleIndexRange
+): CellWindow {
+  const clamped = clampCellRange(
+    {
+      startRow: rowRange.start,
+      endRow: rowRange.end,
+      startColumn: columnRange.start,
+      endColumn: columnRange.end,
+    },
+    rows.length,
+    columns.length
+  );
+
+  if (!clamped) {
+    return emptyCellWindow();
+  }
+
+  const cells: string[][] = [];
+  for (let rowIndex = clamped.startRow; rowIndex <= clamped.endRow; rowIndex++) {
+    const row = rows[rowIndex] || {};
+    const values: string[] = [];
+    for (let columnIndex = clamped.startColumn; columnIndex <= clamped.endColumn; columnIndex++) {
+      values.push(cellValueToText(row[columns[columnIndex]]));
+    }
+    cells.push(values);
+  }
+
+  return {
+    startRow: clamped.startRow,
+    endRow: clamped.endRow,
+    startColumn: clamped.startColumn,
+    endColumn: clamped.endColumn,
+    cells,
+  };
 }
 
 export function cellValueToText(value: unknown): string {
@@ -112,6 +168,16 @@ export function visibleIndexRange(
 
 function sanitizeTsvCell(value: string): string {
   return value.replace(/\r\n|\r|\n|\t/g, ' ');
+}
+
+function emptyCellWindow(): CellWindow {
+  return {
+    startRow: 0,
+    endRow: -1,
+    startColumn: 0,
+    endColumn: -1,
+    cells: [],
+  };
 }
 
 function clamp(value: number, min: number, max: number): number {

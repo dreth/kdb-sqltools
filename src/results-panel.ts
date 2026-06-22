@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { CellRange, RowValue, clampCellRange, rowsToTsv } from './kdb-results';
+import { CellRange, RowValue, VisibleIndexRange, clampCellRange, rowsToCellWindow, rowsToTsv } from './kdb-results';
 
 export interface KdbPanelResult {
   columns: string[];
@@ -16,28 +16,42 @@ interface LoadingState {
   connectionName: string;
 }
 
+interface KdbPanelMetadata {
+  columns: string[];
+  rowCount: number;
+  query: string;
+  connectionName: string;
+  elapsedMs: number;
+  messages: string[];
+  error?: boolean;
+  version: number;
+}
+
 export class KdbResultsPanel {
   private static current: KdbResultsPanel | undefined;
   private panel: vscode.WebviewPanel;
   private ready = false;
   private result: KdbPanelResult | undefined;
   private loading: LoadingState | undefined;
+  private version = 0;
 
   public static showLoading(context: vscode.ExtensionContext, state: LoadingState): KdbResultsPanel {
     const panel = KdbResultsPanel.ensure(context);
+    panel.version += 1;
     panel.loading = state;
     panel.result = undefined;
     panel.panel.reveal(vscode.ViewColumn.Beside);
-    panel.post({ type: 'loading', state });
+    panel.post({ type: 'loading', state: { ...state, version: panel.version } });
     return panel;
   }
 
   public static showResult(context: vscode.ExtensionContext, result: KdbPanelResult): KdbResultsPanel {
     const panel = KdbResultsPanel.ensure(context);
+    panel.version += 1;
     panel.loading = undefined;
     panel.result = result;
     panel.panel.reveal(vscode.ViewColumn.Beside);
-    panel.post({ type: 'result', result });
+    panel.postResultMetadata();
     return panel;
   }
 
@@ -76,19 +90,60 @@ export class KdbResultsPanel {
     if (message.type === 'ready') {
       this.ready = true;
       if (this.result) {
-        this.post({ type: 'result', result: this.result });
+        this.postResultMetadata();
       } else if (this.loading) {
-        this.post({ type: 'loading', state: this.loading });
+        this.post({ type: 'loading', state: { ...this.loading, version: this.version } });
       }
       return;
     }
 
+    if (message.type === 'requestSlice') {
+      this.postSlice(message);
+      return;
+    }
+
     if (message.type === 'copyRange') {
-      await this.copyRange(message.range);
+      await this.copyRange(message.range, message.includeHeaders === true);
     }
   }
 
-  private async copyRange(range: CellRange): Promise<void> {
+  private postResultMetadata(): void {
+    if (!this.result) {
+      return;
+    }
+    this.post({ type: 'resultMeta', result: this.metadataForResult(this.result) });
+  }
+
+  private metadataForResult(result: KdbPanelResult): KdbPanelMetadata {
+    return {
+      columns: result.columns,
+      rowCount: result.rows.length,
+      query: result.query,
+      connectionName: result.connectionName,
+      elapsedMs: result.elapsedMs,
+      messages: result.messages,
+      error: result.error,
+      version: this.version,
+    };
+  }
+
+  private postSlice(message: any): void {
+    if (!this.result || Number(message.version) !== this.version) {
+      return;
+    }
+
+    const rowRange = messageRange(message.rows, this.result.rows.length);
+    const columnRange = messageRange(message.columns, this.result.columns.length);
+    const slice = rowsToCellWindow(this.result.rows, this.result.columns, rowRange, columnRange);
+    this.post({
+      type: 'slice',
+      version: this.version,
+      requestId: Number(message.requestId || 0),
+      slice,
+    });
+  }
+
+  private async copyRange(range: CellRange, includeHeaders: boolean): Promise<void> {
     if (!this.result || !range) {
       return;
     }
@@ -98,11 +153,11 @@ export class KdbResultsPanel {
       return;
     }
 
-    const text = rowsToTsv(this.result.rows, this.result.columns, clamped);
+    const text = rowsToTsv(this.result.rows, this.result.columns, clamped, includeHeaders);
     await vscode.env.clipboard.writeText(text);
     const rows = clamped.endRow - clamped.startRow + 1;
     const columns = clamped.endColumn - clamped.startColumn + 1;
-    this.post({ type: 'copied', rows, columns });
+    this.post({ type: 'copied', rows, columns, includeHeaders });
   }
 
   private post(message: any): void {
@@ -252,6 +307,7 @@ export class KdbResultsPanel {
 <body>
   <div class="toolbar">
     <button id="copy" disabled>Copy TSV</button>
+    <button id="copyHeaders" disabled>Copy TSV + Headers</button>
     <span id="summary" class="summary"></span>
     <span id="selection" class="selection"></span>
   </div>
@@ -277,32 +333,40 @@ export class KdbResultsPanel {
       const header = document.getElementById('header');
       const rowsLayer = document.getElementById('rows');
       const copyButton = document.getElementById('copy');
+      const copyHeadersButton = document.getElementById('copyHeaders');
       const summary = document.getElementById('summary');
       const selectionLabel = document.getElementById('selection');
       const message = document.getElementById('message');
       const empty = document.getElementById('empty');
-      let data = { columns: [], rows: [], messages: [], query: '', connectionName: '', elapsedMs: 0 };
+      let data = emptyData();
+      let slice = emptySlice();
       let dragging = false;
       let selection = null;
       let renderQueued = false;
+      let latestRequestId = 0;
+      let pendingRequestKey = '';
 
       window.addEventListener('message', event => {
         const msg = event.data || {};
         if (msg.type === 'loading') {
           setLoading(msg.state || {});
-        } else if (msg.type === 'result') {
-          setResult(msg.result || {});
+        } else if (msg.type === 'resultMeta') {
+          setResultMeta(msg.result || {});
+        } else if (msg.type === 'slice') {
+          setSlice(msg);
         } else if (msg.type === 'copied') {
-          selectionLabel.textContent = 'Copied ' + msg.rows + 'x' + msg.columns;
+          selectionLabel.textContent = 'Copied ' + msg.rows + 'x' + msg.columns +
+            (msg.includeHeaders ? ' with headers' : '');
         }
       });
 
-      copyButton.addEventListener('click', copySelection);
+      copyButton.addEventListener('click', () => copySelection(false));
+      copyHeadersButton.addEventListener('click', () => copySelection(true));
       viewport.addEventListener('scroll', requestRender);
       viewport.addEventListener('keydown', event => {
         if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c' && selection) {
           event.preventDefault();
-          copySelection();
+          copySelection(false);
         }
       });
       window.addEventListener('mouseup', () => {
@@ -311,32 +375,62 @@ export class KdbResultsPanel {
       window.addEventListener('resize', requestRender);
 
       function setLoading(state) {
-        data = { columns: [], rows: [], messages: [], query: state.query || '', connectionName: state.connectionName || '', elapsedMs: 0 };
-        selection = null;
+        data = emptyData();
+        data.version = toNonNegativeInteger(state.version, data.version + 1);
+        data.query = state.query || '';
+        data.connectionName = state.connectionName || '';
+        resetWindowState();
         summary.textContent = 'Running on ' + (state.connectionName || 'kdb');
         selectionLabel.textContent = '';
-        copyButton.disabled = true;
+        setCopyDisabled(true);
         showMessage('', false);
         renderNow();
       }
 
-      function setResult(result) {
+      function setResultMeta(result) {
         data = {
-          columns: Array.isArray(result.columns) ? result.columns : [],
-          rows: Array.isArray(result.rows) ? result.rows : [],
-          messages: Array.isArray(result.messages) ? result.messages : [],
+          version: toNonNegativeInteger(result.version, data.version + 1),
+          columns: Array.isArray(result.columns) ? result.columns.map(String) : [],
+          rowCount: toNonNegativeInteger(result.rowCount, 0),
+          messages: Array.isArray(result.messages) ? result.messages.map(String) : [],
           query: result.query || '',
           connectionName: result.connectionName || '',
-          elapsedMs: Number(result.elapsedMs || 0)
+          elapsedMs: toNonNegativeInteger(result.elapsedMs, 0),
+          error: !!result.error
         };
-        selection = null;
-        copyButton.disabled = true;
-        summary.textContent = data.rows.length + ' rows x ' + data.columns.length + ' columns' +
+        resetWindowState();
+        summary.textContent = data.rowCount + ' rows x ' + data.columns.length + ' columns' +
           (data.connectionName ? ' | ' + data.connectionName : '') +
           ' | ' + data.elapsedMs + ' ms';
         selectionLabel.textContent = '';
-        showMessage(data.messages.join('\\n'), !!result.error);
+        setCopyDisabled(true);
+        showMessage(data.messages.join('\\n'), data.error);
         renderNow();
+      }
+
+      function setSlice(msg) {
+        if (toNonNegativeInteger(msg.version, -1) !== data.version) {
+          return;
+        }
+        if (toNonNegativeInteger(msg.requestId, 0) < latestRequestId) {
+          return;
+        }
+        slice = normalizeSlice(msg.slice || {});
+        pendingRequestKey = '';
+        renderNow();
+      }
+
+      function resetWindowState() {
+        slice = emptySlice();
+        selection = null;
+        dragging = false;
+        latestRequestId = 0;
+        pendingRequestKey = '';
+      }
+
+      function setCopyDisabled(disabled) {
+        copyButton.disabled = disabled;
+        copyHeadersButton.disabled = disabled;
       }
 
       function showMessage(text, isError) {
@@ -358,7 +452,7 @@ export class KdbResultsPanel {
 
       function renderNow() {
         const columnCount = data.columns.length;
-        const rowCount = data.rows.length;
+        const rowCount = data.rowCount;
         const totalWidth = INDEX_WIDTH + columnCount * CELL_WIDTH;
         const totalHeight = HEADER_HEIGHT + rowCount * ROW_HEIGHT;
         canvas.style.width = Math.max(totalWidth, viewport.clientWidth) + 'px';
@@ -369,6 +463,7 @@ export class KdbResultsPanel {
         const rows = visibleRange(Math.max(0, viewport.scrollTop - HEADER_HEIGHT), viewport.clientHeight, ROW_HEIGHT, rowCount, OVERSCAN_ROWS);
         const columns = visibleColumns();
         renderHeader(columns);
+        requestSlice(rows, columns);
         renderRows(rows, columns);
       }
 
@@ -386,6 +481,30 @@ export class KdbResultsPanel {
         return { start, end };
       }
 
+      function requestSlice(rows, columns) {
+        if (rows.end < rows.start || columns.end < columns.start || data.rowCount <= 0 || data.columns.length <= 0) {
+          return;
+        }
+        if (sliceCovers(slice, rows, columns)) {
+          return;
+        }
+
+        const key = rangeKey(rows, columns);
+        if (pendingRequestKey === key) {
+          return;
+        }
+
+        pendingRequestKey = key;
+        latestRequestId += 1;
+        vscode.postMessage({
+          type: 'requestSlice',
+          version: data.version,
+          requestId: latestRequestId,
+          rows,
+          columns
+        });
+      }
+
       function renderHeader(columns) {
         const parts = [cellHtml('#', -1, -1, 0, 0, INDEX_WIDTH, true, false, 'cell index')];
         for (let column = columns.start; column <= columns.end; column++) {
@@ -397,14 +516,14 @@ export class KdbResultsPanel {
       function renderRows(rows, columns) {
         const parts = [];
         const range = normalizedSelection();
+        const hasCells = sliceCovers(slice, rows, columns);
         for (let row = rows.start; row <= rows.end; row++) {
           const top = HEADER_HEIGHT + row * ROW_HEIGHT;
           parts.push('<div class="row" role="row" style="top:' + top + 'px;width:' + canvas.style.width + '">');
           parts.push(cellHtml(String(row + 1), row, -1, 0, 0, INDEX_WIDTH, false, false, 'cell index'));
-          const rowData = data.rows[row] || {};
           for (let column = columns.start; column <= columns.end; column++) {
             const selected = isSelected(row, column, range);
-            const value = formatValue(rowData[data.columns[column]]);
+            const value = hasCells ? cellText(row, column) : '';
             parts.push(cellHtml(value, row, column, INDEX_WIDTH + column * CELL_WIDTH, 0, CELL_WIDTH, false, selected, 'cell'));
           }
           parts.push('</div>');
@@ -416,7 +535,12 @@ export class KdbResultsPanel {
             const row = Number(cell.dataset.row);
             const column = Number(cell.dataset.column);
             dragging = true;
-            selection = { anchorRow: row, anchorColumn: column, focusRow: row, focusColumn: column };
+            if (event.shiftKey && selection) {
+              selection.focusRow = row;
+              selection.focusColumn = column;
+            } else {
+              selection = { anchorRow: row, anchorColumn: column, focusRow: row, focusColumn: column };
+            }
             viewport.focus();
             updateSelection();
             event.preventDefault();
@@ -433,6 +557,13 @@ export class KdbResultsPanel {
         });
       }
 
+      function cellText(row, column) {
+        const rowOffset = row - slice.startRow;
+        const columnOffset = column - slice.startColumn;
+        const rowCells = slice.cells[rowOffset] || [];
+        return rowCells[columnOffset] || '';
+      }
+
       function cellHtml(text, row, column, left, top, width, headerCell, selected, className) {
         const attrs = row >= 0 && column >= 0 ? ' data-row="' + row + '" data-column="' + column + '"' : '';
         const role = headerCell ? 'columnheader' : 'cell';
@@ -446,11 +577,14 @@ export class KdbResultsPanel {
         const range = normalizedSelection();
         if (!range) {
           selectionLabel.textContent = '';
-          copyButton.disabled = true;
+          setCopyDisabled(true);
         } else {
+          const selectedRows = range.endRow - range.startRow + 1;
+          const selectedColumns = range.endColumn - range.startColumn + 1;
           selectionLabel.textContent = 'R' + (range.startRow + 1) + 'C' + (range.startColumn + 1) +
-            ':R' + (range.endRow + 1) + 'C' + (range.endColumn + 1);
-          copyButton.disabled = false;
+            ':R' + (range.endRow + 1) + 'C' + (range.endColumn + 1) +
+            ' (' + selectedRows + 'x' + selectedColumns + ')';
+          setCopyDisabled(false);
         }
         renderNow();
       }
@@ -475,25 +609,66 @@ export class KdbResultsPanel {
           column <= range.endColumn;
       }
 
-      function copySelection() {
+      function copySelection(includeHeaders) {
         const range = normalizedSelection();
         if (range) {
-          vscode.postMessage({ type: 'copyRange', range });
+          vscode.postMessage({ type: 'copyRange', range, includeHeaders: !!includeHeaders });
         }
       }
 
-      function formatValue(value) {
-        if (value === null || value === undefined) {
-          return '';
-        }
-        if (typeof value === 'object') {
-          try {
-            return JSON.stringify(value);
-          } catch (_error) {
-            return String(value);
-          }
-        }
-        return String(value);
+      function sliceCovers(value, rows, columns) {
+        return value &&
+          rows.start >= value.startRow &&
+          rows.end <= value.endRow &&
+          columns.start >= value.startColumn &&
+          columns.end <= value.endColumn;
+      }
+
+      function rangeKey(rows, columns) {
+        return rows.start + ':' + rows.end + ':' + columns.start + ':' + columns.end;
+      }
+
+      function normalizeSlice(value) {
+        const cells = Array.isArray(value.cells) ? value.cells : [];
+        return {
+          startRow: toNonNegativeInteger(value.startRow, 0),
+          endRow: toInteger(value.endRow, -1),
+          startColumn: toNonNegativeInteger(value.startColumn, 0),
+          endColumn: toInteger(value.endColumn, -1),
+          cells: cells.map(row => Array.isArray(row) ? row.map(cell => cell === null || cell === undefined ? '' : String(cell)) : [])
+        };
+      }
+
+      function emptyData() {
+        return {
+          version: 0,
+          columns: [],
+          rowCount: 0,
+          messages: [],
+          query: '',
+          connectionName: '',
+          elapsedMs: 0,
+          error: false
+        };
+      }
+
+      function emptySlice() {
+        return {
+          startRow: 0,
+          endRow: -1,
+          startColumn: 0,
+          endColumn: -1,
+          cells: []
+        };
+      }
+
+      function toNonNegativeInteger(value, fallback) {
+        return Math.max(0, toInteger(value, fallback));
+      }
+
+      function toInteger(value, fallback) {
+        const number = Number(value);
+        return Number.isFinite(number) ? Math.floor(number) : fallback;
       }
 
       function escapeHtml(value) {
@@ -522,4 +697,27 @@ function nonceValue(): string {
     text += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   return text;
+}
+
+function messageRange(value: any, itemCount: number): VisibleIndexRange {
+  if (itemCount <= 0) {
+    return { start: 0, end: -1 };
+  }
+
+  const max = itemCount - 1;
+  const start = boundedInteger(value && value.start, 0, max);
+  const end = boundedInteger(value && value.end, 0, max);
+  if (start > end) {
+    return { start: 0, end: -1 };
+  }
+
+  return { start, end };
+}
+
+function boundedInteger(value: any, min: number, max: number): number {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return min;
+  }
+  return Math.min(Math.max(Math.floor(number), min), max);
 }
