@@ -1,6 +1,8 @@
 const assert = require('assert');
 const fs = require('fs');
+const Module = require('module');
 const path = require('path');
+const JSZip = require('jszip');
 
 const {
   deserializeQMessage,
@@ -67,11 +69,27 @@ function htmlSelectOptions(source, selectId) {
   const scalarMessage = hex('010000000d000000fa01000000');
   const contiguousReceiveBuffer = new QIpcReceiveBuffer();
   contiguousReceiveBuffer.append(scalarMessage);
-  assert.strictEqual(contiguousReceiveBuffer.readMessage().toString('hex'), scalarMessage.toString('hex'));
+  const contiguousMessage = contiguousReceiveBuffer.readMessage();
+  assert.strictEqual(contiguousMessage.toString('hex'), scalarMessage.toString('hex'));
+  assert.strictEqual(contiguousMessage.buffer, scalarMessage.buffer);
+  assert.strictEqual(contiguousMessage.byteOffset, scalarMessage.byteOffset);
   assert.strictEqual(contiguousReceiveBuffer.readMessage(), null);
   assert.strictEqual(contiguousReceiveBuffer.bufferedBytes, 0);
   assert.strictEqual(contiguousReceiveBuffer.copyCount, 0);
   assert.strictEqual(contiguousReceiveBuffer.copyBytesCopied, 0);
+
+  const clearedReceiveBuffer = new QIpcReceiveBuffer();
+  clearedReceiveBuffer.append(Buffer.alloc(0));
+  assert.strictEqual(clearedReceiveBuffer.readMessage(), null);
+  clearedReceiveBuffer.append(scalarMessage.slice(0, 8));
+  assert.strictEqual(clearedReceiveBuffer.readMessage(), null);
+  assert.strictEqual(clearedReceiveBuffer.bufferedBytes, 8);
+  clearedReceiveBuffer.clear();
+  assert.strictEqual(clearedReceiveBuffer.bufferedBytes, 0);
+  clearedReceiveBuffer.append(scalarMessage);
+  assert.strictEqual(clearedReceiveBuffer.readMessage().toString('hex'), scalarMessage.toString('hex'));
+  assert.strictEqual(clearedReceiveBuffer.copyCount, 0);
+  assert.strictEqual(clearedReceiveBuffer.copyBytesCopied, 0);
 
   const receiveBuffer = new QIpcReceiveBuffer();
   receiveBuffer.append(scalarMessage.slice(0, 3));
@@ -103,6 +121,30 @@ function htmlSelectOptions(source, selectId) {
     () => deserializeQPayload(hex('0a00ffffffff')),
     /Invalid q IPC vector length -1/
   );
+  assert.throws(
+    () => deserializeQPayload(Buffer.concat([int8(-128), cString('bad query')])),
+    error => error && error.name === 'KdbQError' && /bad query/.test(error.message)
+  );
+  assert.throws(
+    () => deserializeQPayload(Buffer.concat([intVector([1]), Buffer.from([0])])),
+    /Invalid q IPC payload: 1 trailing byte\(s\)/
+  );
+  assert.throws(
+    () => deserializeQPayload(Buffer.concat([vectorHeader(10, 4), Buffer.from('ab')])),
+    /Invalid q IPC payload: unexpected end of buffer/
+  );
+  assert.throws(
+    () => deserializeQPayload(Buffer.concat([vectorHeader(11, 1), Buffer.from('abc')])),
+    /Invalid q symbol: missing terminator/
+  );
+  assert.throws(
+    () => deserializeQPayload(vectorHeader(20, 1)),
+    /Unsupported q IPC type 20/
+  );
+  assert.throws(
+    () => deserializeQPayload(Buffer.from([98, 0, 0])),
+    /Invalid q table payload: expected dictionary, got 0/
+  );
   const truncatedCompressedMessage = Buffer.alloc(12);
   truncatedCompressedMessage.writeUInt8(1, 0);
   truncatedCompressedMessage.writeUInt8(2, 1);
@@ -116,9 +158,16 @@ function htmlSelectOptions(source, selectId) {
 
   const queryMessage = serializeTextQuery('select from trade');
   const coalescedReceiveBuffer = new QIpcReceiveBuffer();
-  coalescedReceiveBuffer.append(Buffer.concat([scalarMessage, queryMessage]));
-  assert.strictEqual(coalescedReceiveBuffer.readMessage().toString('hex'), scalarMessage.toString('hex'));
-  assert.strictEqual(coalescedReceiveBuffer.readMessage().toString('hex'), queryMessage.toString('hex'));
+  const coalescedChunk = Buffer.concat([scalarMessage, queryMessage]);
+  coalescedReceiveBuffer.append(coalescedChunk);
+  const coalescedScalar = coalescedReceiveBuffer.readMessage();
+  const coalescedQuery = coalescedReceiveBuffer.readMessage();
+  assert.strictEqual(coalescedScalar.toString('hex'), scalarMessage.toString('hex'));
+  assert.strictEqual(coalescedQuery.toString('hex'), queryMessage.toString('hex'));
+  assert.strictEqual(coalescedScalar.buffer, coalescedChunk.buffer);
+  assert.strictEqual(coalescedScalar.byteOffset, coalescedChunk.byteOffset);
+  assert.strictEqual(coalescedQuery.buffer, coalescedChunk.buffer);
+  assert.strictEqual(coalescedQuery.byteOffset, coalescedChunk.byteOffset + scalarMessage.length);
   assert.strictEqual(coalescedReceiveBuffer.readMessage(), null);
   assert.strictEqual(coalescedReceiveBuffer.bufferedBytes, 0);
   assert.strictEqual(coalescedReceiveBuffer.copyCount, 0);
@@ -131,6 +180,10 @@ function htmlSelectOptions(source, selectId) {
   assert.strictEqual(selectedTextOrCurrentLine(qScript, '  1+1\n2+2  ', 1), '  1+1\n2+2  ');
   assert.strictEqual(selectedTextOrCurrentLine(qScript, '', 1), '  neg[gatewayHandle](`.gw.asyncExec;query;db)');
   assert.strictEqual(selectedTextOrCurrentLine(qScript, '', 3), '');
+  assert.strictEqual(selectedTextOrCurrentLine('first\r\nsecond', '', 1), 'second');
+  assert.strictEqual(selectedTextOrCurrentLine('first\nsecond', '', -10), 'first');
+  assert.strictEqual(selectedTextOrCurrentLine('first\nsecond', '', 99), 'second');
+  assert.strictEqual(selectedTextOrCurrentLine('first\nsecond', '  ', 0), '  ');
   assert.deepStrictEqual(
     normalizeCellRange({ row: 4, column: 3 }, { row: 2, column: 6 }),
     { startRow: 2, endRow: 4, startColumn: 3, endColumn: 6 }
@@ -282,6 +335,41 @@ function htmlSelectOptions(source, selectId) {
     }),
     '#,note,size\n1,"line\nbreak",100\n2,,200'
   );
+  assert.deepStrictEqual(
+    rowBackedColumnar.cellWindow({ start: -10, end: 50 }, { start: -10, end: 50 }),
+    {
+      startRow: 0,
+      endRow: 1,
+      startColumn: 0,
+      endColumn: 2,
+      cells: [
+        ['AAPL', 'line break', '100'],
+        ['MSFT', '', '200'],
+      ],
+    }
+  );
+  assert.deepStrictEqual(
+    rowBackedColumnar.cellWindow({ start: 1, end: 0 }, { start: 0, end: 1 }),
+    { startRow: 0, endRow: -1, startColumn: 0, endColumn: -1, cells: [] }
+  );
+  const escapingColumnar = rowsToColumnarPanelResult(
+    [{ '#': 'user', note: '<&>"\'' }],
+    ['#', 'note']
+  );
+  assert.strictEqual(
+    escapingColumnar.toText('csv', { startRow: 0, endRow: 0, startColumn: 0, endColumn: 1 }, {
+      includeHeaders: true,
+      includeRowIndex: true,
+    }),
+    '#_1,#,note\n1,user,"<&>""\'"'
+  );
+  assert.strictEqual(
+    escapingColumnar.toText('html', { startRow: 0, endRow: 0, startColumn: 0, endColumn: 1 }, {
+      includeHeaders: true,
+      includeRowIndex: true,
+    }),
+    '<table><thead><tr><th>#_1</th><th>#</th><th>note</th></tr></thead><tbody><tr><td>1</td><td>user</td><td>&lt;&amp;&gt;&quot;&#39;</td></tr></tbody></table>'
+  );
   const visibleColumnar = filterColumnarPanelResult(rowBackedColumnar, ['sym', 'size']);
   assert.deepStrictEqual(visibleColumnar.columns, ['sym', 'size']);
   assert.deepStrictEqual(
@@ -329,8 +417,32 @@ function htmlSelectOptions(source, selectId) {
     ['D', '2'],
     ['A', '10'],
   ]);
+  const filteredSortable = filterColumnarPanelResult(sortableColumnar, ['sym', 'size']);
+  assert.deepStrictEqual(filteredSortable.columns, ['sym', 'size']);
+  assert.deepStrictEqual(sortedColumnarRowOrder(filteredSortable, 1, 'asc'), [1, 3, 0, 2, 4]);
+  const filteredOrderedColumnar = applyColumnarRowOrder(filteredSortable, sortedColumnarRowOrder(filteredSortable, 1, 'asc'));
+  assert.deepStrictEqual(
+    filteredOrderedColumnar.cellWindow({ start: 0, end: 2 }, { start: 0, end: 1 }).cells,
+    [
+      ['B', '2'],
+      ['D', '2'],
+      ['A', '10'],
+    ]
+  );
+  assert.strictEqual(
+    filteredOrderedColumnar.toText('json', { startRow: 0, endRow: 1, startColumn: 0, endColumn: 1 }, {
+      includeRowIndex: true,
+    }),
+    '[{"#":1,"sym":"B","size":"2"},{"#":2,"sym":"D","size":"2"}]'
+  );
+  assert.deepStrictEqual(
+    applyColumnarRowOrder(sortableColumnar, [3, -1, 99, 1.9, Number.NaN]).cellWindow({ start: 0, end: 1 }, { start: 0, end: 0 }).cells,
+    [['D'], ['B']]
+  );
   assert.deepStrictEqual(sortableColumnar.cellWindow({ start: 0, end: 0 }, { start: 0, end: 1 }).cells, [['A', '10']]);
   assert.deepStrictEqual(visibleIndexRange(280, 140, 28, 100, 2), { start: 8, end: 17 });
+  assert.deepStrictEqual(visibleIndexRange(-100, 140, 28, 100, 2), { start: 0, end: 4 });
+  assert.deepStrictEqual(visibleIndexRange(0, 0, 28, 100, 2), { start: 0, end: -1 });
   assert.deepStrictEqual(
     exportShape({ startRow: 0, endRow: 1048574, startColumn: 0, endColumn: 16382 }, {
       includeHeaders: true,
@@ -430,6 +542,41 @@ function htmlSelectOptions(source, selectId) {
   );
   assert.strictEqual(numberSettingUpdateSource.includes('Math.min(Math.max(Math.floor(number), min), max)'), true);
   assert.strictEqual(numberSettingUpdateSource.includes('integer >= min && integer <= max'), false);
+  assert.strictEqual(resultsPanelSource.includes('Object.prototype.hasOwnProperty.call(RESULT_SETTING_UPDATE_ALLOWLIST, key)'), true);
+  const resultsPanelInternals = loadResultsPanelInternals();
+  assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('cellWidth', '1000.9'), { key: 'cellWidth', value: 600 });
+  assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('rowHeight', 19), { key: 'rowHeight', value: 20 });
+  assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('fontSize', 'abc'), null);
+  assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('density', 'compact'), { key: 'density', value: 'compact' });
+  assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('density', 'spacious'), null);
+  assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('includeHeaders', false), { key: 'includeHeaders', value: false });
+  assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('includeHeaders', 'false'), null);
+  assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('constructor', 1), null);
+  assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('__proto__', true), null);
+  const xlsxColumnar = rowsToColumnarPanelResult([{ note: 'x\u0001<&>"\'' }], ['note']);
+  const xlsxBytes = await resultsPanelInternals.columnarToXlsx(
+    xlsxColumnar,
+    { startRow: 0, endRow: 0, startColumn: 0, endColumn: 0 },
+    true,
+    true
+  );
+  const xlsxZip = await JSZip.loadAsync(Buffer.from(xlsxBytes));
+  const xlsxSheet = xlsxZip.file('xl/worksheets/sheet1.xml');
+  assert.ok(xlsxSheet, 'XLSX export should include sheet1.xml');
+  const xlsxSheetXml = await xlsxSheet.async('string');
+  assert.strictEqual(xlsxSheetXml.includes('<dimension ref="A1:B2"/>'), true);
+  assert.strictEqual(xlsxSheetXml.includes('x\u0001'), false);
+  assert.strictEqual(xlsxSheetXml.includes('x&lt;&amp;&gt;&quot;&apos;'), true);
+  assert.strictEqual(xlsxSheetXml.includes('<t xml:space="preserve">#</t>'), true);
+  await assert.rejects(
+    () => resultsPanelInternals.columnarToXlsx(
+      xlsxColumnar,
+      { startRow: 0, endRow: 1048575, startColumn: 0, endColumn: 0 },
+      true,
+      false
+    ),
+    /XLSX export exceeds Excel sheet limits/
+  );
   assert.strictEqual(resultsPanelSource.includes('await this.copyRange(\n        message.version,'), true);
   assert.strictEqual(resultsPanelSource.includes('await this.exportRange(\n        message.version,'), true);
   assert.strictEqual(resultsPanelSource.includes('const requestVersion = integerOrNull(version);'), true);
@@ -625,6 +772,19 @@ function htmlSelectOptions(source, selectId) {
       ['1', '3', '5'],
       ['2', '4', '6'],
     ]
+  );
+  assert.strictEqual(
+    duplicateColumnarResult.result.toText('json', { startRow: 0, endRow: 0, startColumn: 0, endColumn: 2 }, {
+      includeRowIndex: true,
+    }),
+    '[{"#":1,"a":1,"a_1":3,"a_1_1":5}]'
+  );
+  assert.strictEqual(
+    duplicateColumnarResult.result.toText('csv', { startRow: 0, endRow: 0, startColumn: 0, endColumn: 2 }, {
+      includeHeaders: true,
+      includeRowIndex: true,
+    }),
+    '#,a,a_1,a_1_1\n1,1,3,5'
   );
   const duplicateTableResult = qValueToTabular(deserializeQPayload(duplicateColumnPayload));
   assert.deepStrictEqual(duplicateTableResult.cols, ['a', 'a_1', 'a_1_1']);
@@ -1005,6 +1165,35 @@ function htmlSelectOptions(source, selectId) {
   console.error(error);
   process.exit(1);
 });
+
+function loadResultsPanelInternals() {
+  const filename = path.join(__dirname, '..', 'out', 'results-panel.js');
+  const source = fs.readFileSync(filename, 'utf8') +
+    '\nmodule.exports.__test = { columnarToXlsx, normalizePanelSettingUpdate };';
+  const testModule = new Module(filename, module);
+  testModule.filename = filename;
+  testModule.paths = Module._nodeModulePaths(path.dirname(filename));
+  testModule.require = request => {
+    if (request === 'vscode') {
+      return mockVscode();
+    }
+    return Module._load(request, testModule, false);
+  };
+  testModule._compile(source, filename);
+  return testModule.exports.__test;
+}
+
+function mockVscode() {
+  return {
+    ConfigurationTarget: { Global: 1 },
+    ProgressLocation: { Notification: 15, Window: 10 },
+    Uri: { file: fsPath => ({ fsPath }) },
+    ViewColumn: { Beside: 2 },
+    env: {},
+    window: {},
+    workspace: {},
+  };
+}
 
 function createDriver() {
   return new KdbDriver({

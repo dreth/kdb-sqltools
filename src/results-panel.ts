@@ -2312,7 +2312,9 @@ function normalizePanelSettingUpdate(key: any, value: any): { key: string; value
     return null;
   }
 
-  const validator = RESULT_SETTING_UPDATE_ALLOWLIST[key];
+  const validator = Object.prototype.hasOwnProperty.call(RESULT_SETTING_UPDATE_ALLOWLIST, key)
+    ? RESULT_SETTING_UPDATE_ALLOWLIST[key]
+    : undefined;
   if (!validator) {
     return null;
   }
