@@ -4,6 +4,7 @@ import { endPerfSpan, isPerfTraceEnabled, perfMark, perfSpan } from '../perf';
 import type { PerfDetails, PerfSpan } from '../perf';
 
 const HEADER_LENGTH = 8;
+const BIG_ENDIAN = 0;
 const LITTLE_ENDIAN = 1;
 const MESSAGE_SYNC = 1;
 const MESSAGE_RESPONSE = 2;
@@ -173,7 +174,11 @@ export class QIpcReceiveBuffer {
   }
 
   private readMessageLength(): number {
-    const littleEndian = this.byteAt(0) === LITTLE_ENDIAN;
+    const endian = this.byteAt(0);
+    if (endian !== BIG_ENDIAN && endian !== LITTLE_ENDIAN) {
+      throw new KdbIpcError(`Invalid q IPC endian flag ${endian}`);
+    }
+    const littleEndian = endian === LITTLE_ENDIAN;
     const length = littleEndian ? this.readInt32LE(4) : this.readInt32BE(4);
     if (length < HEADER_LENGTH) {
       throw new KdbIpcError(`Invalid q IPC message length ${length}`);
@@ -599,6 +604,11 @@ export function deserializeQMessage(message: Buffer, perfDetails?: PerfDetails):
     throw new KdbIpcError('Invalid q IPC message: header is incomplete');
   }
 
+  const declaredLength = messageLengthFromHeader(message);
+  if (declaredLength !== message.length) {
+    throw new KdbIpcError(`Invalid q IPC message length ${declaredLength} for buffer length ${message.length}`);
+  }
+
   const compressed = message.readUInt8(2) === 1;
   let normalized = message;
   if (compressed) {
@@ -611,9 +621,13 @@ export function deserializeQMessage(message: Buffer, perfDetails?: PerfDetails):
     } finally {
       endPerfSpan(decompressSpan);
     }
+    const normalizedLength = messageLengthFromHeader(normalized);
+    if (normalizedLength !== normalized.length) {
+      throw new KdbIpcError(`Invalid decompressed q IPC message length ${normalizedLength} for buffer length ${normalized.length}`);
+    }
   }
 
-  const littleEndian = normalized.readUInt8(0) === LITTLE_ENDIAN;
+  const littleEndian = messageLittleEndian(normalized);
   const payload = normalized.slice(HEADER_LENGTH);
   const deserializeSpan = perfSpan('q-ipc.deserialize', {
     ...(perfDetails || {}),
@@ -871,7 +885,11 @@ function createHandshake(options: KdbConnectionOptions): Buffer {
 }
 
 function decompressMessage(message: Buffer): Buffer {
-  const littleEndian = message.readUInt8(0) === LITTLE_ENDIAN;
+  if (message.length < 12) {
+    throw new KdbIpcError('Invalid compressed q IPC message: header is incomplete');
+  }
+
+  const littleEndian = messageLittleEndian(message);
   const uncompressedLength = littleEndian ? message.readInt32LE(8) : message.readInt32BE(8);
   if (uncompressedLength < HEADER_LENGTH) {
     throw new KdbIpcError(`Invalid compressed q IPC length ${uncompressedLength}`);
@@ -894,21 +912,34 @@ function decompressMessage(message: Buffer): Buffer {
   let d = 12;
   const lookup = new Int32Array(256);
 
+  const readCompressedByte = (context: string): number => {
+    if (d >= message.length) {
+      throw new KdbIpcError(`Invalid compressed q IPC message: truncated ${context}`);
+    }
+    return message.readUInt8(d++);
+  };
+
   while (s < dst.length) {
     if (!i) {
-      f = message[d++];
+      f = readCompressedByte('flag byte');
       i = 1;
     }
     if (f & i) {
-      r = lookup[message[d++]];
+      r = lookup[readCompressedByte('back-reference index')];
+      if (r < 0 || r + 2 > dst.length || s + 2 > dst.length) {
+        throw new KdbIpcError('Invalid compressed q IPC back-reference');
+      }
       dst[s++] = dst[r++];
       dst[s++] = dst[r++];
-      n = message[d++];
+      n = readCompressedByte('back-reference length');
+      if (r + n > dst.length || s + n > dst.length) {
+        throw new KdbIpcError('Invalid compressed q IPC back-reference length');
+      }
       for (let m = 0; m < n; m++) {
         dst[s + m] = dst[r + m];
       }
     } else {
-      dst[s++] = message[d++];
+      dst[s++] = readCompressedByte('literal byte');
     }
     while (p < s - 1) {
       lookup[dst[p] ^ dst[p + 1]] = p++;
@@ -923,6 +954,27 @@ function decompressMessage(message: Buffer): Buffer {
   }
 
   return dst;
+}
+
+function messageLengthFromHeader(message: Buffer): number {
+  if (message.length < HEADER_LENGTH) {
+    throw new KdbIpcError('Invalid q IPC message: header is incomplete');
+  }
+
+  const littleEndian = messageLittleEndian(message);
+  const length = littleEndian ? message.readInt32LE(4) : message.readInt32BE(4);
+  if (length < HEADER_LENGTH) {
+    throw new KdbIpcError(`Invalid q IPC message length ${length}`);
+  }
+  return length;
+}
+
+function messageLittleEndian(message: Buffer): boolean {
+  const endian = message.readUInt8(0);
+  if (endian !== BIG_ENDIAN && endian !== LITTLE_ENDIAN) {
+    throw new KdbIpcError(`Invalid q IPC endian flag ${endian}`);
+  }
+  return endian === LITTLE_ENDIAN;
 }
 
 class QReader {
@@ -954,6 +1006,9 @@ class QReader {
 
     this.readUInt8();
     const length = this.readInt32Raw();
+    if (length < 0) {
+      throw new KdbIpcError(`Invalid q IPC vector length ${length}`);
+    }
     if (type === TYPE_CHAR_VECTOR) {
       return this.readString(length);
     }
@@ -1044,6 +1099,9 @@ class QReader {
       this.readObject();
     } else {
       const length = this.readInt32Raw();
+      if (length < 0) {
+        throw new KdbIpcError(`Invalid q function payload length ${length}`);
+      }
       for (let i = 0; i < length; i++) {
         this.readObject();
       }
@@ -1234,16 +1292,19 @@ class QReader {
   }
 
   private ensure(length: number) {
-    if (this.pos + length > this.buffer.length) {
+    if (length < 0 || this.pos + length > this.buffer.length) {
       throw new KdbIpcError('Invalid q IPC payload: unexpected end of buffer');
     }
   }
 }
 
 function makeQTable(columnsValue: QValue, columnDataValue: QValue): QTable {
-  const columns = asList(columnsValue).map(valueToColumnName);
+  const columns = uniqueColumnNames(asList(columnsValue).map(valueToColumnName));
   const columnData = asList(columnDataValue);
-  const rowCount = columns.length === 0 ? 0 : Math.max(...columnData.slice(0, columns.length).map(vectorLength));
+  const tableColumnData = columnData.slice(0, columns.length);
+  const rowCount = columns.length === 0 || tableColumnData.length === 0
+    ? 0
+    : Math.max(...tableColumnData.map(vectorLength));
   const table = {
     qtype: 'table',
     columns,
@@ -1509,6 +1570,14 @@ function collectColumns(rows: Array<{ [key: string]: QDisplayValue }>): string[]
     });
   });
   return columns;
+}
+
+function uniqueColumnNames(columns: string[]): string[] {
+  const unique: string[] = [];
+  columns.forEach(column => {
+    unique.push(uniqueColumnName(column, unique));
+  });
+  return unique;
 }
 
 function uniqueColumnName(column: string, existing: string[]): string {

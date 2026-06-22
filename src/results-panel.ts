@@ -216,6 +216,7 @@ export class KdbResultsPanel {
 
     if (message.type === 'copyRange') {
       await this.copyRange(
+        message.version,
         message.range,
         textExportFormat(message.format),
         message.includeHeaders === true,
@@ -226,6 +227,7 @@ export class KdbResultsPanel {
 
     if (message.type === 'exportRange') {
       await this.exportRange(
+        message.version,
         message.range,
         exportFormat(message.format),
         message.includeHeaders === true,
@@ -577,12 +579,17 @@ export class KdbResultsPanel {
   }
 
   private async copyRange(
+    version: any,
     range: any,
     format: TextExportFormat,
     includeHeaders: boolean,
     includeRowIndex: boolean
   ): Promise<void> {
-    const requestVersion = this.version;
+    const requestVersion = integerOrNull(version);
+    if (requestVersion === null || requestVersion !== this.version) {
+      return;
+    }
+
     const table = this.visibleTable();
     if (!table) {
       return;
@@ -613,7 +620,7 @@ export class KdbResultsPanel {
         'Copy Anyway'
       );
       if (choice === 'Export') {
-        await this.exportRange(clamped, format, includeHeaders, includeRowIndex);
+        await this.exportRange(requestVersion, clamped, format, includeHeaders, includeRowIndex);
         return;
       }
       if (choice !== 'Copy Anyway') {
@@ -629,12 +636,17 @@ export class KdbResultsPanel {
   }
 
   private async exportRange(
+    version: any,
     range: any,
     format: ExportFormat,
     includeHeaders: boolean,
     includeRowIndex: boolean
   ): Promise<void> {
-    const requestVersion = this.version;
+    const requestVersion = integerOrNull(version);
+    if (requestVersion === null || requestVersion !== this.version) {
+      return;
+    }
+
     const table = this.visibleTable();
     if (!table) {
       return;
@@ -2069,6 +2081,7 @@ export class KdbResultsPanel {
         const range = normalizedSelection();
         vscode.postMessage({
           type: 'copyRange',
+          version: data.version,
           range,
           format: String(copyFormat.value || 'csv'),
           includeHeaders: !!includeHeaders.checked,
@@ -2083,6 +2096,7 @@ export class KdbResultsPanel {
         const range = normalizedSelection();
         vscode.postMessage({
           type: 'exportRange',
+          version: data.version,
           range,
           format: String(exportFormat.value || 'csv'),
           includeHeaders: !!includeHeaders.checked,
@@ -2683,7 +2697,7 @@ function xmlDeclaration(): string {
 }
 
 function escapeXml(value: string): string {
-  return value.replace(/[&<>"']/g, char => {
+  return value.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F&<>"']/g, char => {
     switch (char) {
       case '&':
         return '&amp;';
@@ -2696,6 +2710,6 @@ function escapeXml(value: string): string {
       case '\'':
         return '&apos;';
     }
-    return char;
+    return '';
   });
 }
