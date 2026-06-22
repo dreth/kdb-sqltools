@@ -77,7 +77,7 @@ The `kdb+: Copy Example Global Connection Settings` command copies this User-set
 
 ## kdb Results Panel
 
-The kdb results panel is the default target for `kdb+: Run q` and `kdb+: Run q Block`. It runs through this extension's direct driver path and avoids SQLTools `*.session.sql` editor documents.
+The kdb results panel is the default target for `kdb+: Run q Script` and `kdb+: Run Selection`. It runs through this extension's direct driver path and avoids SQLTools `*.session.sql` editor documents. `Run Selection` sends the selected text exactly; with no selection, it sends only the current physical line. A blank current line uses the normal no-code warning.
 
 To use SQLTools' own results target instead, set:
 
@@ -85,33 +85,54 @@ To use SQLTools' own results target instead, set:
 "kdb-sqltools.results.target": "sqltools"
 ```
 
-SQLTools target commands remain available: `kdb+: Run q in SQLTools Results` and `kdb+: Run q Block in SQLTools Results`. SQLTools may open `.session.sql` editors there; that is SQLTools core behavior, not this driver's panel path.
+SQLTools target commands remain available: `kdb+: Run q Script in SQLTools Results` and `kdb+: Run Selection in SQLTools Results`. SQLTools may open `.session.sql` editors there; that is SQLTools core behavior, not this driver's panel path.
 
-The kdb panel virtualizes rows and columns and transfers only the visible cell window from the extension to the webview. The q IPC result is still fully materialized in extension memory before display, so use q-side limits for truly massive query results.
+The kdb panel virtualizes rows and columns and transfers only the visible cell window from the extension to the webview. Panel results use a direct columnar path that avoids SQLTools row-object materialization, and the q IPC receive path buffers chunks incrementally to reduce copying for large responses. The q IPC result is still fully materialized in extension memory before display, so use q-side limits for truly massive query results. Very large results show a non-blocking warning in the panel.
 
 Selection supports individual ranges, whole rows, whole columns, and all cells. With no selection, copy/export actions use all cells.
 
-Copy formats: TSV, CSV, JSON, NDJSON, HTML. Export formats: TSV, CSV, XLSX, JSON, NDJSON, HTML. XLSX export writes a real `.xlsx` workbook. Parquet export is not available in this build.
+Columns can be hidden from the panel settings menu for the current panel session. Hidden columns stay hidden for later results in that panel when names match, and reset restores all columns. Hidden-column choices are not saved globally.
 
-Minimal panel cosmetics:
+Header clicks default to column selection. Change the toolbar mode from Select to Sort to sort visible columns in the extension; repeated clicks cycle ascending, descending, and original order. Sorting uses the panel's visible cell text, warns before sorting very large row counts, and resets on the third click.
+
+Toolbar search runs in the extension against visible columns only. It returns capped row-match metadata to the webview instead of transferring all result cells, and the status marks capped or partial scans.
+
+Copy formats: CSV, TSV, JSON, NDJSON, HTML. Export formats: CSV, XLSX, TSV, JSON, NDJSON, HTML. XLSX export writes a real `.xlsx` workbook and rejects output beyond Excel's sheet limits. Large copy/export actions prompt before materializing output. The row-number/header copy and export options are enabled by default and persist globally from the panel settings menu.
+
+kdb panel settings:
 
 ```json
 {
   "kdb-sqltools.results.cellWidth": 160,
   "kdb-sqltools.results.rowHeight": 28,
   "kdb-sqltools.results.fontSize": 0,
-  "kdb-sqltools.results.density": "standard"
+  "kdb-sqltools.results.density": "standard",
+  "kdb-sqltools.results.showRowIndex": true,
+  "kdb-sqltools.results.includeHeaders": true,
+  "kdb-sqltools.results.includeRowIndex": true
 }
 ```
 
-`fontSize: 0` uses the VS Code default. Density can be `compact`, `standard`, or `comfortable`.
+`fontSize: 0` uses the VS Code default. Density can be `compact`, `standard`, or `comfortable`. `showRowIndex` controls the visible left row-number column; `includeHeaders` and `includeRowIndex` control default copy/export output.
+
+## Performance Trace
+
+Opt-in performance tracing logs query timing and memory snapshots to the VS Code extension host console with the `[kdb-sqltools:perf]` prefix. It helps diagnose large-query bottlenecks across IPC receive, result conversion, and panel slicing.
+
+Enable it with either:
+
+```json
+"kdb-sqltools.performance.trace": true
+```
+
+or by launching VS Code with `KDB_SQLTOOLS_PERF=1`.
 
 ## Limitations
 
 - TLS is not implemented by this driver, so no TLS option is exposed in the connection UI.
 - The driver does not translate SQL to q. Write q/qSQL directly.
 - Arbitrary editor queries are sent exactly as written. The driver does not add hidden limits; the kdb panel reduces webview transfer and DOM work, but it does not stream q execution. The SQLTools target renders however many rows SQLTools receives.
-- SQLTools' "execute current query" command uses SQL-style semicolon/`GO` statement parsing before the driver is called. For q expressions that contain semicolons inside lambdas, projections, or multi-statement blocks, select the intended q text and run the normal execute command so it is sent as one q expression.
+- SQLTools' "execute current query" command uses SQL-style semicolon/`GO` statement parsing before the driver is called. For q expressions that contain semicolons inside lambdas, projections, or multi-statement expressions, select the intended q text and run `kdb+: Run Selection` so it is sent as one q expression.
 - kdb has namespaces rather than SQL catalogs and schemas; SQLTools `database`/`schema` fields are mapped to the selected q namespace.
 - Root q views are listed with protected `views[]`; non-root view listing depends on what the target process returns for protected `system "b <namespace>"`.
 - The default automated E2E suite uses a mock q IPC server so it can run without licensed kdb+/q tooling. Use `npm run test:live-kdb` for an opt-in live q process smoke test.
@@ -190,6 +211,6 @@ Useful E2E environment variables:
 - `KDB_SQLTOOLS_E2E_VSCODE_VERSION=1.124.2` pins the downloaded VS Code version instead of `stable`.
 - `KDB_SQLTOOLS_E2E_FORCE_SQLTOOLS_INSTALL=1` reinstalls `mtxr.sqltools`.
 - `KDB_SQLTOOLS_E2E_SKIP_SQLTOOLS_INSTALL=1` skips the install step and uses whatever is already in `.vscode-test/e2e/extensions`.
-- `KDB_SQLTOOLS_E2E_ALLOW_SQLTOOLS_INSTALL_FAILURE=1` allows a driver-only VS Code host fallback when Marketplace access is blocked; the SQLTools activation test is skipped in that mode.
+- `KDB_SQLTOOLS_E2E_ALLOW_SQLTOOLS_INSTALL_FAILURE=1` allows a driver-only VS Code host fallback when Marketplace access is unavailable; the SQLTools activation test is skipped in that mode.
 - `KDB_SQLTOOLS_E2E_RUNTIME_LIB_DIR=/path/to/libs` prepends a custom Linux runtime library directory for minimal containers.
 - `KDB_SQLTOOLS_E2E_SKIP_LINUX_LIBS=1` skips the no-root `apt-get download`/`dpkg-deb` runtime-library bootstrap.

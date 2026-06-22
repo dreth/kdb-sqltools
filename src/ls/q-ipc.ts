@@ -1,4 +1,7 @@
 import * as net from 'net';
+import { ColumnarPanelResult, createColumnarPanelResult } from '../kdb-results';
+import { endPerfSpan, isPerfTraceEnabled, perfMark, perfSpan } from '../perf';
+import type { PerfDetails, PerfSpan } from '../perf';
 
 const HEADER_LENGTH = 8;
 const LITTLE_ENDIAN = 1;
@@ -26,6 +29,8 @@ export interface QTable {
   columns: string[];
   rows: Array<{ [key: string]: QDisplayValue }>;
   columnData: QValue[];
+  rowCount: number;
+  rowsMaterialized?: boolean;
 }
 
 export interface QKeyedTable {
@@ -34,6 +39,8 @@ export interface QKeyedTable {
   valueTable: QTable;
   columns: string[];
   rows: Array<{ [key: string]: QDisplayValue }>;
+  rowCount: number;
+  rowsMaterialized?: boolean;
 }
 
 export interface QDict {
@@ -54,6 +61,13 @@ export interface QTabularResult {
   kind: string;
 }
 
+export interface QColumnarPanelResult {
+  cols: string[];
+  result: ColumnarPanelResult;
+  kind: string;
+  rowsMaterialized: boolean;
+}
+
 export interface KdbConnectionOptions {
   host: string;
   port: number;
@@ -67,7 +81,27 @@ interface PendingQuery {
   resolve(value: QValue): void;
   reject(error: Error): void;
   timeout?: NodeJS.Timer;
+  perf?: QIpcQueryPerf;
 }
+
+interface QIpcQueryPerf {
+  queryId: number;
+  queryChars: number;
+  queryBytes: number;
+  querySpan: PerfSpan | null;
+  sendSpan?: PerfSpan | null;
+  queryEnded: boolean;
+  sendEnded: boolean;
+  receiveEnded: boolean;
+  receiveSpan?: PerfSpan | null;
+  firstByteSeen: boolean;
+  receiveChunks: number;
+  receiveBytes: number;
+  copyCount: number;
+  copyBytesCopied: number;
+}
+
+let nextQueryId = 1;
 
 export class KdbQError extends Error {
   constructor(message: string) {
@@ -83,9 +117,159 @@ export class KdbIpcError extends Error {
   }
 }
 
+export class QIpcReceiveBuffer {
+  private chunks: Buffer[] = [];
+  private headIndex = 0;
+  private headOffset = 0;
+  private queuedBytes = 0;
+  private copiedMessages = 0;
+  private copiedBytes = 0;
+
+  public get bufferedBytes(): number {
+    return this.queuedBytes;
+  }
+
+  public get copyCount(): number {
+    return this.copiedMessages;
+  }
+
+  public get copyBytesCopied(): number {
+    return this.copiedBytes;
+  }
+
+  public append(chunk: Buffer): void {
+    if (!chunk.length) {
+      return;
+    }
+    this.chunks.push(chunk);
+    this.queuedBytes += chunk.length;
+  }
+
+  public clear(): void {
+    this.chunks = [];
+    this.headIndex = 0;
+    this.headOffset = 0;
+    this.queuedBytes = 0;
+    this.copiedMessages = 0;
+    this.copiedBytes = 0;
+  }
+
+  public readMessage(): Buffer | null {
+    if (this.queuedBytes < HEADER_LENGTH) {
+      return null;
+    }
+
+    const length = this.readMessageLength();
+    if (this.queuedBytes < length) {
+      return null;
+    }
+
+    const message = Buffer.allocUnsafe(length);
+    this.copyTo(message, length);
+    this.consume(length);
+    this.copiedMessages += 1;
+    this.copiedBytes += length;
+    return message;
+  }
+
+  private readMessageLength(): number {
+    const littleEndian = this.byteAt(0) === LITTLE_ENDIAN;
+    const length = littleEndian ? this.readInt32LE(4) : this.readInt32BE(4);
+    if (length < HEADER_LENGTH) {
+      throw new KdbIpcError(`Invalid q IPC message length ${length}`);
+    }
+    return length;
+  }
+
+  private byteAt(offset: number): number {
+    if (offset < 0 || offset >= this.queuedBytes) {
+      throw new KdbIpcError('Invalid q IPC receive buffer offset');
+    }
+
+    let remaining = offset;
+    for (let index = this.headIndex; index < this.chunks.length; index++) {
+      const chunk = this.chunks[index];
+      const start = index === this.headIndex ? this.headOffset : 0;
+      const available = chunk.length - start;
+      if (remaining < available) {
+        return chunk.readUInt8(start + remaining);
+      }
+      remaining -= available;
+    }
+
+    throw new KdbIpcError('Invalid q IPC receive buffer offset');
+  }
+
+  private readInt32LE(offset: number): number {
+    return this.byteAt(offset)
+      | (this.byteAt(offset + 1) << 8)
+      | (this.byteAt(offset + 2) << 16)
+      | (this.byteAt(offset + 3) << 24);
+  }
+
+  private readInt32BE(offset: number): number {
+    return (this.byteAt(offset) << 24)
+      | (this.byteAt(offset + 1) << 16)
+      | (this.byteAt(offset + 2) << 8)
+      | this.byteAt(offset + 3);
+  }
+
+  private copyTo(target: Buffer, length: number): void {
+    let remaining = length;
+    let targetOffset = 0;
+
+    for (let index = this.headIndex; index < this.chunks.length && remaining > 0; index++) {
+      const chunk = this.chunks[index];
+      const start = index === this.headIndex ? this.headOffset : 0;
+      const bytes = Math.min(chunk.length - start, remaining);
+      chunk.copy(target, targetOffset, start, start + bytes);
+      targetOffset += bytes;
+      remaining -= bytes;
+    }
+
+    if (remaining !== 0) {
+      throw new KdbIpcError('Invalid q IPC receive buffer state');
+    }
+  }
+
+  private consume(length: number): void {
+    if (length < 0 || length > this.queuedBytes) {
+      throw new KdbIpcError('Invalid q IPC receive buffer consume length');
+    }
+
+    this.queuedBytes -= length;
+    let remaining = length;
+    while (remaining > 0 && this.headIndex < this.chunks.length) {
+      const chunk = this.chunks[this.headIndex];
+      const available = chunk.length - this.headOffset;
+      if (remaining < available) {
+        this.headOffset += remaining;
+        remaining = 0;
+        break;
+      }
+
+      remaining -= available;
+      this.headIndex += 1;
+      this.headOffset = 0;
+    }
+
+    if (this.headIndex >= this.chunks.length) {
+      this.chunks = [];
+      this.headIndex = 0;
+      this.headOffset = 0;
+      return;
+    }
+
+    if (this.headIndex > 64 && this.headIndex * 2 > this.chunks.length) {
+      this.chunks = this.chunks.slice(this.headIndex);
+      this.headIndex = 0;
+    }
+  }
+}
+
 export class KdbIpcClient {
   private socket: net.Socket | null = null;
-  private buffer = Buffer.alloc(0);
+  private receiveBuffer = new QIpcReceiveBuffer();
   private pending: PendingQuery | null = null;
   private queue: PendingQuery[] = [];
   private protocolVersion = 0;
@@ -178,7 +362,7 @@ export class KdbIpcClient {
     }
 
     return new Promise<QValue>((resolve, reject) => {
-      this.queue.push({ query, resolve, reject });
+      this.queue.push({ query, resolve, reject, perf: createQueryPerf(query) });
       this.flushQueue();
     });
   }
@@ -186,7 +370,7 @@ export class KdbIpcClient {
   public async close(): Promise<void> {
     const socket = this.socket;
     this.socket = null;
-    this.buffer = Buffer.alloc(0);
+    this.receiveBuffer.clear();
     this.failAll(new KdbIpcError('kdb+ connection closed'));
 
     if (!socket || socket.destroyed) {
@@ -217,6 +401,9 @@ export class KdbIpcClient {
     }
 
     this.pending = pending;
+    if (pending.perf) {
+      perfMark('q-ipc.query.start', queryPerfDetails(pending.perf));
+    }
     if (this.timeoutMs() > 0) {
       pending.timeout = setTimeout(() => {
         this.rejectPending(new KdbIpcError(`kdb+ query timed out after ${this.timeoutMs()} ms`));
@@ -224,7 +411,17 @@ export class KdbIpcClient {
       }, this.timeoutMs());
     }
 
-    this.socket.write(serializeTextQuery(pending.query), error => {
+    const message = serializeTextQuery(pending.query);
+    if (pending.perf) {
+      const details = { ...queryPerfDetails(pending.perf), bytes: message.length };
+      perfMark('q-ipc.send.start', details);
+      pending.perf.sendSpan = perfSpan('q-ipc.send', details);
+    }
+
+    this.socket.write(message, error => {
+      if (pending.perf) {
+        finishSendPerf(pending.perf, { error: !!error });
+      }
       if (error) {
         this.rejectPending(error);
       }
@@ -232,17 +429,52 @@ export class KdbIpcClient {
   }
 
   private handleData = (chunk: Buffer) => {
-    this.buffer = Buffer.concat([this.buffer, chunk]);
+    const receivePerf = this.pending && this.pending.perf;
+    if (receivePerf) {
+      if (!receivePerf.firstByteSeen) {
+        receivePerf.firstByteSeen = true;
+        perfMark('q-ipc.receive.firstByte', {
+          ...queryPerfDetails(receivePerf),
+          chunkBytes: chunk.length,
+          bufferedBytes: this.receiveBuffer.bufferedBytes,
+        });
+        receivePerf.receiveSpan = perfSpan('q-ipc.receive', {
+          ...queryPerfDetails(receivePerf),
+          bufferedBytes: this.receiveBuffer.bufferedBytes,
+        });
+      }
+      receivePerf.receiveChunks += 1;
+      receivePerf.receiveBytes += chunk.length;
+    }
+
+    this.receiveBuffer.append(chunk);
 
     try {
-      while (this.buffer.length >= HEADER_LENGTH) {
-        const length = readMessageLength(this.buffer);
-        if (this.buffer.length < length) {
+      while (true) {
+        const copyCountBefore = this.receiveBuffer.copyCount;
+        const copyBytesBefore = this.receiveBuffer.copyBytesCopied;
+        const message = this.receiveBuffer.readMessage();
+        if (!message) {
           return;
         }
-
-        const message = this.buffer.slice(0, length);
-        this.buffer = this.buffer.slice(length);
+        const messagePerf = this.pending && this.pending.perf;
+        if (messagePerf) {
+          messagePerf.copyCount += this.receiveBuffer.copyCount - copyCountBefore;
+          messagePerf.copyBytesCopied += this.receiveBuffer.copyBytesCopied - copyBytesBefore;
+          const receiveDetails = {
+            ...queryPerfDetails(messagePerf),
+            ...messageSizeDetails(message),
+            receiveChunks: messagePerf.receiveChunks,
+            receiveBytes: messagePerf.receiveBytes,
+            copyCount: messagePerf.copyCount,
+            copyBytesCopied: messagePerf.copyBytesCopied,
+            bufferedRemainderBytes: this.receiveBuffer.bufferedBytes,
+          };
+          perfMark('q-ipc.receive.complete', {
+            ...receiveDetails,
+          });
+          finishReceivePerf(messagePerf, receiveDetails);
+        }
         this.handleMessage(message);
       }
     } catch (error) {
@@ -268,8 +500,30 @@ export class KdbIpcClient {
     }
 
     try {
-      pending.resolve(deserializeQMessage(message));
+      const value = deserializeQMessage(message, pending.perf ? queryPerfDetails(pending.perf) : undefined);
+      if (pending.perf) {
+        finishQueryPerf(pending.perf, {
+          error: false,
+          ...messageSizeDetails(message),
+          receiveChunks: pending.perf.receiveChunks,
+          receiveBytes: pending.perf.receiveBytes,
+          copyCount: pending.perf.copyCount,
+          copyBytesCopied: pending.perf.copyBytesCopied,
+        });
+      }
+      pending.resolve(value);
     } catch (error) {
+      if (pending.perf) {
+        finishQueryPerf(pending.perf, {
+          error: true,
+          errorName: toError(error).name,
+          ...messageSizeDetails(message),
+          receiveChunks: pending.perf.receiveChunks,
+          receiveBytes: pending.perf.receiveBytes,
+          copyCount: pending.perf.copyCount,
+          copyBytesCopied: pending.perf.copyBytesCopied,
+        });
+      }
       pending.reject(toError(error));
     } finally {
       this.flushQueue();
@@ -294,13 +548,31 @@ export class KdbIpcClient {
     if (pending.timeout) {
       clearTimeout(pending.timeout);
     }
+    if (pending.perf) {
+      const details = {
+        error: true,
+        errorName: error.name,
+        receiveChunks: pending.perf.receiveChunks,
+        receiveBytes: pending.perf.receiveBytes,
+        copyCount: pending.perf.copyCount,
+        copyBytesCopied: pending.perf.copyBytesCopied,
+      };
+      finishSendPerf(pending.perf, details);
+      finishReceivePerf(pending.perf, details);
+      finishQueryPerf(pending.perf, details);
+    }
     pending.reject(error);
   }
 
   private failAll(error: Error) {
     this.rejectPending(error);
     const queued = this.queue.splice(0);
-    queued.forEach(item => item.reject(error));
+    queued.forEach(item => {
+      if (item.perf) {
+        finishQueryPerf(item.perf, { error: true, errorName: error.name, queued: true });
+      }
+      item.reject(error);
+    });
   }
 }
 
@@ -322,14 +594,38 @@ export function serializeTextQuery(query: string): Buffer {
   return message;
 }
 
-export function deserializeQMessage(message: Buffer): QValue {
+export function deserializeQMessage(message: Buffer, perfDetails?: PerfDetails): QValue {
   if (message.length < HEADER_LENGTH) {
     throw new KdbIpcError('Invalid q IPC message: header is incomplete');
   }
 
-  const normalized = message.readUInt8(2) === 1 ? decompressMessage(message) : message;
+  const compressed = message.readUInt8(2) === 1;
+  let normalized = message;
+  if (compressed) {
+    const decompressSpan = perfSpan('q-ipc.decompress', {
+      ...(perfDetails || {}),
+      ...messageSizeDetails(message),
+    });
+    try {
+      normalized = decompressMessage(message);
+    } finally {
+      endPerfSpan(decompressSpan);
+    }
+  }
+
   const littleEndian = normalized.readUInt8(0) === LITTLE_ENDIAN;
-  return deserializeQPayload(normalized.slice(HEADER_LENGTH), littleEndian);
+  const payload = normalized.slice(HEADER_LENGTH);
+  const deserializeSpan = perfSpan('q-ipc.deserialize', {
+    ...(perfDetails || {}),
+    payloadBytes: payload.length,
+    littleEndian,
+    compressed,
+  });
+  try {
+    return deserializeQPayload(payload, littleEndian);
+  } finally {
+    endPerfSpan(deserializeSpan);
+  }
 }
 
 export function deserializeQPayload(payload: Buffer, littleEndian = true): QValue {
@@ -397,6 +693,171 @@ export function qValueToTabular(value: QValue): QTabularResult {
   };
 }
 
+export function qValueToColumnarPanel(value: QValue): QColumnarPanelResult {
+  if (isQTable(value)) {
+    const result = qTableToColumnarPanel(value);
+    return {
+      cols: value.columns,
+      result,
+      kind: 'table',
+      rowsMaterialized: qValueRowsMaterialized(value),
+    };
+  }
+
+  if (isQKeyedTable(value)) {
+    const result = qKeyedTableToColumnarPanel(value);
+    return {
+      cols: value.columns,
+      result,
+      kind: 'keyed table',
+      rowsMaterialized: qValueRowsMaterialized(value),
+    };
+  }
+
+  if (isQDict(value)) {
+    const result = createColumnarPanelResult(['key', 'value'], value.entries.length, (rowIndex, columnIndex) => {
+      const entry = value.entries[rowIndex];
+      if (!entry) {
+        return null;
+      }
+      return columnIndex === 0 ? normalizeCell(entry.key) : normalizeCell(entry.value);
+    });
+    return {
+      cols: result.columns,
+      result,
+      kind: 'dictionary',
+      rowsMaterialized: true,
+    };
+  }
+
+  if (Array.isArray(value)) {
+    if (value.length > 0 && value.every(isPlainObject)) {
+      const rows = value.map(row => normalizePlainObject(row as unknown as { [key: string]: QValue }));
+      const cols = collectColumns(rows);
+      return {
+        cols,
+        result: createColumnarPanelResult(cols, rows.length, (rowIndex, columnIndex) => {
+          const row = rows[rowIndex] || {};
+          return row[cols[columnIndex]];
+        }),
+        kind: 'list',
+        rowsMaterialized: true,
+      };
+    }
+
+    const result = createColumnarPanelResult(['index', 'value'], value.length, (rowIndex, columnIndex) => {
+      return columnIndex === 0 ? rowIndex : normalizeCell(value[rowIndex]);
+    });
+    return {
+      cols: result.columns,
+      result,
+      kind: 'list',
+      rowsMaterialized: false,
+    };
+  }
+
+  if (isPlainObject(value)) {
+    const row = normalizePlainObject(value as unknown as { [key: string]: QValue });
+    const cols = Object.keys(row);
+    return {
+      cols,
+      result: createColumnarPanelResult(cols, 1, (_rowIndex, columnIndex) => row[cols[columnIndex]]),
+      kind: 'object',
+      rowsMaterialized: true,
+    };
+  }
+
+  const result = createColumnarPanelResult(['value'], 1, () => normalizeCell(value));
+  return {
+    cols: result.columns,
+    result,
+    kind: 'scalar',
+    rowsMaterialized: false,
+  };
+}
+
+export function qValueRowsMaterialized(value: QValue): boolean {
+  if (isQTable(value)) {
+    return qTableRowsMaterialized(value);
+  }
+  if (isQKeyedTable(value)) {
+    return qKeyedTableRowsMaterialized(value);
+  }
+  return true;
+}
+
+function createQueryPerf(query: string): QIpcQueryPerf | undefined {
+  if (!isPerfTraceEnabled()) {
+    return undefined;
+  }
+  const queryBytes = Buffer.byteLength(query, 'utf8');
+  const queryId = nextQueryId++;
+  const details = { queryId, queryChars: query.length, queryBytes };
+  const querySpan = perfSpan('q-ipc.query.total', details);
+  if (!querySpan) {
+    return undefined;
+  }
+  return {
+    queryId,
+    queryChars: query.length,
+    queryBytes,
+    querySpan,
+    queryEnded: false,
+    sendEnded: false,
+    receiveEnded: false,
+    firstByteSeen: false,
+    receiveChunks: 0,
+    receiveBytes: 0,
+    copyCount: 0,
+    copyBytesCopied: 0,
+  };
+}
+
+function queryPerfDetails(perf: QIpcQueryPerf): PerfDetails {
+  return {
+    queryId: perf.queryId,
+    queryChars: perf.queryChars,
+    queryBytes: perf.queryBytes,
+  };
+}
+
+function finishQueryPerf(perf: QIpcQueryPerf, details?: PerfDetails): void {
+  if (perf.queryEnded) {
+    return;
+  }
+  perf.queryEnded = true;
+  endPerfSpan(perf.querySpan, details);
+}
+
+function finishSendPerf(perf: QIpcQueryPerf, details?: PerfDetails): void {
+  if (perf.sendEnded) {
+    return;
+  }
+  perf.sendEnded = true;
+  endPerfSpan(perf.sendSpan, details);
+}
+
+function finishReceivePerf(perf: QIpcQueryPerf, details?: PerfDetails): void {
+  if (perf.receiveEnded || !perf.receiveSpan) {
+    return;
+  }
+  perf.receiveEnded = true;
+  endPerfSpan(perf.receiveSpan, details);
+}
+
+function messageSizeDetails(message: Buffer): PerfDetails {
+  const compressed = message.readUInt8(2) === 1;
+  const uncompressedBytes = compressed && message.length >= 12
+    ? (message.readUInt8(0) === LITTLE_ENDIAN ? message.readInt32LE(8) : message.readInt32BE(8))
+    : message.length;
+  return {
+    messageBytes: message.length,
+    compressed,
+    compressedBytes: compressed ? message.length : undefined,
+    uncompressedBytes,
+  };
+}
+
 function createHandshake(options: KdbConnectionOptions): Buffer {
   const username = options.username || '';
   const password = options.password || '';
@@ -407,15 +868,6 @@ function createHandshake(options: KdbConnectionOptions): Buffer {
   // also accept this because they only parse up to the NUL. Without this byte,
   // current kdb+/q 5.x responds with version 0 and rejects the handshake.
   return Buffer.concat([Buffer.from(auth, 'utf8'), Buffer.from([3, 0])]);
-}
-
-function readMessageLength(buffer: Buffer): number {
-  const littleEndian = buffer.readUInt8(0) === LITTLE_ENDIAN;
-  const length = littleEndian ? buffer.readInt32LE(4) : buffer.readInt32BE(4);
-  if (length < HEADER_LENGTH) {
-    throw new KdbIpcError(`Invalid q IPC message length ${length}`);
-  }
-  return length;
 }
 
 function decompressMessage(message: Buffer): Buffer {
@@ -792,48 +1244,153 @@ function makeQTable(columnsValue: QValue, columnDataValue: QValue): QTable {
   const columns = asList(columnsValue).map(valueToColumnName);
   const columnData = asList(columnDataValue);
   const rowCount = columns.length === 0 ? 0 : Math.max(...columnData.slice(0, columns.length).map(vectorLength));
-  const rows: Array<{ [key: string]: QDisplayValue }> = [];
-
-  for (let rowIndex = 0; rowIndex < rowCount; rowIndex++) {
-    const row: { [key: string]: QDisplayValue } = {};
-    columns.forEach((column, columnIndex) => {
-      row[column] = normalizeCell(vectorValueAt(columnData[columnIndex], rowIndex));
-    });
-    rows.push(row);
-  }
-
-  return {
+  const table = {
     qtype: 'table',
     columns,
-    rows,
     columnData,
-  };
+    rowCount,
+  } as QTable;
+  defineLazyRows(
+    table,
+    () => materializeQTableRows(table),
+    'q-ipc.table.materialize',
+    { rows: rowCount, columns: columns.length }
+  );
+  return table;
 }
 
 function makeQKeyedTable(keyTable: QTable, valueTable: QTable): QKeyedTable {
   const columns = keyTable.columns.slice();
   valueTable.columns.forEach(column => columns.push(uniqueColumnName(column, columns)));
-  const rows: Array<{ [key: string]: QDisplayValue }> = [];
-  const rowCount = Math.max(keyTable.rows.length, valueTable.rows.length);
-
-  for (let rowIndex = 0; rowIndex < rowCount; rowIndex++) {
-    const row: { [key: string]: QDisplayValue } = {};
-    keyTable.columns.forEach(column => {
-      row[column] = keyTable.rows[rowIndex] ? keyTable.rows[rowIndex][column] : null;
-    });
-    valueTable.columns.forEach((column, columnIndex) => {
-      row[columns[keyTable.columns.length + columnIndex]] = valueTable.rows[rowIndex] ? valueTable.rows[rowIndex][column] : null;
-    });
-    rows.push(row);
-  }
-
-  return {
+  const rowCount = Math.max(qTableRowCount(keyTable), qTableRowCount(valueTable));
+  const table = {
     qtype: 'keyedTable',
     keyTable,
     valueTable,
     columns,
-    rows,
-  };
+    rowCount,
+  } as QKeyedTable;
+  defineLazyRows(
+    table,
+    () => materializeQKeyedTableRows(table),
+    'q-ipc.keyedTable.materialize',
+    {
+      rows: rowCount,
+      columns: columns.length,
+      keyColumns: keyTable.columns.length,
+      valueColumns: valueTable.columns.length,
+    }
+  );
+  return table;
+}
+
+function defineLazyRows(
+  target: QTable | QKeyedTable,
+  materialize: () => Array<{ [key: string]: QDisplayValue }>,
+  spanName: string,
+  details: PerfDetails
+): void {
+  let rows: Array<{ [key: string]: QDisplayValue }> | undefined;
+  let materialized = false;
+  Object.defineProperty(target, 'rows', {
+    enumerable: true,
+    configurable: true,
+    get(): Array<{ [key: string]: QDisplayValue }> {
+      if (!rows) {
+        const materializeSpan = perfSpan(spanName, details);
+        try {
+          rows = materialize();
+          materialized = true;
+        } finally {
+          endPerfSpan(materializeSpan, {
+            ...details,
+            rows: rows ? rows.length : 0,
+            materialized,
+          });
+        }
+      }
+      return rows;
+    },
+  });
+  Object.defineProperty(target, 'rowsMaterialized', {
+    enumerable: false,
+    configurable: true,
+    get(): boolean {
+      return materialized;
+    },
+  });
+}
+
+function materializeQTableRows(table: QTable): Array<{ [key: string]: QDisplayValue }> {
+  const rows: Array<{ [key: string]: QDisplayValue }> = [];
+  for (let rowIndex = 0; rowIndex < qTableRowCount(table); rowIndex++) {
+    const row: { [key: string]: QDisplayValue } = {};
+    table.columns.forEach((column, columnIndex) => {
+      row[column] = qTableCellValue(table, rowIndex, columnIndex);
+    });
+    rows.push(row);
+  }
+  return rows;
+}
+
+function materializeQKeyedTableRows(table: QKeyedTable): Array<{ [key: string]: QDisplayValue }> {
+  const rows: Array<{ [key: string]: QDisplayValue }> = [];
+  for (let rowIndex = 0; rowIndex < table.rowCount; rowIndex++) {
+    const row: { [key: string]: QDisplayValue } = {};
+    table.keyTable.columns.forEach((column, columnIndex) => {
+      row[column] = qTableCellValue(table.keyTable, rowIndex, columnIndex);
+    });
+    table.valueTable.columns.forEach((_column, columnIndex) => {
+      row[table.columns[table.keyTable.columns.length + columnIndex]] = qTableCellValue(table.valueTable, rowIndex, columnIndex);
+    });
+    rows.push(row);
+  }
+  return rows;
+}
+
+function qTableToColumnarPanel(table: QTable): ColumnarPanelResult {
+  return createColumnarPanelResult(table.columns, qTableRowCount(table), (rowIndex, columnIndex) => {
+    return qTableCellValue(table, rowIndex, columnIndex);
+  });
+}
+
+function qKeyedTableToColumnarPanel(table: QKeyedTable): ColumnarPanelResult {
+  return createColumnarPanelResult(table.columns, qKeyedTableRowCount(table), (rowIndex, columnIndex) => {
+    if (columnIndex < table.keyTable.columns.length) {
+      return qTableCellValue(table.keyTable, rowIndex, columnIndex);
+    }
+    return qTableCellValue(table.valueTable, rowIndex, columnIndex - table.keyTable.columns.length);
+  });
+}
+
+function qTableCellValue(table: QTable, rowIndex: number, columnIndex: number): QDisplayValue {
+  if (columnIndex < 0 || columnIndex >= table.columns.length) {
+    return null;
+  }
+  if (table.columnData && columnIndex < table.columnData.length) {
+    return normalizeCell(vectorValueAt(table.columnData[columnIndex], rowIndex));
+  }
+  const row = table.rows[rowIndex];
+  return row ? normalizeCell(row[table.columns[columnIndex]] as QValue) : null;
+}
+
+function qTableRowCount(table: QTable): number {
+  return typeof table.rowCount === 'number' ? table.rowCount : table.rows.length;
+}
+
+function qKeyedTableRowCount(table: QKeyedTable): number {
+  return typeof table.rowCount === 'number' ? table.rowCount : table.rows.length;
+}
+
+function qTableRowsMaterialized(table: QTable): boolean {
+  return table.rowsMaterialized === false ? false : true;
+}
+
+function qKeyedTableRowsMaterialized(table: QKeyedTable): boolean {
+  if (table.rowsMaterialized === false) {
+    return qTableRowsMaterialized(table.keyTable) || qTableRowsMaterialized(table.valueTable);
+  }
+  return true;
 }
 
 function makeQDict(keys: QValue, values: QValue): QDict {
@@ -905,10 +1462,10 @@ function normalizeCell(value: QValue): QDisplayValue {
 
 function normalizeNestedValue(value: QValue): QNestedDisplayValue {
   if (isQTable(value)) {
-    return `[table ${value.rows.length} rows]`;
+    return `[table ${qTableRowCount(value)} rows]`;
   }
   if (isQKeyedTable(value)) {
-    return `[keyed table ${value.rows.length} rows]`;
+    return `[keyed table ${qKeyedTableRowCount(value)} rows]`;
   }
   if (isQDict(value)) {
     return value.entries.reduce((dict, entry) => {
