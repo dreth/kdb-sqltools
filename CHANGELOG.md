@@ -1,5 +1,10 @@
 # Change Log
 
+## 0.2.2
+
+- Fixed large kdb panel tables stopping around ~932k rows in VS Code webviews by compressing physical scroll coordinates below Chromium's max scroll-height limit while preserving real row indexes.
+- Updated virtual rendering and search jump scrolling so multi-million-row tables remain reachable without materializing DOM rows.
+
 ## 0.2.1
 
 - Hardened q IPC payload validation and receive buffering for malformed/truncated responses and trailing bytes.
