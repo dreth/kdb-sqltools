@@ -3,6 +3,7 @@ const assert = require('assert');
 const { deserializeQMessage, deserializeQPayload, qValueToTabular, serializeTextQuery } = require('../out/ls/q-ipc');
 const queriesModule = require('../out/ls/queries');
 const { currentQBlock, selectedTextOrCurrentBlock } = require('../out/q-text');
+const { isCellInRange, normalizeCellRange, rowsToTsv, visibleIndexRange } = require('../out/kdb-results');
 const KdbDriver = require('../out/ls/driver').default;
 const { ContextValue } = require('@sqltools/types');
 const connectionSchema = require('../connection.schema.json');
@@ -24,6 +25,24 @@ function hex(value) {
   assert.strictEqual(currentQBlock(qScript, 1), '.data.gateway:{[query;db]\n  neg[gatewayHandle](`.gw.asyncExec;query;db)\n}');
   assert.strictEqual(currentQBlock(qScript, 4), 'select from trade');
   assert.strictEqual(selectedTextOrCurrentBlock(qScript, '1+1', 0), '1+1');
+  assert.deepStrictEqual(
+    normalizeCellRange({ row: 4, column: 3 }, { row: 2, column: 6 }),
+    { startRow: 2, endRow: 4, startColumn: 3, endColumn: 6 }
+  );
+  assert.strictEqual(isCellInRange(3, 4, { startRow: 2, endRow: 4, startColumn: 3, endColumn: 6 }), true);
+  assert.strictEqual(isCellInRange(1, 4, { startRow: 2, endRow: 4, startColumn: 3, endColumn: 6 }), false);
+  assert.strictEqual(
+    rowsToTsv(
+      [
+        { sym: 'AAPL', note: 'line\nbreak', size: 100 },
+        { sym: 'MSFT', note: null, size: 200 },
+      ],
+      ['sym', 'note', 'size'],
+      { startRow: 0, endRow: 1, startColumn: 0, endColumn: 1 }
+    ),
+    'AAPL\tline break\nMSFT\t'
+  );
+  assert.deepStrictEqual(visibleIndexRange(280, 140, 28, 100, 2), { start: 8, end: 17 });
 
   assert.strictEqual(
     deserializeQMessage(hex('010000000d000000fa01000000')),

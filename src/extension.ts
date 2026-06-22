@@ -1,11 +1,22 @@
 import * as vscode from 'vscode';
-import { IExtension, IExtensionPlugin, IDriverExtensionApi } from '@sqltools/types';
+import { IConnection, IExtension, IExtensionPlugin, IDriverExtensionApi, NSDatabase } from '@sqltools/types';
 import { ExtensionContext } from 'vscode';
-import { DRIVER_ALIASES, DRIVER_NAME } from './constants';
+import { DRIVER_ALIASES, DRIVER_ID, DRIVER_NAME } from './constants';
 import { selectedTextOrCurrentBlock } from './q-text';
+import KdbDriver from './ls/driver';
+import { RowValue } from './kdb-results';
+import { KdbPanelResult, KdbResultsPanel } from './results-panel';
 const { publisher, name, displayName } = require('../package.json');
 
 const SQLTOOLS_EXECUTE_QUERY = 'sqltools.executeQuery';
+const RESULTS_TARGET_SETTING = 'results.target';
+const LAST_PANEL_CONNECTION_KEY = 'kdb-sqltools.lastPanelConnectionId';
+
+type ResultsTarget = 'sqltools' | 'kdbPanel';
+
+interface KdbConnectionPick extends vscode.QuickPickItem {
+  connection: IConnection<any>;
+}
 
 export async function activate(extContext: ExtensionContext): Promise<IDriverExtensionApi> {
   const sqltools = vscode.extensions.getExtension<IExtension>('mtxr.sqltools');
@@ -17,8 +28,12 @@ export async function activate(extContext: ExtensionContext): Promise<IDriverExt
   const api = sqltools.exports;
 
   extContext.subscriptions.push(
-    vscode.commands.registerCommand('kdb-sqltools.runFile', runQFile),
-    vscode.commands.registerCommand('kdb-sqltools.runSelectionOrBlock', runQSelectionOrBlock),
+    vscode.commands.registerCommand('kdb-sqltools.runFile', () => runQFile(extContext)),
+    vscode.commands.registerCommand('kdb-sqltools.runSelectionOrBlock', () => runQSelectionOrBlock(extContext)),
+    vscode.commands.registerCommand('kdb-sqltools.runFileInSqltools', () => runQFile(extContext, 'sqltools')),
+    vscode.commands.registerCommand('kdb-sqltools.runSelectionOrBlockInSqltools', () => runQSelectionOrBlock(extContext, 'sqltools')),
+    vscode.commands.registerCommand('kdb-sqltools.runFileInKdbPanel', () => runQFile(extContext, 'kdbPanel')),
+    vscode.commands.registerCommand('kdb-sqltools.runSelectionOrBlockInKdbPanel', () => runQSelectionOrBlock(extContext, 'kdbPanel')),
     vscode.languages.registerCodeLensProvider([{ language: 'q' }, { pattern: '**/*.q' }], new QRunCodeLensProvider())
   );
 
@@ -55,17 +70,17 @@ export async function activate(extContext: ExtensionContext): Promise<IDriverExt
 
 export function deactivate() {}
 
-async function runQFile(): Promise<void> {
+async function runQFile(extContext: ExtensionContext, target?: ResultsTarget): Promise<void> {
   const editor = vscode.window.activeTextEditor;
   if (!editor) {
     vscode.window.showWarningMessage('Open a q file before running q code.');
     return;
   }
 
-  await executeQText(editor.document.getText());
+  await executeQText(extContext, editor.document.getText(), target);
 }
 
-async function runQSelectionOrBlock(): Promise<void> {
+async function runQSelectionOrBlock(extContext: ExtensionContext, target?: ResultsTarget): Promise<void> {
   const editor = vscode.window.activeTextEditor;
   if (!editor) {
     vscode.window.showWarningMessage('Open a q file before running q code.');
@@ -74,16 +89,186 @@ async function runQSelectionOrBlock(): Promise<void> {
 
   const selectionText = editor.selection.isEmpty ? '' : editor.document.getText(editor.selection);
   const text = selectedTextOrCurrentBlock(editor.document.getText(), selectionText, editor.selection.active.line);
-  await executeQText(text);
+  await executeQText(extContext, text, target);
 }
 
-async function executeQText(text: string): Promise<void> {
+async function executeQText(extContext: ExtensionContext, text: string, target?: ResultsTarget): Promise<void> {
   if (!text || text.trim().length === 0) {
     vscode.window.showWarningMessage('No q code selected to run.');
     return;
   }
 
-  await vscode.commands.executeCommand(SQLTOOLS_EXECUTE_QUERY, text);
+  if ((target || configuredResultsTarget()) === 'sqltools') {
+    await vscode.commands.executeCommand(SQLTOOLS_EXECUTE_QUERY, text);
+    return;
+  }
+
+  await executeQTextInKdbPanel(extContext, text);
+}
+
+function configuredResultsTarget(): ResultsTarget {
+  const target = vscode.workspace.getConfiguration('kdb-sqltools').get<string>(RESULTS_TARGET_SETTING, 'sqltools');
+  return target === 'kdbPanel' ? 'kdbPanel' : 'sqltools';
+}
+
+async function executeQTextInKdbPanel(extContext: ExtensionContext, text: string): Promise<void> {
+  const connection = await pickKdbConnection(extContext);
+  if (!connection) {
+    return;
+  }
+
+  KdbResultsPanel.showLoading(extContext, { query: text, connectionName: connection.name });
+
+  const driver = new KdbDriver(connection, async () => []);
+  const started = Date.now();
+  try {
+    const results = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: `Running q on ${connection.name}`,
+        cancellable: false,
+      },
+      () => driver.query(text, {})
+    );
+    const result = results[0];
+    KdbResultsPanel.showResult(extContext, toPanelResult(result, text, connection.name, Date.now() - started));
+    if (result && result.error) {
+      const message = result.rawError && result.rawError.message ? result.rawError.message : 'q execution failed.';
+      vscode.window.showErrorMessage(message);
+    }
+  } catch (error) {
+    const err = toError(error);
+    KdbResultsPanel.showResult(extContext, {
+      columns: [],
+      rows: [],
+      query: text,
+      connectionName: connection.name,
+      elapsedMs: Date.now() - started,
+      messages: [err.message],
+      error: true,
+    });
+    vscode.window.showErrorMessage(err.message);
+  } finally {
+    await driver.close();
+  }
+}
+
+function toPanelResult(result: NSDatabase.IResult | undefined, query: string, connectionName: string, elapsedMs: number): KdbPanelResult {
+  const rows = ((result && result.results) || []) as RowValue[];
+  const columns = columnsForResult(result, rows);
+  return {
+    columns,
+    rows,
+    query,
+    connectionName,
+    elapsedMs,
+    messages: result && result.messages ? result.messages.map(message => {
+      return typeof message === 'string' ? message : message.message;
+    }) : [],
+    error: !!(result && result.error),
+  };
+}
+
+function columnsForResult(result: NSDatabase.IResult | undefined, rows: RowValue[]): string[] {
+  if (result && result.cols && result.cols.length) {
+    return result.cols.map(column => String(column));
+  }
+  if (rows.length) {
+    return Object.keys(rows[0]);
+  }
+  return [];
+}
+
+async function pickKdbConnection(extContext: ExtensionContext): Promise<IConnection<any> | undefined> {
+  const connections = vscode.workspace.getConfiguration('sqltools').get<Array<Partial<IConnection<any>>>>('connections', []);
+  const kdbConnections = connections
+    .filter(isKdbConnection)
+    .map(normalizeConnection);
+
+  if (kdbConnections.length === 0) {
+    const action = await vscode.window.showWarningMessage(
+      'No SQLTools kdb connections are configured.',
+      'Open SQLTools Connection Settings'
+    );
+    if (action) {
+      await vscode.commands.executeCommand('sqltools.openAddConnectionScreen');
+    }
+    return undefined;
+  }
+
+  let connection = kdbConnections[0];
+  if (kdbConnections.length > 1) {
+    const lastId = extContext.globalState.get<string>(LAST_PANEL_CONNECTION_KEY);
+    const picks = kdbConnections.map(conn => connectionPick(conn, conn.id === lastId));
+    const picked = await vscode.window.showQuickPick(picks, {
+      placeHolder: 'Select a kdb connection for the kdb results panel',
+      ignoreFocusOut: true,
+    });
+    if (!picked) {
+      return undefined;
+    }
+    connection = picked.connection;
+  }
+
+  await extContext.globalState.update(LAST_PANEL_CONNECTION_KEY, connection.id);
+  return resolvePassword(connection);
+}
+
+function connectionPick(connection: IConnection<any>, lastUsed: boolean): KdbConnectionPick {
+  return {
+    label: connection.name,
+    description: [connection.server || 'localhost', connection.port ? String(connection.port) : null, lastUsed ? 'last used' : null]
+      .filter(Boolean)
+      .join(':'),
+    detail: connection.database ? `Namespace ${connection.database}` : undefined,
+    connection,
+  };
+}
+
+async function resolvePassword(connection: IConnection<any>): Promise<IConnection<any> | undefined> {
+  if (!connection.askForPassword || connection.password) {
+    return connection;
+  }
+
+  const password = await vscode.window.showInputBox({
+    prompt: `Password for ${connection.name}`,
+    password: true,
+    ignoreFocusOut: true,
+  });
+  if (password === undefined) {
+    return undefined;
+  }
+
+  return { ...connection, password };
+}
+
+function isKdbConnection(connection: Partial<IConnection<any>>): boolean {
+  return DRIVER_ALIASES.some(alias => connection.driver === alias.value) || connection.driver === DRIVER_NAME;
+}
+
+function normalizeConnection(connection: Partial<IConnection<any>>): IConnection<any> {
+  return {
+    ...connection,
+    id: connection.id || connectionId(connection),
+    name: connection.name || 'kdb',
+    driver: DRIVER_ID,
+    username: connection.username || '',
+  } as IConnection<any>;
+}
+
+function connectionId(connection: Partial<IConnection<any>>): string {
+  const connectString = (connection as any).connectString;
+  const parts = [connection.name || 'kdb', connection.driver || DRIVER_ID];
+  if (connectString) {
+    parts.push(String(connectString));
+  } else {
+    parts.push(String(connection.server || 'localhost'), String(connection.database || '.'));
+  }
+  return parts.join('|').replace(/\./g, ':').replace(/\//g, '\\');
+}
+
+function toError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
 }
 
 class QRunCodeLensProvider implements vscode.CodeLensProvider {
