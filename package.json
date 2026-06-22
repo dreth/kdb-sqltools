@@ -2,7 +2,7 @@
   "name": "kdb-sqltools",
   "displayName": "SQLTools kdb Driver",
   "description": "SQLTools driver for kdb+/q using q IPC over TCP",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "engines": {
     "vscode": "^1.42.0"
   },
@@ -49,7 +49,8 @@
     "onCommand:kdb-sqltools.runFileInSqltools",
     "onCommand:kdb-sqltools.runSelectionOrBlockInSqltools",
     "onCommand:kdb-sqltools.runFileInKdbPanel",
-    "onCommand:kdb-sqltools.runSelectionOrBlockInKdbPanel"
+    "onCommand:kdb-sqltools.runSelectionOrBlockInKdbPanel",
+    "onCommand:kdb-sqltools.copyExampleConnectionSettings"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -102,6 +103,12 @@
         "title": "Run q Block in kdb Panel",
         "category": "kdb+",
         "icon": "$(table)"
+      },
+      {
+        "command": "kdb-sqltools.copyExampleConnectionSettings",
+        "title": "Copy Example Global Connection Settings",
+        "category": "kdb+",
+        "icon": "$(copy)"
       }
     ],
     "menus": {

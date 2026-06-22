@@ -11,6 +11,8 @@ const { publisher, name, displayName } = require('../package.json');
 const SQLTOOLS_EXECUTE_QUERY = 'sqltools.executeQuery';
 const RESULTS_TARGET_SETTING = 'results.target';
 const LAST_PANEL_CONNECTION_KEY = 'kdb-sqltools.lastPanelConnectionId';
+const OPEN_USER_SETTINGS_JSON_ACTION = 'Open User Settings JSON';
+const OPEN_SQLTOOLS_SETTINGS_ACTION = 'Open SQLTools Settings';
 
 type ResultsTarget = 'sqltools' | 'kdbPanel';
 
@@ -34,6 +36,7 @@ export async function activate(extContext: ExtensionContext): Promise<IDriverExt
     vscode.commands.registerCommand('kdb-sqltools.runSelectionOrBlockInSqltools', () => runQSelectionOrBlock(extContext, 'sqltools')),
     vscode.commands.registerCommand('kdb-sqltools.runFileInKdbPanel', () => runQFile(extContext, 'kdbPanel')),
     vscode.commands.registerCommand('kdb-sqltools.runSelectionOrBlockInKdbPanel', () => runQSelectionOrBlock(extContext, 'kdbPanel')),
+    vscode.commands.registerCommand('kdb-sqltools.copyExampleConnectionSettings', copyExampleConnectionSettings),
     vscode.languages.registerCodeLensProvider([{ language: 'q' }, { pattern: '**/*.q' }], new QRunCodeLensProvider())
   );
 
@@ -109,6 +112,38 @@ async function executeQText(extContext: ExtensionContext, text: string, target?:
 function configuredResultsTarget(): ResultsTarget {
   const target = vscode.workspace.getConfiguration('kdb-sqltools').get<string>(RESULTS_TARGET_SETTING, 'sqltools');
   return target === 'kdbPanel' ? 'kdbPanel' : 'sqltools';
+}
+
+async function copyExampleConnectionSettings(): Promise<void> {
+  await vscode.env.clipboard.writeText(exampleGlobalConnectionSettings());
+  const action = await vscode.window.showInformationMessage(
+    'Copied a kdb SQLTools User-settings example. Paste it into User settings JSON to keep the connection across workspaces.',
+    OPEN_USER_SETTINGS_JSON_ACTION,
+    OPEN_SQLTOOLS_SETTINGS_ACTION
+  );
+
+  if (action === OPEN_USER_SETTINGS_JSON_ACTION) {
+    await vscode.commands.executeCommand('workbench.action.openSettingsJson');
+  } else if (action === OPEN_SQLTOOLS_SETTINGS_ACTION) {
+    await vscode.commands.executeCommand('sqltools.openSettings');
+  }
+}
+
+function exampleGlobalConnectionSettings(): string {
+  return JSON.stringify({
+    'sqltools.connections': [
+      {
+        name: 'local kdb',
+        driver: DRIVER_ID,
+        server: 'localhost',
+        port: 5000,
+        username: '',
+        password: '',
+        database: '.',
+        connectionTimeout: 30,
+      },
+    ],
+  }, null, 2);
 }
 
 async function executeQTextInKdbPanel(extContext: ExtensionContext, text: string): Promise<void> {
