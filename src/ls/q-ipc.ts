@@ -165,6 +165,12 @@ export class QIpcReceiveBuffer {
       return null;
     }
 
+    const contiguous = this.contiguousSlice(length);
+    if (contiguous) {
+      this.consume(length);
+      return contiguous;
+    }
+
     const message = Buffer.allocUnsafe(length);
     this.copyTo(message, length);
     this.consume(length);
@@ -217,6 +223,16 @@ export class QIpcReceiveBuffer {
       | (this.byteAt(offset + 1) << 16)
       | (this.byteAt(offset + 2) << 8)
       | this.byteAt(offset + 3);
+  }
+
+  private contiguousSlice(length: number): Buffer | null {
+    if (this.headIndex >= this.chunks.length) {
+      return null;
+    }
+
+    const chunk = this.chunks[this.headIndex];
+    const start = this.headOffset;
+    return chunk.length - start >= length ? chunk.slice(start, start + length) : null;
   }
 
   private copyTo(target: Buffer, length: number): void {
@@ -604,6 +620,7 @@ export function deserializeQMessage(message: Buffer, perfDetails?: PerfDetails):
     throw new KdbIpcError('Invalid q IPC message: header is incomplete');
   }
 
+  const tracePerf = isPerfTraceEnabled();
   const declaredLength = messageLengthFromHeader(message);
   if (declaredLength !== message.length) {
     throw new KdbIpcError(`Invalid q IPC message length ${declaredLength} for buffer length ${message.length}`);
@@ -612,10 +629,10 @@ export function deserializeQMessage(message: Buffer, perfDetails?: PerfDetails):
   const compressed = message.readUInt8(2) === 1;
   let normalized = message;
   if (compressed) {
-    const decompressSpan = perfSpan('q-ipc.decompress', {
+    const decompressSpan = tracePerf ? perfSpan('q-ipc.decompress', {
       ...(perfDetails || {}),
       ...messageSizeDetails(message),
-    });
+    }) : null;
     try {
       normalized = decompressMessage(message);
     } finally {
@@ -629,12 +646,12 @@ export function deserializeQMessage(message: Buffer, perfDetails?: PerfDetails):
 
   const littleEndian = messageLittleEndian(normalized);
   const payload = normalized.slice(HEADER_LENGTH);
-  const deserializeSpan = perfSpan('q-ipc.deserialize', {
+  const deserializeSpan = tracePerf ? perfSpan('q-ipc.deserialize', {
     ...(perfDetails || {}),
     payloadBytes: payload.length,
     littleEndian,
     compressed,
-  });
+  }) : null;
   try {
     return deserializeQPayload(payload, littleEndian);
   } finally {
@@ -1302,9 +1319,13 @@ function makeQTable(columnsValue: QValue, columnDataValue: QValue): QTable {
   const columns = uniqueColumnNames(asList(columnsValue).map(valueToColumnName));
   const columnData = asList(columnDataValue);
   const tableColumnData = columnData.slice(0, columns.length);
-  const rowCount = columns.length === 0 || tableColumnData.length === 0
-    ? 0
-    : Math.max(...tableColumnData.map(vectorLength));
+  let rowCount = 0;
+  for (let columnIndex = 0; columnIndex < tableColumnData.length; columnIndex++) {
+    rowCount = Math.max(rowCount, vectorLength(tableColumnData[columnIndex]));
+  }
+  if (columns.length === 0) {
+    rowCount = 0;
+  }
   const table = {
     qtype: 'table',
     columns,
@@ -1321,8 +1342,7 @@ function makeQTable(columnsValue: QValue, columnDataValue: QValue): QTable {
 }
 
 function makeQKeyedTable(keyTable: QTable, valueTable: QTable): QKeyedTable {
-  const columns = keyTable.columns.slice();
-  valueTable.columns.forEach(column => columns.push(uniqueColumnName(column, columns)));
+  const columns = appendUniqueColumnNames(keyTable.columns, valueTable.columns);
   const rowCount = Math.max(qTableRowCount(keyTable), qTableRowCount(valueTable));
   const table = {
     qtype: 'keyedTable',
@@ -1358,16 +1378,19 @@ function defineLazyRows(
     configurable: true,
     get(): Array<{ [key: string]: QDisplayValue }> {
       if (!rows) {
-        const materializeSpan = perfSpan(spanName, details);
+        const tracePerf = isPerfTraceEnabled();
+        const materializeSpan = tracePerf ? perfSpan(spanName, details) : null;
         try {
           rows = materialize();
           materialized = true;
         } finally {
-          endPerfSpan(materializeSpan, {
-            ...details,
-            rows: rows ? rows.length : 0,
-            materialized,
-          });
+          if (tracePerf) {
+            endPerfSpan(materializeSpan, {
+              ...details,
+              rows: rows ? rows.length : 0,
+              materialized,
+            });
+          }
         }
       }
       return rows;
@@ -1573,24 +1596,60 @@ function collectColumns(rows: Array<{ [key: string]: QDisplayValue }>): string[]
 }
 
 function uniqueColumnNames(columns: string[]): string[] {
+  const state = createUniqueColumnState();
   const unique: string[] = [];
   columns.forEach(column => {
-    unique.push(uniqueColumnName(column, unique));
+    unique.push(nextUniqueColumnName(column, state));
   });
   return unique;
 }
 
-function uniqueColumnName(column: string, existing: string[]): string {
-  if (!existing.includes(column)) {
+function appendUniqueColumnNames(baseColumns: string[], appendedColumns: string[]): string[] {
+  const state = createUniqueColumnState();
+  const columns: string[] = [];
+  baseColumns.forEach(column => {
+    columns.push(nextUniqueColumnName(column, state));
+  });
+  appendedColumns.forEach(column => {
+    columns.push(nextUniqueColumnName(column, state));
+  });
+  return columns;
+}
+
+interface UniqueColumnState {
+  used: { [column: string]: boolean };
+  nextSuffix: { [column: string]: number };
+}
+
+function createUniqueColumnState(): UniqueColumnState {
+  return {
+    used: Object.create(null),
+    nextSuffix: Object.create(null),
+  };
+}
+
+function nextUniqueColumnName(column: string, state: UniqueColumnState): string {
+  if (!state.used[column]) {
+    markColumnUsed(column, state);
     return column;
   }
-  let index = 1;
-  let candidate = `${column}_${index}`;
-  while (existing.includes(candidate)) {
-    index += 1;
-    candidate = `${column}_${index}`;
+
+  let suffix = state.nextSuffix[column] || 1;
+  let candidate = `${column}_${suffix}`;
+  while (state.used[candidate]) {
+    suffix += 1;
+    candidate = `${column}_${suffix}`;
   }
+  state.nextSuffix[column] = suffix + 1;
+  markColumnUsed(candidate, state);
   return candidate;
+}
+
+function markColumnUsed(column: string, state: UniqueColumnState): void {
+  state.used[column] = true;
+  if (!state.nextSuffix[column]) {
+    state.nextSuffix[column] = 1;
+  }
 }
 
 function isQTable(value: QValue): value is QTable {

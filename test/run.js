@@ -65,6 +65,14 @@ function htmlSelectOptions(source, selectId) {
   );
 
   const scalarMessage = hex('010000000d000000fa01000000');
+  const contiguousReceiveBuffer = new QIpcReceiveBuffer();
+  contiguousReceiveBuffer.append(scalarMessage);
+  assert.strictEqual(contiguousReceiveBuffer.readMessage().toString('hex'), scalarMessage.toString('hex'));
+  assert.strictEqual(contiguousReceiveBuffer.readMessage(), null);
+  assert.strictEqual(contiguousReceiveBuffer.bufferedBytes, 0);
+  assert.strictEqual(contiguousReceiveBuffer.copyCount, 0);
+  assert.strictEqual(contiguousReceiveBuffer.copyBytesCopied, 0);
+
   const receiveBuffer = new QIpcReceiveBuffer();
   receiveBuffer.append(scalarMessage.slice(0, 3));
   assert.strictEqual(receiveBuffer.readMessage(), null);
@@ -113,8 +121,8 @@ function htmlSelectOptions(source, selectId) {
   assert.strictEqual(coalescedReceiveBuffer.readMessage().toString('hex'), queryMessage.toString('hex'));
   assert.strictEqual(coalescedReceiveBuffer.readMessage(), null);
   assert.strictEqual(coalescedReceiveBuffer.bufferedBytes, 0);
-  assert.strictEqual(coalescedReceiveBuffer.copyCount, 2);
-  assert.strictEqual(coalescedReceiveBuffer.copyBytesCopied, scalarMessage.length + queryMessage.length);
+  assert.strictEqual(coalescedReceiveBuffer.copyCount, 0);
+  assert.strictEqual(coalescedReceiveBuffer.copyBytesCopied, 0);
 
   const qScript = '.data.gateway:{[query;db]\n  neg[gatewayHandle](`.gw.asyncExec;query;db)\n}\n\nselect from trade';
   assert.strictEqual(currentQBlock(qScript, 1), '.data.gateway:{[query;db]\n  neg[gatewayHandle](`.gw.asyncExec;query;db)\n}');

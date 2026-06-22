@@ -18,7 +18,7 @@ import {
   sortedColumnarRowOrder,
   validateXlsxSheetLimits,
 } from './kdb-results';
-import { endPerfSpan, perfSpan } from './perf';
+import { endPerfSpan, isPerfTraceEnabled, perfSpan } from './perf';
 
 export interface KdbPanelResult {
   table: ColumnarPanelResult;
@@ -241,17 +241,20 @@ export class KdbResultsPanel {
     if (!this.result) {
       return;
     }
-    const span = perfSpan('results-panel.metadata.post', {
-      version: this.version,
-      rows: this.result.table.rowCount,
-      columns: this.visibleColumnNames(this.result).length,
-      totalColumns: this.result.table.columns.length,
-      ready: this.ready,
-    });
+    const tracePerf = isPerfTraceEnabled();
+    const span = tracePerf ? perfSpan('results-panel.metadata.post', {
+        version: this.version,
+        rows: this.result.table.rowCount,
+        columns: this.visibleColumnNames(this.result).length,
+        totalColumns: this.result.table.columns.length,
+        ready: this.ready,
+      }) : null;
     try {
       this.post({ type: 'resultMeta', result: this.metadataForResult(this.result) });
     } finally {
-      endPerfSpan(span, { posted: this.ready });
+      if (tracePerf) {
+        endPerfSpan(span, { posted: this.ready });
+      }
     }
   }
 
@@ -345,51 +348,58 @@ export class KdbResultsPanel {
 
   private postSlice(message: any): void {
     const requestId = Number(message.requestId || 0);
-    const requestSpan = perfSpan('results-panel.requestSlice', {
-      version: Number(message.version),
-      currentVersion: this.version,
-      requestId,
-    });
+    const tracePerf = isPerfTraceEnabled();
+    const requestSpan = tracePerf ? perfSpan('results-panel.requestSlice', {
+        version: Number(message.version),
+        currentVersion: this.version,
+        requestId,
+      }) : null;
     if (!this.result || Number(message.version) !== this.version) {
-      endPerfSpan(requestSpan, { skipped: true });
+      if (tracePerf) {
+        endPerfSpan(requestSpan, { skipped: true });
+      }
       return;
     }
 
     const table = this.visibleTable();
     if (!table) {
-      endPerfSpan(requestSpan, { skipped: true });
+      if (tracePerf) {
+        endPerfSpan(requestSpan, { skipped: true });
+      }
       return;
     }
 
     const rowRange = messageRange(message.rows, table.rowCount);
     const columnRange = messageRange(message.columns, table.columns.length);
     const firstSlice = this.firstSliceVersion !== this.version;
-    const sliceSpan = perfSpan('results-panel.slice.generate', {
-      version: this.version,
-      requestId,
-      firstSlice,
-      rowsRequested: rowRange.end - rowRange.start + 1,
-      columnsRequested: columnRange.end - columnRange.start + 1,
-      totalRows: table.rowCount,
-      totalColumns: table.columns.length,
-    });
-    const firstSliceSpan = firstSlice ? perfSpan('results-panel.firstSlice', {
-      version: this.version,
-      requestId,
-      rowsRequested: rowRange.end - rowRange.start + 1,
-      columnsRequested: columnRange.end - columnRange.start + 1,
-      totalRows: table.rowCount,
-      totalColumns: table.columns.length,
-    }) : null;
+    const sliceSpan = tracePerf ? perfSpan('results-panel.slice.generate', {
+        version: this.version,
+        requestId,
+        firstSlice,
+        rowsRequested: rowRange.end - rowRange.start + 1,
+        columnsRequested: columnRange.end - columnRange.start + 1,
+        totalRows: table.rowCount,
+        totalColumns: table.columns.length,
+      }) : null;
+    const firstSliceSpan = tracePerf && firstSlice ? perfSpan('results-panel.firstSlice', {
+        version: this.version,
+        requestId,
+        rowsRequested: rowRange.end - rowRange.start + 1,
+        columnsRequested: columnRange.end - columnRange.start + 1,
+        totalRows: table.rowCount,
+        totalColumns: table.columns.length,
+      }) : null;
     try {
       const slice = table.cellWindow(rowRange, columnRange);
-      const sliceDetails = {
+      const sliceDetails = tracePerf ? {
         rows: slice.endRow >= slice.startRow ? slice.endRow - slice.startRow + 1 : 0,
         columns: slice.endColumn >= slice.startColumn ? slice.endColumn - slice.startColumn + 1 : 0,
         cells: slice.cells.reduce((count, row) => count + row.length, 0),
-      };
-      endPerfSpan(sliceSpan, sliceDetails);
-      endPerfSpan(firstSliceSpan, sliceDetails);
+      } : undefined;
+      if (tracePerf) {
+        endPerfSpan(sliceSpan, sliceDetails);
+        endPerfSpan(firstSliceSpan, sliceDetails);
+      }
       if (firstSlice) {
         this.firstSliceVersion = this.version;
       }
@@ -399,11 +409,15 @@ export class KdbResultsPanel {
         requestId,
         slice,
       });
-      endPerfSpan(requestSpan, { skipped: false, posted: this.ready });
+      if (tracePerf) {
+        endPerfSpan(requestSpan, { skipped: false, posted: this.ready });
+      }
     } catch (error) {
-      endPerfSpan(sliceSpan, { error: true, errorName: toError(error).name });
-      endPerfSpan(firstSliceSpan, { error: true, errorName: toError(error).name });
-      endPerfSpan(requestSpan, { skipped: false, error: true, errorName: toError(error).name });
+      if (tracePerf) {
+        endPerfSpan(sliceSpan, { error: true, errorName: toError(error).name });
+        endPerfSpan(firstSliceSpan, { error: true, errorName: toError(error).name });
+        endPerfSpan(requestSpan, { skipped: false, error: true, errorName: toError(error).name });
+      }
       throw error;
     }
   }
@@ -422,14 +436,15 @@ export class KdbResultsPanel {
       return;
     }
 
-    const span = perfSpan('results-panel.searchRows', {
-      version: requestVersion,
-      searchId,
-      rows: table.rowCount,
-      columns: table.columns.length,
-      queryChars: query.length,
-      matchCap: SEARCH_MATCH_CAP,
-    });
+    const tracePerf = isPerfTraceEnabled();
+    const span = tracePerf ? perfSpan('results-panel.searchRows', {
+        version: requestVersion,
+        searchId,
+        rows: table.rowCount,
+        columns: table.columns.length,
+        queryChars: query.length,
+        matchCap: SEARCH_MATCH_CAP,
+      }) : null;
     const matchedRows: number[] = [];
     let totalScanned = 0;
     let scannedCells = 0;
@@ -438,14 +453,14 @@ export class KdbResultsPanel {
     let cancelled = false;
 
     try {
-      const needle = query.toLocaleLowerCase();
+      const needle = query.toLowerCase();
       if (needle.length > 0 && table.rowCount > 0 && table.columns.length > 0) {
         const startedMs = Date.now();
         for (let rowIndex = 0; rowIndex < table.rowCount; rowIndex++) {
           let rowMatched = false;
           for (let columnIndex = 0; columnIndex < table.columns.length; columnIndex++) {
             scannedCells += 1;
-            if (table.cellText(rowIndex, columnIndex).toLocaleLowerCase().indexOf(needle) !== -1) {
+            if (table.cellText(rowIndex, columnIndex).toLowerCase().indexOf(needle) !== -1) {
               rowMatched = true;
               break;
             }
@@ -496,14 +511,16 @@ export class KdbResultsPanel {
         matchCap: SEARCH_MATCH_CAP,
       });
     } finally {
-      endPerfSpan(span, {
-        matches: matchedRows.length,
-        totalScanned,
-        scannedCells,
-        capped,
-        partial,
-        cancelled,
-      });
+      if (tracePerf) {
+        endPerfSpan(span, {
+          matches: matchedRows.length,
+          totalScanned,
+          scannedCells,
+          capped,
+          partial,
+          cancelled,
+        });
+      }
     }
   }
 
@@ -543,13 +560,14 @@ export class KdbResultsPanel {
       }
     }
 
-    const span = perfSpan('results-panel.sort', {
-      version: requestVersion,
-      rows: table.rowCount,
-      columns: table.columns.length,
-      columnName,
-      direction: nextSort.direction,
-    });
+    const tracePerf = isPerfTraceEnabled();
+    const span = tracePerf ? perfSpan('results-panel.sort', {
+        version: requestVersion,
+        rows: table.rowCount,
+        columns: table.columns.length,
+        columnName,
+        direction: nextSort.direction,
+      }) : null;
     let sortedRowOrder: number[] | undefined;
     let cancelled = false;
     try {
@@ -571,10 +589,12 @@ export class KdbResultsPanel {
       this.sortState = nextSort;
       this.refreshResultView();
     } finally {
-      endPerfSpan(span, {
-        sorted: !!sortedRowOrder && !cancelled,
-        cancelled,
-      });
+      if (tracePerf) {
+        endPerfSpan(span, {
+          sorted: !!sortedRowOrder && !cancelled,
+          cancelled,
+        });
+      }
     }
   }
 
