@@ -2,7 +2,7 @@
   "name": "kdb-sqltools",
   "displayName": "SQLTools kdb Driver",
   "description": "SQLTools driver for kdb+/q using q IPC over TCP",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "engines": {
     "vscode": "^1.42.0"
   },
@@ -52,20 +52,28 @@
     "languages": [
       {
         "id": "q",
-        "aliases": ["q", "kdb+ q", "kdb q"],
-        "extensions": [".q"]
+        "aliases": [
+          "q",
+          "kdb+ q",
+          "kdb q"
+        ],
+        "extensions": [
+          ".q"
+        ]
       }
     ],
     "commands": [
       {
         "command": "kdb-sqltools.runFile",
-        "title": "Run q File in SQLTools",
-        "category": "kdb+"
+        "title": "Run q",
+        "category": "kdb+",
+        "icon": "$(play)"
       },
       {
         "command": "kdb-sqltools.runSelectionOrBlock",
-        "title": "Run q Selection/Block in SQLTools",
-        "category": "kdb+"
+        "title": "Run q Block",
+        "category": "kdb+",
+        "icon": "$(run)"
       }
     ],
     "menus": {
