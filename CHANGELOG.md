@@ -1,5 +1,14 @@
 # Change Log
 
+## 0.2.4
+
+- Hardened kdb panel virtual scrolling so bottom rows remain reachable on very large result sets, with regression coverage for 1.8M and 10M rows across row heights.
+- Replaced the intrusive large-result warning block with a compact toolbar info indicator while keeping hide-once and hide-forever actions.
+- Added suppressible large-sort warnings via `kdb-sqltools.results.hideLargeSortWarnings` and a `Sort and Don't Warn Again` action.
+- Added human-readable elapsed time display by default with `kdb-sqltools.results.elapsedTimeDisplay` for raw milliseconds.
+- Clarified selection labels such as `Selected: 1 cell` instead of `Range 1 x 1`.
+- Removed the previously tracked Codex status artifact from the repository.
+
 ## 0.2.3
 
 - Added hide-once and hide-forever controls for large-result guardrail messages, backed by `kdb-sqltools.results.hideLargeResultWarnings`.
