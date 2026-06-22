@@ -110,8 +110,8 @@ async function executeQText(extContext: ExtensionContext, text: string, target?:
 }
 
 function configuredResultsTarget(): ResultsTarget {
-  const target = vscode.workspace.getConfiguration('kdb-sqltools').get<string>(RESULTS_TARGET_SETTING, 'sqltools');
-  return target === 'kdbPanel' ? 'kdbPanel' : 'sqltools';
+  const target = vscode.workspace.getConfiguration('kdb-sqltools').get<string>(RESULTS_TARGET_SETTING, 'kdbPanel');
+  return target === 'sqltools' ? 'sqltools' : 'kdbPanel';
 }
 
 async function copyExampleConnectionSettings(): Promise<void> {

@@ -1,5 +1,13 @@
 # Change Log
 
+## 0.1.0
+
+- Made the kdb results panel the default result target for q file/block runs while keeping SQLTools results commands/settings available.
+- Expanded kdb panel selection to ranges, rows, columns, and all cells.
+- Added copy/export formats for TSV, CSV, JSON, NDJSON, and HTML, plus real XLSX export.
+- Added minimal kdb panel cosmetics for cell width, row height, font size, and density.
+- Documented SQLTools `.session.sql` behavior and that Parquet export is unavailable in this build.
+
 ## 0.0.9
 
 - Reworked optional kdb results panel grid rendering to create DOM cells directly instead of using `innerHTML`/inline `style=` strings, fixing collapsed rows/columns and broken visible-cell selection in VS Code webviews.

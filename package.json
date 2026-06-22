@@ -2,7 +2,7 @@
   "name": "kdb-sqltools",
   "displayName": "SQLTools kdb Driver",
   "description": "SQLTools driver for kdb+/q using q IPC over TCP",
-  "version": "0.0.9",
+  "version": "0.1.0",
   "engines": {
     "vscode": "^1.42.0"
   },
@@ -163,7 +163,7 @@
       "properties": {
         "kdb-sqltools.results.target": {
           "type": "string",
-          "default": "sqltools",
+          "default": "kdbPanel",
           "enum": [
             "sqltools",
             "kdbPanel"
@@ -173,6 +173,42 @@
             "Use the lightweight kdb results panel."
           ],
           "description": "Result target used by the default kdb-sqltools q run commands."
+        },
+        "kdb-sqltools.results.cellWidth": {
+          "type": "number",
+          "default": 160,
+          "minimum": 80,
+          "maximum": 600,
+          "description": "Cell width in pixels for the kdb results panel."
+        },
+        "kdb-sqltools.results.rowHeight": {
+          "type": "number",
+          "default": 28,
+          "minimum": 20,
+          "maximum": 80,
+          "description": "Base row height in pixels for the kdb results panel."
+        },
+        "kdb-sqltools.results.fontSize": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 32,
+          "description": "Font size in pixels for the kdb results panel. Use 0 for the VS Code default."
+        },
+        "kdb-sqltools.results.density": {
+          "type": "string",
+          "default": "standard",
+          "enum": [
+            "compact",
+            "standard",
+            "comfortable"
+          ],
+          "enumDescriptions": [
+            "Use tighter row height and padding.",
+            "Use standard row height and padding.",
+            "Use roomier row height and padding."
+          ],
+          "description": "Visual density for the kdb results panel."
         }
       }
     }
@@ -180,6 +216,7 @@
   "dependencies": {
     "@sqltools/base-driver": "0.2.4",
     "@sqltools/types": "0.2.1",
+    "jszip": "^3.10.1",
     "uuid": "^7.0.2"
   },
   "devDependencies": {
