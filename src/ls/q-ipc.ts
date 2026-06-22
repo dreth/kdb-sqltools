@@ -660,7 +660,7 @@ export function deserializeQMessage(message: Buffer, perfDetails?: PerfDetails):
 }
 
 export function deserializeQPayload(payload: Buffer, littleEndian = true): QValue {
-  return new QReader(payload, littleEndian).readObject();
+  return new QReader(payload, littleEndian).readPayload();
 }
 
 export function qValueToTabular(value: QValue): QTabularResult {
@@ -998,6 +998,14 @@ class QReader {
   private pos = 0;
 
   constructor(private readonly buffer: Buffer, private readonly littleEndian: boolean) {}
+
+  public readPayload(): QValue {
+    const value = this.readObject();
+    if (this.pos !== this.buffer.length) {
+      throw new KdbIpcError(`Invalid q IPC payload: ${this.buffer.length - this.pos} trailing byte(s)`);
+    }
+    return value;
+  }
 
   public readObject(): QValue {
     const type = this.readInt8();
