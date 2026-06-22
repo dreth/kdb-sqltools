@@ -50,11 +50,23 @@ The `database` field is used as a q namespace for the object explorer. Use `.` f
 - Minimal q keyword completions only; q language extensions should handle language-level autocomplete.
 - SSH tunneling through SQLTools common connection settings.
 
+## Optional kdb Results Panel
+
+SQLTools remains the default results target. To use the lightweight kdb panel for q file/block runs, set:
+
+```json
+"kdb-sqltools.results.target": "kdbPanel"
+```
+
+You can also run the explicit `kdb+: Run q in kdb Panel` and `kdb+: Run q Block in kdb Panel` commands.
+
+The kdb panel virtualizes rows and columns, transfers only the visible cell window from the extension to the webview, supports range selection, and can copy selected cells as TSV with or without headers. The q IPC result is still fully materialized in extension memory before display, so use q-side limits for truly massive query results.
+
 ## Limitations
 
 - TLS is not implemented by this driver, so no TLS option is exposed in the connection UI.
 - The driver does not translate SQL to q. Write q/qSQL directly.
-- Arbitrary editor queries are sent exactly as written. The driver does not add hidden limits; SQLTools will render however many rows the q expression returns.
+- Arbitrary editor queries are sent exactly as written. The driver does not add hidden limits; SQLTools will render however many rows the q expression returns. The optional kdb panel reduces webview transfer and DOM work, but it does not stream q execution.
 - SQLTools' "execute current query" command uses SQL-style semicolon/`GO` statement parsing before the driver is called. For q expressions that contain semicolons inside lambdas, projections, or multi-statement blocks, select the intended q text and run the normal execute command so it is sent as one q expression.
 - kdb has namespaces rather than SQL catalogs and schemas; SQLTools `database`/`schema` fields are mapped to the selected q namespace.
 - Root q views are listed with protected `views[]`; non-root view listing depends on what the target process returns for protected `system "b <namespace>"`.

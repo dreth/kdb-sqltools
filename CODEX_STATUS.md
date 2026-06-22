@@ -1,5 +1,38 @@
 # CODEX Status
 
+## 2026-06-22 Pass 2 kdb Panel Windowing
+
+Changed:
+
+- Refactored the kdb results panel protocol so the webview receives result metadata only: columns, row count, query, connection name, elapsed time, messages, error state, and a version.
+- Kept the full `KdbPanelResult.rows` array extension-side and added viewport slice requests from the webview for visible row/column windows plus overscan.
+- Extension responses now send only the requested visible cell window as display strings; the full row array is not posted to the webview.
+- Preserved virtualized DOM rendering for visible rows/columns only.
+- Kept range selection independent of the loaded viewport slice, including larger ranges selected by shift-clicking after scrolling.
+- Added selected range dimensions in the toolbar.
+- Added `Copy TSV + Headers` alongside the existing headerless TSV copy; both copy paths use extension-side `rowsToTsv`.
+- Added pure helper coverage for TSV headers and visible cell window serialization.
+- Documented optional kdb panel mode and the remaining massive-result caveat in `README.md`.
+- No new runtime dependencies were added.
+- Package version remains `0.0.6`; final `0.0.7` packaging remains for Pass 3.
+
+Verification:
+
+- `npm run compile` passed.
+- `npm run test:unit` passed.
+- `npm test` passed.
+- `git diff --check` passed.
+
+Remaining limitations:
+
+- q IPC query execution still materializes the full q result in the extension process before panel display; this pass only windows webview transfer and DOM rendering.
+- The panel still uses fixed column widths.
+- No client-side find/filter was added, avoiding repeated large-result scans in the webview.
+
+Next pass recommendation:
+
+- Pass 3 should address connection persistence UX/docs, bump/package `0.0.7`, and run the final live/package verification.
+
 ## 2026-06-22 Pass 1 kdb Panel
 
 Changed:

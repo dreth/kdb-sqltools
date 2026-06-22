@@ -3,7 +3,7 @@ const assert = require('assert');
 const { deserializeQMessage, deserializeQPayload, qValueToTabular, serializeTextQuery } = require('../out/ls/q-ipc');
 const queriesModule = require('../out/ls/queries');
 const { currentQBlock, selectedTextOrCurrentBlock } = require('../out/q-text');
-const { isCellInRange, normalizeCellRange, rowsToTsv, visibleIndexRange } = require('../out/kdb-results');
+const { isCellInRange, normalizeCellRange, rowsToCellWindow, rowsToTsv, visibleIndexRange } = require('../out/kdb-results');
 const KdbDriver = require('../out/ls/driver').default;
 const { ContextValue } = require('@sqltools/types');
 const connectionSchema = require('../connection.schema.json');
@@ -41,6 +41,39 @@ function hex(value) {
       { startRow: 0, endRow: 1, startColumn: 0, endColumn: 1 }
     ),
     'AAPL\tline break\nMSFT\t'
+  );
+  assert.strictEqual(
+    rowsToTsv(
+      [
+        { sym: 'AAPL', note: 'line\nbreak', size: 100 },
+        { sym: 'MSFT', note: null, size: 200 },
+      ],
+      ['sym', 'note', 'size'],
+      { startRow: 0, endRow: 1, startColumn: 0, endColumn: 1 },
+      true
+    ),
+    'sym\tnote\nAAPL\tline break\nMSFT\t'
+  );
+  assert.deepStrictEqual(
+    rowsToCellWindow(
+      [
+        { sym: 'AAPL', note: 'line\nbreak', size: 100 },
+        { sym: 'MSFT', note: null, size: 200 },
+      ],
+      ['sym', 'note', 'size'],
+      { start: 0, end: 1 },
+      { start: 1, end: 2 }
+    ),
+    {
+      startRow: 0,
+      endRow: 1,
+      startColumn: 1,
+      endColumn: 2,
+      cells: [
+        ['line break', '100'],
+        ['', '200'],
+      ],
+    }
   );
   assert.deepStrictEqual(visibleIndexRange(280, 140, 28, 100, 2), { start: 8, end: 17 });
 
