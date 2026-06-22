@@ -113,6 +113,7 @@ export class KdbResultsPanel {
   private hiddenColumnNames: string[] = [];
   private rowOrder: number[] | undefined;
   private sortState: KdbPanelSortState | undefined;
+  private hiddenColumnSchema: string[] | undefined;
   private baseVisibleTableCache: { version: number; source: ColumnarPanelResult; table: ColumnarPanelResult } | undefined;
   private visibleTableCache: { version: number; source: ColumnarPanelResult; table: ColumnarPanelResult } | undefined;
   private activeSearchId = 0;
@@ -141,6 +142,8 @@ export class KdbResultsPanel {
     panel.baseVisibleTableCache = undefined;
     panel.visibleTableCache = undefined;
     panel.loading = undefined;
+    panel.hiddenColumnNames = panel.hiddenColumnNamesForNewResult(result.table.columns);
+    panel.hiddenColumnSchema = result.table.columns.slice();
     panel.result = result;
     panel.panel.reveal(vscode.ViewColumn.Beside);
     panel.postResultMetadata();
@@ -551,11 +554,11 @@ export class KdbResultsPanel {
         'Sort',
         'Cancel'
       );
-      if (choice !== 'Sort') {
-        this.post({ type: 'sortSkipped' });
+      if (!this.isCurrentVersion(requestVersion)) {
         return;
       }
-      if (!this.result || this.version !== requestVersion) {
+      if (choice !== 'Sort') {
+        this.post({ type: 'sortSkipped', version: requestVersion });
         return;
       }
     }
@@ -622,10 +625,12 @@ export class KdbResultsPanel {
 
     const estimate = estimateCopyExport(table, clamped, format, includeHeaders, includeRowIndex);
     if (!(await this.confirmLargeCopyExport('copy', format, estimate))) {
-      this.post({ type: 'copySkipped', format });
+      if (this.isCurrentVersion(requestVersion)) {
+        this.post({ type: 'copySkipped', version: requestVersion, format });
+      }
       return;
     }
-    if (!this.result || this.version !== requestVersion) {
+    if (!this.isCurrentVersion(requestVersion)) {
       return;
     }
 
@@ -639,20 +644,26 @@ export class KdbResultsPanel {
         'Export',
         'Copy Anyway'
       );
+      if (!this.isCurrentVersion(requestVersion)) {
+        return;
+      }
       if (choice === 'Export') {
         await this.exportRange(requestVersion, clamped, format, includeHeaders, includeRowIndex);
         return;
       }
       if (choice !== 'Copy Anyway') {
-        this.post({ type: 'copySkipped', format });
+        this.post({ type: 'copySkipped', version: requestVersion, format });
         return;
       }
     }
 
     await vscode.env.clipboard.writeText(text);
+    if (!this.isCurrentVersion(requestVersion)) {
+      return;
+    }
     const rows = clamped.endRow - clamped.startRow + 1;
     const columns = clamped.endColumn - clamped.startColumn + 1;
-    this.post({ type: 'copied', rows, columns, format, includeHeaders, includeRowIndex });
+    this.post({ type: 'copied', version: requestVersion, rows, columns, format, includeHeaders, includeRowIndex });
   }
 
   private async exportRange(
@@ -681,17 +692,21 @@ export class KdbResultsPanel {
       const limitError = validateXlsxSheetLimits(clamped, { includeHeaders, includeRowIndex });
       if (limitError) {
         await vscode.window.showErrorMessage(limitError);
-        this.post({ type: 'exportSkipped', format });
+        if (this.isCurrentVersion(requestVersion)) {
+          this.post({ type: 'exportSkipped', version: requestVersion, format });
+        }
         return;
       }
     }
 
     const estimate = estimateCopyExport(table, clamped, format, includeHeaders, includeRowIndex);
     if (!(await this.confirmLargeCopyExport('export', format, estimate))) {
-      this.post({ type: 'exportSkipped', format });
+      if (this.isCurrentVersion(requestVersion)) {
+        this.post({ type: 'exportSkipped', version: requestVersion, format });
+      }
       return;
     }
-    if (!this.result || this.version !== requestVersion) {
+    if (!this.isCurrentVersion(requestVersion)) {
       return;
     }
 
@@ -700,11 +715,11 @@ export class KdbResultsPanel {
       filters: saveFilters(format),
       saveLabel: 'Export',
     });
-    if (!uri) {
-      this.post({ type: 'exportSkipped', format });
+    if (!this.isCurrentVersion(requestVersion)) {
       return;
     }
-    if (!this.result || this.version !== requestVersion) {
+    if (!uri) {
+      this.post({ type: 'exportSkipped', version: requestVersion, format });
       return;
     }
 
@@ -714,10 +729,16 @@ export class KdbResultsPanel {
         includeHeaders,
         includeRowIndex,
       }), 'utf8');
+    if (!this.isCurrentVersion(requestVersion)) {
+      return;
+    }
     await vscode.workspace.fs.writeFile(uri, content);
+    if (!this.isCurrentVersion(requestVersion)) {
+      return;
+    }
     const rows = clamped.endRow - clamped.startRow + 1;
     const columns = clamped.endColumn - clamped.startColumn + 1;
-    this.post({ type: 'exported', rows, columns, format, includeHeaders, includeRowIndex });
+    this.post({ type: 'exported', version: requestVersion, rows, columns, format, includeHeaders, includeRowIndex });
   }
 
   private async confirmLargeCopyExport(
@@ -759,6 +780,15 @@ export class KdbResultsPanel {
 
     if (message.type === 'hideColumn') {
       if (this.hiddenColumnNames.indexOf(columnName) === -1) {
+        if (this.visibleColumnNames(this.result).length <= 1) {
+          this.post({
+            type: 'columnVisibilitySkipped',
+            version: this.version,
+            message: 'At least one column must stay visible',
+          });
+          return;
+        }
+        this.hiddenColumnSchema = this.result.table.columns.slice();
         this.hiddenColumnNames = this.hiddenColumnNames.concat(columnName);
         if (this.sortState && this.sortState.columnName === columnName) {
           this.rowOrder = undefined;
@@ -771,10 +801,26 @@ export class KdbResultsPanel {
 
     if (message.type === 'showColumn') {
       if (this.hiddenColumnNames.indexOf(columnName) !== -1) {
+        this.hiddenColumnSchema = this.result.table.columns.slice();
         this.hiddenColumnNames = this.hiddenColumnNames.filter(name => name !== columnName);
         this.refreshResultView();
       }
     }
+  }
+
+  private hiddenColumnNamesForNewResult(columns: string[]): string[] {
+    if (!sameColumnNames(this.hiddenColumnSchema, columns)) {
+      return [];
+    }
+
+    const available = columnNameLookup(columns);
+    const names: string[] = [];
+    this.hiddenColumnNames.forEach(column => {
+      if (available[column] && names.indexOf(column) === -1) {
+        names.push(column);
+      }
+    });
+    return names.length >= columns.length ? names.slice(0, Math.max(0, columns.length - 1)) : names;
   }
 
   private refreshResultView(): void {
@@ -794,6 +840,10 @@ export class KdbResultsPanel {
     const config = vscode.workspace.getConfiguration('kdb-sqltools.results');
     await config.update(normalized.key, normalized.value, vscode.ConfigurationTarget.Global);
     this.post({ type: 'settings', settings: panelSettings() });
+  }
+
+  private isCurrentVersion(version: number): boolean {
+    return !!this.result && this.version === version;
   }
 
   private post(message: any): void {
@@ -1237,16 +1287,19 @@ export class KdbResultsPanel {
           updateActionState();
           updateSelectionLabel();
           renderNow();
-        } else if (msg.type === 'copied') {
+        } else if (msg.type === 'copied' && isCurrentVersionMessage(msg)) {
           status.textContent = 'Copied ' + msg.rows + 'x' + msg.columns + ' ' + String(msg.format || '').toUpperCase();
-        } else if (msg.type === 'exported') {
+        } else if (msg.type === 'exported' && isCurrentVersionMessage(msg)) {
           status.textContent = 'Exported ' + msg.rows + 'x' + msg.columns + ' ' + String(msg.format || '').toUpperCase();
-        } else if (msg.type === 'exportSkipped') {
+        } else if (msg.type === 'exportSkipped' && isCurrentVersionMessage(msg)) {
           status.textContent = String(msg.format || '').toUpperCase() + ' export skipped';
-        } else if (msg.type === 'copySkipped') {
+        } else if (msg.type === 'copySkipped' && isCurrentVersionMessage(msg)) {
           status.textContent = 'Copy skipped';
-        } else if (msg.type === 'sortSkipped') {
+        } else if (msg.type === 'sortSkipped' && isCurrentVersionMessage(msg)) {
           status.textContent = 'Sort skipped';
+        } else if (msg.type === 'columnVisibilitySkipped' && isCurrentVersionMessage(msg)) {
+          status.textContent = String(msg.message || 'Column visibility unchanged');
+          renderColumnSettings();
         }
       });
 
@@ -1438,6 +1491,10 @@ export class KdbResultsPanel {
           scrollRowIntoView(search.matches[search.activeIndex]);
         }
         requestRender();
+      }
+
+      function isCurrentVersionMessage(msg) {
+        return toNonNegativeInteger(msg.version, -1) === data.version;
       }
 
       function resetSearch(clearInput) {
@@ -2286,8 +2343,7 @@ function numberSettingUpdate(value: any, min: number, max: number): number | nul
     return null;
   }
 
-  const integer = Math.floor(number);
-  return integer >= min && integer <= max ? integer : null;
+  return Math.min(Math.max(Math.floor(number), min), max);
 }
 
 function densitySettingUpdate(value: any): string | null {
@@ -2304,6 +2360,19 @@ function columnNameLookup(columnNames: string[]): { [name: string]: boolean } {
     lookup[column] = true;
   });
   return lookup;
+}
+
+function sameColumnNames(left: string[] | undefined, right: string[]): boolean {
+  if (!left || left.length !== right.length) {
+    return false;
+  }
+
+  for (let index = 0; index < left.length; index++) {
+    if (left[index] !== right[index]) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function nextSortState(current: KdbPanelSortState | undefined, columnName: string): KdbPanelSortState | undefined {

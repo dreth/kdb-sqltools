@@ -91,7 +91,7 @@ The kdb panel virtualizes rows and columns and transfers only the visible cell w
 
 Selection supports individual ranges, whole rows, whole columns, and all cells. With no selection, copy/export actions use all cells.
 
-Columns can be hidden from the panel settings menu for the current panel session. Hidden columns stay hidden for later results in that panel when names match, and reset restores all columns. Hidden-column choices are not saved globally.
+Columns can be hidden from the panel settings menu for the current panel session. Hidden columns stay hidden for later results in that panel only when the full column list matches, and reset restores all columns. Hidden-column choices are not saved globally.
 
 Header clicks default to column selection. Change the toolbar mode from Select to Sort to sort visible columns in the extension; repeated clicks cycle ascending, descending, and original order. Sorting uses the panel's visible cell text, warns before sorting very large row counts, and resets on the third click.
 
