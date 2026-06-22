@@ -424,10 +424,24 @@ function htmlSelectOptions(source, selectId) {
   assert.strictEqual(resultsPanelSource.includes('RESULT_SETTING_UPDATE_ALLOWLIST'), true);
   assert.strictEqual(resultsPanelSource.includes("message.type === 'updateSetting'"), true);
   assert.strictEqual(resultsPanelSource.includes('vscode.ConfigurationTarget.Global'), true);
+  const numberSettingUpdateSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function numberSettingUpdate'),
+    resultsPanelSource.indexOf('function densitySettingUpdate')
+  );
+  assert.strictEqual(numberSettingUpdateSource.includes('Math.min(Math.max(Math.floor(number), min), max)'), true);
+  assert.strictEqual(numberSettingUpdateSource.includes('integer >= min && integer <= max'), false);
   assert.strictEqual(resultsPanelSource.includes('await this.copyRange(\n        message.version,'), true);
   assert.strictEqual(resultsPanelSource.includes('await this.exportRange(\n        message.version,'), true);
   assert.strictEqual(resultsPanelSource.includes('const requestVersion = integerOrNull(version);'), true);
   assert.strictEqual(resultsPanelSource.includes('await this.exportRange(requestVersion, clamped, format, includeHeaders, includeRowIndex)'), true);
+  assert.strictEqual(resultsPanelSource.includes("type: 'sortSkipped', version: requestVersion"), true);
+  assert.strictEqual(resultsPanelSource.includes("type: 'copySkipped', version: requestVersion"), true);
+  assert.strictEqual(resultsPanelSource.includes("type: 'exportSkipped', version: requestVersion"), true);
+  assert.strictEqual(resultsPanelSource.includes("type: 'copied', version: requestVersion"), true);
+  assert.strictEqual(resultsPanelSource.includes("type: 'exported', version: requestVersion"), true);
+  assert.strictEqual(resultsPanelSource.includes('private isCurrentVersion(version: number): boolean'), true);
+  assert.strictEqual(resultsPanelSource.includes('function isCurrentVersionMessage(msg)'), true);
+  assert.strictEqual(resultsPanelSource.includes("msg.type === 'copied' && isCurrentVersionMessage(msg)"), true);
   const copySelectionSource = resultsPanelSource.slice(
     resultsPanelSource.indexOf('function copySelection'),
     resultsPanelSource.indexOf('function exportSelection')
@@ -446,6 +460,11 @@ function htmlSelectOptions(source, selectId) {
   assert.strictEqual(resultsPanelSource.includes('settings.showRowIndex ? INDEX_WIDTH : 0'), true);
   assert.strictEqual(kdbResultsSource.includes('filterColumnarPanelResult'), true);
   assert.strictEqual(resultsPanelSource.includes('hiddenColumnNames'), true);
+  assert.strictEqual(resultsPanelSource.includes('private hiddenColumnSchema'), true);
+  assert.strictEqual(resultsPanelSource.includes('hiddenColumnNamesForNewResult(result.table.columns)'), true);
+  assert.strictEqual(resultsPanelSource.includes('sameColumnNames(this.hiddenColumnSchema, columns)'), true);
+  assert.strictEqual(resultsPanelSource.includes('At least one column must stay visible'), true);
+  assert.strictEqual(readmeSource.includes('only when the full column list matches'), true);
   assert.strictEqual(resultsPanelSource.includes("message.type === 'hideColumn'"), true);
   assert.strictEqual(resultsPanelSource.includes("message.type === 'showColumn'"), true);
   assert.strictEqual(resultsPanelSource.includes("message.type === 'resetHiddenColumns'"), true);
@@ -510,6 +529,27 @@ function htmlSelectOptions(source, selectId) {
   assert.strictEqual(searchRowsSource.includes('matchCap: SEARCH_MATCH_CAP'), true);
   assert.strictEqual(searchRowsSource.includes('await yieldToEventLoop()'), true);
   assert.strictEqual(searchRowsSource.includes('cellWindow'), false, 'search must not post or build cell windows');
+  const copyRangeSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('private async copyRange'),
+    resultsPanelSource.indexOf('private async exportRange')
+  );
+  assert.strictEqual(
+    copyRangeSource.includes('await vscode.env.clipboard.writeText(text);\n    if (!this.isCurrentVersion(requestVersion))'),
+    true
+  );
+  const exportRangeSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('private async exportRange'),
+    resultsPanelSource.indexOf('private async confirmLargeCopyExport')
+  );
+  assert.ok(
+    exportRangeSource.indexOf('const content = format ===') < exportRangeSource.indexOf('await vscode.workspace.fs.writeFile(uri, content)'),
+    'export content should be generated before writing'
+  );
+  assert.strictEqual(
+    exportRangeSource.includes('if (!this.isCurrentVersion(requestVersion)) {\n      return;\n    }\n    await vscode.workspace.fs.writeFile(uri, content)'),
+    true
+  );
+  assert.strictEqual(exportRangeSource.includes("type: 'exportSkipped', format"), false);
   assert.strictEqual(perfModule.PERF_PREFIX, '[kdb-sqltools:perf]');
   assert.strictEqual(typeof perfModule.configurePerfTrace, 'function');
   assert.strictEqual(typeof perfModule.isPerfTraceEnabled, 'function');
