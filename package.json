@@ -45,7 +45,11 @@
     "onLanguage:q",
     "onCommand:sqltools.*",
     "onCommand:kdb-sqltools.runFile",
-    "onCommand:kdb-sqltools.runSelectionOrBlock"
+    "onCommand:kdb-sqltools.runSelectionOrBlock",
+    "onCommand:kdb-sqltools.runFileInSqltools",
+    "onCommand:kdb-sqltools.runSelectionOrBlockInSqltools",
+    "onCommand:kdb-sqltools.runFileInKdbPanel",
+    "onCommand:kdb-sqltools.runSelectionOrBlockInKdbPanel"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -74,6 +78,30 @@
         "title": "Run q Block",
         "category": "kdb+",
         "icon": "$(run)"
+      },
+      {
+        "command": "kdb-sqltools.runFileInSqltools",
+        "title": "Run q in SQLTools Results",
+        "category": "kdb+",
+        "icon": "$(play)"
+      },
+      {
+        "command": "kdb-sqltools.runSelectionOrBlockInSqltools",
+        "title": "Run q Block in SQLTools Results",
+        "category": "kdb+",
+        "icon": "$(run)"
+      },
+      {
+        "command": "kdb-sqltools.runFileInKdbPanel",
+        "title": "Run q in kdb Panel",
+        "category": "kdb+",
+        "icon": "$(table)"
+      },
+      {
+        "command": "kdb-sqltools.runSelectionOrBlockInKdbPanel",
+        "title": "Run q Block in kdb Panel",
+        "category": "kdb+",
+        "icon": "$(table)"
       }
     ],
     "menus": {
@@ -104,8 +132,42 @@
         {
           "command": "kdb-sqltools.runSelectionOrBlock",
           "when": "editorLangId == q || resourceExtname == .q"
+        },
+        {
+          "command": "kdb-sqltools.runFileInSqltools",
+          "when": "editorLangId == q || resourceExtname == .q"
+        },
+        {
+          "command": "kdb-sqltools.runSelectionOrBlockInSqltools",
+          "when": "editorLangId == q || resourceExtname == .q"
+        },
+        {
+          "command": "kdb-sqltools.runFileInKdbPanel",
+          "when": "editorLangId == q || resourceExtname == .q"
+        },
+        {
+          "command": "kdb-sqltools.runSelectionOrBlockInKdbPanel",
+          "when": "editorLangId == q || resourceExtname == .q"
         }
       ]
+    },
+    "configuration": {
+      "title": "kdb-sqltools",
+      "properties": {
+        "kdb-sqltools.results.target": {
+          "type": "string",
+          "default": "sqltools",
+          "enum": [
+            "sqltools",
+            "kdbPanel"
+          ],
+          "enumDescriptions": [
+            "Use SQLTools' result grid.",
+            "Use the lightweight kdb results panel."
+          ],
+          "description": "Result target used by the default kdb-sqltools q run commands."
+        }
+      }
     }
   },
   "dependencies": {

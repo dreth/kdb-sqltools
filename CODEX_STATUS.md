@@ -1,5 +1,46 @@
 # CODEX Status
 
+## 2026-06-22 Pass 1 kdb Panel
+
+Changed:
+
+- Added `kdb-sqltools.results.target` with `sqltools` default and optional `kdbPanel`.
+- Kept existing `kdb-sqltools.runFile` and `kdb-sqltools.runSelectionOrBlock` behavior on the default `sqltools` target.
+- Added explicit SQLTools and kdb panel commands:
+  - `kdb-sqltools.runFileInSqltools`
+  - `kdb-sqltools.runSelectionOrBlockInSqltools`
+  - `kdb-sqltools.runFileInKdbPanel`
+  - `kdb-sqltools.runSelectionOrBlockInKdbPanel`
+- Added a direct kdb panel execution path using configured `sqltools.connections` for this driver and the existing `KdbDriver.query()` IPC path.
+- Added a lightweight webview result panel with sticky header, fixed-size row/column virtualization, click/drag range selection, selected range highlighting, and TSV copy through the button or `Ctrl/Cmd+C` while the panel has focus.
+- Added pure helpers for range normalization, selection checks, TSV conversion, and visible-window math.
+- Added unit coverage for the new pure helpers.
+- No new runtime dependencies were added.
+- Package version remains `0.0.6`; this pass was not packaged as final `0.0.7`.
+
+Verification:
+
+- `npm run compile` passed.
+- `npm run test:unit` passed.
+- `npm test` passed.
+- `git diff --check` passed.
+
+Remaining limitations:
+
+- The kdb panel path reads saved SQLTools kdb connection settings from `sqltools.connections`; it does not reuse SQLTools' active connection object because no public SQLTools command/API in this repo exposes a row-returning active-connection query path without opening SQLTools results.
+- The panel virtualizes DOM rows and columns, but query execution still materializes the q result in the extension process before posting it to the webview.
+- Column widths are fixed in Pass 1.
+- Copy supports selected data cells only; headers are not included yet.
+- Connection persistence UX confusion is not addressed in Pass 1.
+
+Blockers:
+
+- None for Pass 1.
+
+Next pass recommendation:
+
+- Pass 2 should harden large-result behavior around payload transfer/materialization, add row/column counts and optional copy-with-headers, and consider column resizing without adding heavy dependencies.
+
 ## 2026-06-17 Final SQLTools Compatibility Pass
 
 Changed:
