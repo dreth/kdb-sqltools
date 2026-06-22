@@ -1,5 +1,12 @@
 # Change Log
 
+## 0.2.1
+
+- Hardened q IPC payload validation and receive buffering for malformed/truncated responses and trailing bytes.
+- Improved kdb panel correctness for duplicate columns, stale result-version messages, settings allowlist validation, hidden-column state, and async XLSX export races.
+- Expanded regression coverage for q IPC edge cases, columnar slices, sorting/filtering, export escaping, XLSX limits, and `Run Selection` behavior.
+- Verified package contents exclude local credentials, Codex prompt/plan files, and nested build artifacts.
+
 ## 0.2.0
 
 - Made the kdb results panel the default target for `Run q Script` and `Run Selection`, with a direct columnar panel path that avoids SQLTools row-object materialization.
