@@ -52,6 +52,7 @@ interface KdbPanelMetadata {
 }
 
 type KdbPanelDensity = 'compact' | 'standard' | 'comfortable';
+type KdbPanelElapsedTimeDisplay = 'auto' | 'milliseconds';
 type KdbPanelSortDirection = 'asc' | 'desc';
 
 interface KdbPanelSortState {
@@ -68,6 +69,8 @@ interface KdbPanelSettings {
   includeHeaders: boolean;
   includeRowIndex: boolean;
   hideLargeResultWarnings: boolean;
+  hideLargeSortWarnings: boolean;
+  elapsedTimeDisplay: KdbPanelElapsedTimeDisplay;
 }
 
 interface CopyExportEstimate {
@@ -102,6 +105,8 @@ const DEFAULT_PANEL_SETTINGS: KdbPanelSettings = {
   includeHeaders: true,
   includeRowIndex: true,
   hideLargeResultWarnings: false,
+  hideLargeSortWarnings: false,
+  elapsedTimeDisplay: 'auto',
 };
 
 export class KdbResultsPanel {
@@ -119,6 +124,7 @@ export class KdbResultsPanel {
   private baseVisibleTableCache: { version: number; source: ColumnarPanelResult; table: ColumnarPanelResult } | undefined;
   private visibleTableCache: { version: number; source: ColumnarPanelResult; table: ColumnarPanelResult } | undefined;
   private activeSearchId = 0;
+  private hideLargeResultWarningOnce = false;
 
   public static showLoading(context: vscode.ExtensionContext, state: LoadingState): KdbResultsPanel {
     const panel = KdbResultsPanel.ensure(context);
@@ -126,6 +132,7 @@ export class KdbResultsPanel {
     panel.firstSliceVersion = 0;
     panel.rowOrder = undefined;
     panel.sortState = undefined;
+    panel.hideLargeResultWarningOnce = false;
     panel.baseVisibleTableCache = undefined;
     panel.visibleTableCache = undefined;
     panel.loading = state;
@@ -141,6 +148,7 @@ export class KdbResultsPanel {
     panel.firstSliceVersion = 0;
     panel.rowOrder = undefined;
     panel.sortState = undefined;
+    panel.hideLargeResultWarningOnce = false;
     panel.baseVisibleTableCache = undefined;
     panel.visibleTableCache = undefined;
     panel.loading = undefined;
@@ -206,6 +214,13 @@ export class KdbResultsPanel {
 
     if (message.type === 'updateSetting') {
       await this.updateSetting(message);
+      return;
+    }
+
+    if (message.type === 'hideLargeResultWarningOnce') {
+      if (Number(message.version) === this.version) {
+        this.hideLargeResultWarningOnce = true;
+      }
       return;
     }
 
@@ -281,7 +296,9 @@ export class KdbResultsPanel {
       version: this.version,
       settings,
       sort: this.visibleSortState(result),
-      guardrailMessage: settings.hideLargeResultWarnings ? undefined : resultSizeGuardrailMessage(result.table.rowCount, result.table.columns.length),
+      guardrailMessage: settings.hideLargeResultWarnings || this.hideLargeResultWarningOnce
+        ? undefined
+        : resultSizeGuardrailMessage(result.table.rowCount, result.table.columns.length),
     };
   }
 
@@ -551,16 +568,28 @@ export class KdbResultsPanel {
       return;
     }
 
-    if (table.rowCount >= SORT_CONFIRM_ROW_THRESHOLD) {
+    if (table.rowCount >= SORT_CONFIRM_ROW_THRESHOLD && !panelSettings().hideLargeSortWarnings) {
       const choice = await vscode.window.showWarningMessage(
         `Sort ${formatCount(table.rowCount)} rows by ${columnName}? This may take a moment.`,
         'Sort',
+        "Sort and Don't Warn Again",
         'Cancel'
       );
       if (!this.isCurrentVersion(requestVersion)) {
         return;
       }
-      if (choice !== 'Sort') {
+      if (choice === "Sort and Don't Warn Again") {
+        await vscode.workspace.getConfiguration('kdb-sqltools.results').update(
+          'hideLargeSortWarnings',
+          true,
+          vscode.ConfigurationTarget.Global
+        );
+        this.post({ type: 'settings', settings: panelSettings() });
+        if (!this.isCurrentVersion(requestVersion)) {
+          return;
+        }
+      }
+      if (choice !== 'Sort' && choice !== "Sort and Don't Warn Again") {
         this.post({ type: 'sortSkipped', version: requestVersion });
         return;
       }
@@ -1055,6 +1084,49 @@ export class KdbResultsPanel {
       margin-left: auto;
       color: var(--vscode-descriptionForeground);
     }
+    .large-warning {
+      position: relative;
+      flex: 0 0 auto;
+      color: var(--vscode-descriptionForeground);
+    }
+    .large-warning summary {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      height: 24px;
+      padding: 0 6px;
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 2px;
+      background: var(--vscode-editor-background);
+      cursor: pointer;
+      list-style: none;
+      box-sizing: border-box;
+    }
+    .large-warning summary::-webkit-details-marker {
+      display: none;
+    }
+    .large-warning-panel {
+      width: 340px;
+      max-width: calc(100vw - 20px);
+      margin-top: 6px;
+      padding: 10px;
+      border: 1px solid var(--vscode-panel-border);
+      background: var(--vscode-sideBar-background);
+      white-space: normal;
+      box-sizing: border-box;
+    }
+    .large-warning-text {
+      line-height: 1.35;
+    }
+    .large-warning-actions {
+      display: flex;
+      gap: 6px;
+      margin-top: 8px;
+    }
+    .large-warning-actions button {
+      height: 24px;
+      padding: 0 6px;
+    }
     .spinner {
       width: 14px;
       height: 14px;
@@ -1087,11 +1159,6 @@ export class KdbResultsPanel {
     }
     .message-text {
       white-space: pre-wrap;
-    }
-    .message-actions {
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
     }
     #viewport {
       position: relative;
@@ -1202,6 +1269,11 @@ export class KdbResultsPanel {
         <label class="checkbox"><input id="settingsIncludeHeaders" type="checkbox">Include headers</label>
         <label class="checkbox"><input id="settingsIncludeRowIndex" type="checkbox">Include row #</label>
         <label class="checkbox"><input id="settingsHideLargeResultWarnings" type="checkbox">Hide large-result warnings</label>
+        <label class="checkbox"><input id="settingsHideLargeSortWarnings" type="checkbox">Hide large-sort warnings</label>
+        <label class="settings-row"><span>Elapsed time</span><select id="settingsElapsedTimeDisplay">
+          <option value="auto">Auto</option>
+          <option value="milliseconds">Milliseconds</option>
+        </select></label>
         <label class="settings-row"><span>Density</span><select id="settingsDensity">
           <option value="compact">Compact</option>
           <option value="standard">Standard</option>
@@ -1220,6 +1292,16 @@ export class KdbResultsPanel {
     </details>
     <span id="spinner" class="spinner" hidden></span>
     <span id="summary" class="summary"></span>
+    <details id="largeResultWarning" class="large-warning" hidden>
+      <summary id="largeResultSummary" title="Large result warning">ⓘ Large result</summary>
+      <div class="large-warning-panel">
+        <div id="largeResultWarningText" class="large-warning-text"></div>
+        <div class="large-warning-actions">
+          <button id="hideLargeOnce" type="button">Hide once</button>
+          <button id="hideLargeForever" type="button">Hide forever</button>
+        </div>
+      </div>
+    </details>
     <span id="status" class="status"></span>
     <span id="selection" class="selection"></span>
   </div>
@@ -1237,7 +1319,8 @@ export class KdbResultsPanel {
       const INDEX_WIDTH = 64;
       const OVERSCAN_ROWS = 8;
       const OVERSCAN_COLUMNS = 2;
-      const MAX_SCROLL_PIXELS = 24000000;
+      const MAX_SCROLL_PIXELS = 8000000;
+      const SCROLL_END_EPSILON = 1;
       const MIN_COLUMN_WIDTH = 80;
       const MAX_COLUMN_WIDTH = 2000;
       const AUTO_COLUMN_WIDTH_CAP = 1200;
@@ -1249,7 +1332,9 @@ export class KdbResultsPanel {
         showRowIndex: true,
         includeHeaders: true,
         includeRowIndex: true,
-        hideLargeResultWarnings: false
+        hideLargeResultWarnings: false,
+        hideLargeSortWarnings: false,
+        elapsedTimeDisplay: 'auto'
       };
       const viewport = document.getElementById('viewport');
       const canvas = document.getElementById('canvas');
@@ -1270,6 +1355,8 @@ export class KdbResultsPanel {
       const settingsIncludeHeaders = document.getElementById('settingsIncludeHeaders');
       const settingsIncludeRowIndex = document.getElementById('settingsIncludeRowIndex');
       const settingsHideLargeResultWarnings = document.getElementById('settingsHideLargeResultWarnings');
+      const settingsHideLargeSortWarnings = document.getElementById('settingsHideLargeSortWarnings');
+      const settingsElapsedTimeDisplay = document.getElementById('settingsElapsedTimeDisplay');
       const settingsDensity = document.getElementById('settingsDensity');
       const settingsCellWidth = document.getElementById('settingsCellWidth');
       const settingsRowHeight = document.getElementById('settingsRowHeight');
@@ -1280,6 +1367,11 @@ export class KdbResultsPanel {
       const resetColumnWidths = document.getElementById('resetColumnWidths');
       const spinner = document.getElementById('spinner');
       const summary = document.getElementById('summary');
+      const largeResultWarning = document.getElementById('largeResultWarning');
+      const largeResultSummary = document.getElementById('largeResultSummary');
+      const largeResultWarningText = document.getElementById('largeResultWarningText');
+      const hideLargeOnce = document.getElementById('hideLargeOnce');
+      const hideLargeForever = document.getElementById('hideLargeForever');
       const status = document.getElementById('status');
       const selectionLabel = document.getElementById('selection');
       const message = document.getElementById('message');
@@ -1313,6 +1405,8 @@ export class KdbResultsPanel {
           setSearchResults(msg);
         } else if (msg.type === 'settings') {
           applySettings(msg.settings);
+          updateSummary();
+          updateLargeResultWarning();
           updateActionState();
           updateSelectionLabel();
           renderNow();
@@ -1362,10 +1456,24 @@ export class KdbResultsPanel {
       settingsIncludeHeaders.addEventListener('change', () => updateSetting('includeHeaders', !!settingsIncludeHeaders.checked));
       settingsIncludeRowIndex.addEventListener('change', () => updateSetting('includeRowIndex', !!settingsIncludeRowIndex.checked));
       settingsHideLargeResultWarnings.addEventListener('change', () => updateSetting('hideLargeResultWarnings', !!settingsHideLargeResultWarnings.checked));
+      settingsHideLargeSortWarnings.addEventListener('change', () => updateSetting('hideLargeSortWarnings', !!settingsHideLargeSortWarnings.checked));
+      settingsElapsedTimeDisplay.addEventListener('change', () => updateSetting('elapsedTimeDisplay', String(settingsElapsedTimeDisplay.value || 'auto')));
       settingsDensity.addEventListener('change', () => updateSetting('density', String(settingsDensity.value || 'standard')));
       settingsCellWidth.addEventListener('change', () => updateNumberSetting('cellWidth', settingsCellWidth, 80, 600));
       settingsRowHeight.addEventListener('change', () => updateNumberSetting('rowHeight', settingsRowHeight, 20, 80));
       settingsFontSize.addEventListener('change', () => updateNumberSetting('fontSize', settingsFontSize, 0, 32));
+      hideLargeOnce.addEventListener('click', event => {
+        event.preventDefault();
+        data.guardrailMessage = '';
+        vscode.postMessage({ type: 'hideLargeResultWarningOnce', version: data.version });
+        updateLargeResultWarning();
+      });
+      hideLargeForever.addEventListener('click', event => {
+        event.preventDefault();
+        data.guardrailMessage = '';
+        updateSetting('hideLargeResultWarnings', true);
+        updateLargeResultWarning();
+      });
       resetColumns.addEventListener('click', () => vscode.postMessage({ type: 'resetHiddenColumns' }));
       resetColumnWidths.addEventListener('click', resetColumnWidthOverrides);
       viewport.addEventListener('scroll', requestRender);
@@ -1400,6 +1508,7 @@ export class KdbResultsPanel {
         data.query = state.query || '';
         data.connectionName = state.connectionName || '';
         data.sort = null;
+        data.hasResult = false;
         resetWindowState();
         summary.textContent = 'Running on ' + (state.connectionName || 'kdb');
         status.textContent = '';
@@ -1410,6 +1519,7 @@ export class KdbResultsPanel {
         setActionsDisabled(true);
         renderColumnSettings();
         showMessage('', false);
+        updateLargeResultWarning();
         renderNow();
       }
 
@@ -1434,16 +1544,14 @@ export class KdbResultsPanel {
           connectionName: result.connectionName || '',
           elapsedMs: toNonNegativeInteger(result.elapsedMs, 0),
           error: !!result.error,
-          sort: normalizeSortState(result.sort)
+          sort: normalizeSortState(result.sort),
+          hasResult: true
         };
         if (data.allColumns.length === 0) {
           data.allColumns = data.columns.slice();
         }
         resetWindowState();
-        summary.textContent = data.rowCount + ' rows x ' + data.columns.length + ' columns' +
-          (data.hiddenColumnCount > 0 ? ' (' + data.hiddenColumnCount + ' hidden)' : '') +
-          (data.connectionName ? ' | ' + data.connectionName : '') +
-          ' | ' + data.elapsedMs + ' ms';
+        updateSummary();
         status.textContent = '';
         updateSortStatus();
         resetSearch(false);
@@ -1452,6 +1560,7 @@ export class KdbResultsPanel {
         updateSelectionLabel();
         renderColumnSettings();
         showMessage(resultMessageText(data), data.error);
+        updateLargeResultWarning();
         renderNow();
         if (String(searchInput.value || '').length > 0) {
           queueSearchRows();
@@ -1715,7 +1824,9 @@ export class KdbResultsPanel {
           showRowIndex: typeof value.showRowIndex === 'boolean' ? value.showRowIndex : DEFAULT_SETTINGS.showRowIndex,
           includeHeaders: typeof value.includeHeaders === 'boolean' ? value.includeHeaders : DEFAULT_SETTINGS.includeHeaders,
           includeRowIndex: typeof value.includeRowIndex === 'boolean' ? value.includeRowIndex : DEFAULT_SETTINGS.includeRowIndex,
-          hideLargeResultWarnings: typeof value.hideLargeResultWarnings === 'boolean' ? value.hideLargeResultWarnings : DEFAULT_SETTINGS.hideLargeResultWarnings
+          hideLargeResultWarnings: typeof value.hideLargeResultWarnings === 'boolean' ? value.hideLargeResultWarnings : DEFAULT_SETTINGS.hideLargeResultWarnings,
+          hideLargeSortWarnings: typeof value.hideLargeSortWarnings === 'boolean' ? value.hideLargeSortWarnings : DEFAULT_SETTINGS.hideLargeSortWarnings,
+          elapsedTimeDisplay: normalizeElapsedTimeDisplay(value.elapsedTimeDisplay)
         };
       }
 
@@ -1726,6 +1837,8 @@ export class KdbResultsPanel {
         settingsIncludeHeaders.checked = settings.includeHeaders;
         settingsIncludeRowIndex.checked = settings.includeRowIndex;
         settingsHideLargeResultWarnings.checked = settings.hideLargeResultWarnings;
+        settingsHideLargeSortWarnings.checked = settings.hideLargeSortWarnings;
+        settingsElapsedTimeDisplay.value = settings.elapsedTimeDisplay;
         settingsDensity.value = settings.density;
         settingsCellWidth.value = String(settings.cellWidth);
         settingsRowHeight.value = String(settings.rowHeight);
@@ -1741,13 +1854,17 @@ export class KdbResultsPanel {
           showRowIndex: settings.showRowIndex,
           includeHeaders: settings.includeHeaders,
           includeRowIndex: settings.includeRowIndex,
-          hideLargeResultWarnings: settings.hideLargeResultWarnings
+          hideLargeResultWarnings: settings.hideLargeResultWarnings,
+          hideLargeSortWarnings: settings.hideLargeSortWarnings,
+          elapsedTimeDisplay: settings.elapsedTimeDisplay
         };
         next[key] = value;
         applySettings(next);
         if (key === 'cellWidth' || key === 'fontSize' || key === 'density') {
           autoColumnWidths = Object.create(null);
         }
+        updateSummary();
+        updateLargeResultWarning();
         requestRender();
         vscode.postMessage({ type: 'updateSetting', key, value });
       }
@@ -1894,6 +2011,39 @@ export class KdbResultsPanel {
         return value === 'compact' || value === 'comfortable' ? value : 'standard';
       }
 
+      function normalizeElapsedTimeDisplay(value) {
+        return value === 'milliseconds' ? 'milliseconds' : 'auto';
+      }
+
+      function updateSummary() {
+        if (!data.hasResult) {
+          return;
+        }
+        summary.textContent = formatUiCount(data.rowCount) + ' rows x ' + formatUiCount(data.columns.length) + ' columns' +
+          (data.hiddenColumnCount > 0 ? ' (' + formatUiCount(data.hiddenColumnCount) + ' hidden)' : '') +
+          (data.connectionName ? ' | ' + data.connectionName : '') +
+          ' | ' + formatElapsedMs(data.elapsedMs, settings.elapsedTimeDisplay);
+      }
+
+      function formatElapsedMs(milliseconds, display) {
+        const value = toNonNegativeInteger(milliseconds, 0);
+        if (display === 'milliseconds' || value < 1000) {
+          return value + ' ms';
+        }
+        if (value < 60000) {
+          const seconds = value / 1000;
+          return (value < 10000 && value % 1000 !== 0 ? seconds.toFixed(1) : String(Math.round(seconds))) + ' s';
+        }
+        const totalSeconds = Math.round(value / 1000);
+        const minutes = Math.floor(totalSeconds / 60);
+        const seconds = totalSeconds % 60;
+        return minutes + 'm' + (seconds > 0 ? ' ' + seconds + 's' : '');
+      }
+
+      function formatUiCount(value) {
+        return String(Math.max(0, Math.floor(Number(value) || 0))).replace(/\\B(?=(\\d{3})+(?!\\d))/g, ',');
+      }
+
       function showMessage(text, isError) {
         message.hidden = !text;
         message.textContent = '';
@@ -1905,36 +2055,22 @@ export class KdbResultsPanel {
         textElement.className = 'message-text';
         textElement.textContent = text;
         message.appendChild(textElement);
-        if (!isError && data.guardrailMessage) {
-          const actions = document.createElement('div');
-          actions.className = 'message-actions';
-          const hideOnce = document.createElement('button');
-          hideOnce.type = 'button';
-          hideOnce.textContent = 'Hide once';
-          hideOnce.addEventListener('click', () => {
-            data.guardrailMessage = '';
-            showMessage(resultMessageText(data), data.error);
-          });
-          const hideForever = document.createElement('button');
-          hideForever.type = 'button';
-          hideForever.textContent = 'Hide forever';
-          hideForever.addEventListener('click', () => {
-            data.guardrailMessage = '';
-            updateSetting('hideLargeResultWarnings', true);
-            showMessage(resultMessageText(data), data.error);
-          });
-          actions.appendChild(hideOnce);
-          actions.appendChild(hideForever);
-          message.appendChild(actions);
-        }
       }
 
       function resultMessageText(value) {
-        const parts = value.messages.slice();
-        if (value.guardrailMessage) {
-          parts.push(value.guardrailMessage);
+        return value.messages.slice().join('\\n');
+      }
+
+      function updateLargeResultWarning() {
+        const text = !data.error && !settings.hideLargeResultWarnings && data.guardrailMessage
+          ? data.guardrailMessage
+          : '';
+        largeResultWarning.hidden = !text;
+        largeResultSummary.title = text || 'Large result warning';
+        largeResultWarningText.textContent = text;
+        if (!text) {
+          largeResultWarning.open = false;
         }
-        return parts.join('\\n');
       }
 
       function requestRender() {
@@ -1984,8 +2120,11 @@ export class KdbResultsPanel {
         const physicalScrollableHeight = Math.max(0, canvasHeight - viewportHeight);
         const compressed = virtualScrollableHeight > physicalScrollableHeight && physicalScrollableHeight > 0;
         const physicalTop = clampNumber(physicalScrollTop, 0, physicalScrollableHeight);
+        const atVerticalScrollEnd = physicalScrollableHeight > 0 && physicalTop >= physicalScrollableHeight - SCROLL_END_EPSILON;
         const virtualTop = compressed
-          ? physicalTop * (virtualScrollableHeight / physicalScrollableHeight)
+          ? atVerticalScrollEnd
+            ? virtualScrollableHeight
+            : physicalTop * (virtualScrollableHeight / physicalScrollableHeight)
           : physicalTop;
         return {
           canvasHeight,
@@ -2002,6 +2141,9 @@ export class KdbResultsPanel {
         const target = clampNumber(virtualTop, 0, state.virtualScrollableHeight);
         if (!state.compressed || state.virtualScrollableHeight <= 0) {
           return target;
+        }
+        if (target >= state.virtualScrollableHeight - SCROLL_END_EPSILON) {
+          return state.physicalScrollableHeight;
         }
         return target * (state.physicalScrollableHeight / state.virtualScrollableHeight);
       }
@@ -2496,19 +2638,22 @@ export class KdbResultsPanel {
         const fullRows = range.startRow === 0 && range.endRow === data.rowCount - 1;
         const fullColumns = range.startColumn === 0 && range.endColumn === data.columns.length - 1;
         if (fullRows && fullColumns) {
-          return 'All ' + data.rowCount + 'x' + data.columns.length;
+          return 'Selected: all ' + formatUiCount(data.rowCount) + ' rows x ' + formatUiCount(data.columns.length) + ' columns';
         }
         if (fullRows) {
           return selectedColumns === 1
-            ? 'Column ' + (range.startColumn + 1)
-            : 'Columns ' + (range.startColumn + 1) + '-' + (range.endColumn + 1);
+            ? 'Selected: column ' + (data.columns[range.startColumn] || String(range.startColumn + 1))
+            : 'Selected: ' + formatUiCount(selectedColumns) + ' columns';
         }
         if (fullColumns) {
           return selectedRows === 1
-            ? 'Row ' + (range.startRow + 1)
-            : 'Rows ' + (range.startRow + 1) + '-' + (range.endRow + 1);
+            ? 'Selected: row ' + formatUiCount(range.startRow + 1)
+            : 'Selected: ' + formatUiCount(selectedRows) + ' rows';
         }
-        return 'Range ' + selectedRows + 'x' + selectedColumns;
+        if (selectedRows === 1 && selectedColumns === 1) {
+          return 'Selected: 1 cell';
+        }
+        return 'Selected: ' + formatUiCount(selectedRows) + ' rows x ' + formatUiCount(selectedColumns) + ' columns';
       }
 
       function copySelection() {
@@ -2584,7 +2729,8 @@ export class KdbResultsPanel {
           connectionName: '',
           elapsedMs: 0,
           error: false,
-          sort: null
+          sort: null,
+          hasResult: false
         };
       }
 
@@ -2666,6 +2812,11 @@ function panelSettings(): KdbPanelSettings {
       config.get<boolean>('hideLargeResultWarnings'),
       DEFAULT_PANEL_SETTINGS.hideLargeResultWarnings
     ),
+    hideLargeSortWarnings: booleanSetting(
+      config.get<boolean>('hideLargeSortWarnings'),
+      DEFAULT_PANEL_SETTINGS.hideLargeSortWarnings
+    ),
+    elapsedTimeDisplay: panelElapsedTimeDisplay(config.get<string>('elapsedTimeDisplay')),
   };
 }
 
@@ -2681,6 +2832,8 @@ const RESULT_SETTING_UPDATE_ALLOWLIST: { [key: string]: PanelSettingUpdateValida
   includeHeaders: booleanSettingUpdate,
   includeRowIndex: booleanSettingUpdate,
   hideLargeResultWarnings: booleanSettingUpdate,
+  hideLargeSortWarnings: booleanSettingUpdate,
+  elapsedTimeDisplay: elapsedTimeDisplaySettingUpdate,
 };
 
 function normalizePanelSettingUpdate(key: any, value: any): { key: string; value: PanelSettingUpdateValue } | null {
@@ -2715,6 +2868,10 @@ function panelDensity(value: any): KdbPanelDensity {
   return value === 'compact' || value === 'comfortable' ? value : 'standard';
 }
 
+function panelElapsedTimeDisplay(value: any): KdbPanelElapsedTimeDisplay {
+  return value === 'milliseconds' ? 'milliseconds' : 'auto';
+}
+
 function numberSettingUpdate(value: any, min: number, max: number): number | null {
   const number = Number(value);
   if (!Number.isFinite(number)) {
@@ -2726,6 +2883,10 @@ function numberSettingUpdate(value: any, min: number, max: number): number | nul
 
 function densitySettingUpdate(value: any): string | null {
   return value === 'compact' || value === 'standard' || value === 'comfortable' ? value : null;
+}
+
+function elapsedTimeDisplaySettingUpdate(value: any): string | null {
+  return value === 'auto' || value === 'milliseconds' ? value : null;
 }
 
 function booleanSettingUpdate(value: any): boolean | null {

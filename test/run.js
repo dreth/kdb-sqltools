@@ -61,6 +61,62 @@ function htmlSelectOptions(source, selectId) {
   return matches.map(match => match.replace(/^<option value="([^"]+)">.*$/, '$1'));
 }
 
+function panelScrollState(physicalScrollTop, viewportHeight, rowCount, currentLayout, maxScrollPixels, scrollEndEpsilon) {
+  const virtualContentHeight = currentLayout.headerHeight + rowCount * currentLayout.rowHeight;
+  const physicalContentHeight = Math.min(virtualContentHeight, maxScrollPixels);
+  const canvasHeight = Math.max(physicalContentHeight, viewportHeight);
+  const virtualScrollableHeight = Math.max(0, virtualContentHeight - viewportHeight);
+  const physicalScrollableHeight = Math.max(0, canvasHeight - viewportHeight);
+  const compressed = virtualScrollableHeight > physicalScrollableHeight && physicalScrollableHeight > 0;
+  const physicalTop = clampTestNumber(physicalScrollTop, 0, physicalScrollableHeight);
+  const atVerticalScrollEnd = physicalScrollableHeight > 0 && physicalTop >= physicalScrollableHeight - scrollEndEpsilon;
+  const virtualTop = compressed
+    ? atVerticalScrollEnd
+      ? virtualScrollableHeight
+      : physicalTop * (virtualScrollableHeight / physicalScrollableHeight)
+    : physicalTop;
+  return {
+    canvasHeight,
+    compressed,
+    physicalTop,
+    virtualTop,
+    virtualScrollableHeight,
+    physicalScrollableHeight,
+    rowOffset: Math.max(0, virtualTop - currentLayout.headerHeight),
+  };
+}
+
+function panelPhysicalScrollTopForVirtual(state, virtualTop, scrollEndEpsilon) {
+  const target = clampTestNumber(virtualTop, 0, state.virtualScrollableHeight);
+  if (!state.compressed || state.virtualScrollableHeight <= 0) {
+    return target;
+  }
+  if (target >= state.virtualScrollableHeight - scrollEndEpsilon) {
+    return state.physicalScrollableHeight;
+  }
+  return target * (state.physicalScrollableHeight / state.virtualScrollableHeight);
+}
+
+function clampTestNumber(value, min, max) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.min(Math.max(number, min), max) : min;
+}
+
+function panelFormatElapsedMs(milliseconds, display) {
+  const value = Math.max(0, Math.floor(Number(milliseconds) || 0));
+  if (display === 'milliseconds' || value < 1000) {
+    return value + ' ms';
+  }
+  if (value < 60000) {
+    const seconds = value / 1000;
+    return (value < 10000 && value % 1000 !== 0 ? seconds.toFixed(1) : String(Math.round(seconds))) + ' s';
+  }
+  const totalSeconds = Math.round(value / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes + 'm' + (seconds > 0 ? ' ' + seconds + 's' : '');
+}
+
 (async () => {
   assert.strictEqual(
     serializeTextQuery('1+1').toString('hex'),
@@ -446,6 +502,30 @@ function htmlSelectOptions(source, selectId) {
   assert.deepStrictEqual(visibleIndexRange(280, 140, 28, 100, 2), { start: 8, end: 17 });
   assert.deepStrictEqual(visibleIndexRange(-100, 140, 28, 100, 2), { start: 0, end: 4 });
   assert.deepStrictEqual(visibleIndexRange(0, 0, 28, 100, 2), { start: 0, end: -1 });
+  assert.strictEqual(panelFormatElapsedMs(123, 'auto'), '123 ms');
+  assert.strictEqual(panelFormatElapsedMs(1500, 'auto'), '1.5 s');
+  assert.strictEqual(panelFormatElapsedMs(63000, 'auto'), '1m 3s');
+  assert.strictEqual(panelFormatElapsedMs(63000, 'milliseconds'), '63000 ms');
+  [1, 10, 1800000, 10000000].forEach(rowCount => {
+    [20, 24, 28, 32, 80].forEach(rowHeight => {
+      const viewportHeight = 600;
+      const state = panelScrollState(
+        Number.MAX_SAFE_INTEGER,
+        viewportHeight,
+        rowCount,
+        { headerHeight: Math.min(Math.max(rowHeight + 4, 24), 88), rowHeight },
+        8000000,
+        1
+      );
+      const rows = visibleIndexRange(state.rowOffset, viewportHeight, rowHeight, rowCount, 8);
+      assert.strictEqual(rows.end, rowCount - 1, `physical max must reach final row for ${rowCount} rows at ${rowHeight}px`);
+      assert.strictEqual(
+        panelPhysicalScrollTopForVirtual(state, state.virtualScrollableHeight, 1),
+        state.physicalScrollableHeight,
+        'virtual max must reverse-map to physical max'
+      );
+    });
+  });
   assert.deepStrictEqual(
     exportShape({ startRow: 0, endRow: 1048574, startColumn: 0, endColumn: 16382 }, {
       includeHeaders: true,
@@ -486,11 +566,15 @@ function htmlSelectOptions(source, selectId) {
   assert.strictEqual(resultsPanelSource.includes('innerHTML'), false, 'kdb results panel must not render grid cells via innerHTML');
   assert.strictEqual(resultsPanelSource.includes(' style="'), false, 'kdb results panel must not rely on inline style attributes for virtual grid positioning');
   assert.strictEqual(resultsPanelSource.includes('createElement'), true, 'kdb results panel should create positioned grid cells as DOM nodes');
-  assert.strictEqual(resultsPanelSource.includes('const MAX_SCROLL_PIXELS = 24000000;'), true);
+  assert.strictEqual(resultsPanelSource.includes('const MAX_SCROLL_PIXELS = 8000000;'), true);
+  assert.strictEqual(resultsPanelSource.includes('const SCROLL_END_EPSILON = 1;'), true);
   assert.strictEqual(resultsPanelSource.includes('function scrollState(physicalScrollTop, viewportHeight, rowCount, currentLayout)'), true);
   assert.strictEqual(resultsPanelSource.includes('const physicalContentHeight = Math.min(virtualContentHeight, MAX_SCROLL_PIXELS);'), true);
+  assert.strictEqual(resultsPanelSource.includes('const atVerticalScrollEnd = physicalScrollableHeight > 0 && physicalTop >= physicalScrollableHeight - SCROLL_END_EPSILON;'), true);
+  assert.strictEqual(resultsPanelSource.includes('? virtualScrollableHeight'), true);
   assert.strictEqual(resultsPanelSource.includes('physicalTop * (virtualScrollableHeight / physicalScrollableHeight)'), true);
   assert.strictEqual(resultsPanelSource.includes('function physicalScrollTopForVirtual(state, virtualTop)'), true);
+  assert.strictEqual(resultsPanelSource.includes('return state.physicalScrollableHeight;'), true);
   assert.strictEqual(resultsPanelSource.includes('target * (state.physicalScrollableHeight / state.virtualScrollableHeight)'), true);
   assert.strictEqual(resultsPanelSource.includes('function horizontalScrollState(physicalScrollLeft, viewportWidth, totalWidth)'), true);
   assert.strictEqual(resultsPanelSource.includes('const physicalContentWidth = Math.min(virtualContentWidth, MAX_SCROLL_PIXELS);'), true);
@@ -523,6 +607,20 @@ function htmlSelectOptions(source, selectId) {
   assert.strictEqual(resultsPanelSource.includes('largeCopyExportConfirmationMessage'), true);
   assert.strictEqual(resultsPanelSource.includes("showWarningMessage(message, 'Continue', 'Cancel')"), true);
   assert.strictEqual(resultsPanelSource.includes('validateXlsxSheetLimits(clamped, { includeHeaders, includeRowIndex })'), true);
+  assert.strictEqual(resultsPanelSource.includes('id="largeResultWarning"'), true);
+  assert.strictEqual(resultsPanelSource.includes('function updateLargeResultWarning()'), true);
+  assert.strictEqual(resultsPanelSource.includes("message.type === 'hideLargeResultWarningOnce'"), true);
+  assert.strictEqual(resultsPanelSource.includes("type: 'hideLargeResultWarningOnce'"), true);
+  assert.strictEqual(resultsPanelSource.includes('private hideLargeResultWarningOnce = false;'), true);
+  assert.strictEqual(resultsPanelSource.includes('parts.push(value.guardrailMessage)'), false);
+  assert.strictEqual(resultsPanelSource.includes("className = 'message-actions'"), false);
+  assert.strictEqual(resultsPanelSource.includes('function formatElapsedMs(milliseconds, display)'), true);
+  assert.strictEqual(resultsPanelSource.includes("display === 'milliseconds'"), true);
+  assert.strictEqual(resultsPanelSource.includes("formatElapsedMs(data.elapsedMs, settings.elapsedTimeDisplay)"), true);
+  assert.strictEqual(resultsPanelSource.includes("Sort and Don't Warn Again"), true);
+  assert.strictEqual(resultsPanelSource.includes("'hideLargeSortWarnings'"), true);
+  assert.strictEqual(resultsPanelSource.includes("return 'Selected: 1 cell';"), true);
+  assert.strictEqual(resultsPanelSource.includes("return 'Range '"), false);
   assert.strictEqual(kdbResultsSource.includes('XLSX_MAX_ROWS = 1048576'), true);
   assert.strictEqual(kdbResultsSource.includes('XLSX_MAX_COLUMNS = 16384'), true);
   assert.strictEqual(extensionSource.includes('driver.query(text, {})'), false, 'kdbPanel execution must not use row-object SQLTools driver.query');
@@ -541,7 +639,14 @@ function htmlSelectOptions(source, selectId) {
   assert.strictEqual(resultSettings['kdb-sqltools.results.includeRowIndex'].default, true);
   assert.strictEqual(resultSettings['kdb-sqltools.results.hideLargeResultWarnings'].type, 'boolean');
   assert.strictEqual(resultSettings['kdb-sqltools.results.hideLargeResultWarnings'].default, false);
+  assert.strictEqual(resultSettings['kdb-sqltools.results.hideLargeSortWarnings'].type, 'boolean');
+  assert.strictEqual(resultSettings['kdb-sqltools.results.hideLargeSortWarnings'].default, false);
+  assert.strictEqual(resultSettings['kdb-sqltools.results.elapsedTimeDisplay'].type, 'string');
+  assert.strictEqual(resultSettings['kdb-sqltools.results.elapsedTimeDisplay'].default, 'auto');
+  assert.deepStrictEqual(resultSettings['kdb-sqltools.results.elapsedTimeDisplay'].enum, ['auto', 'milliseconds']);
   assert.strictEqual(resultsPanelSource.includes('settingsHideLargeResultWarnings'), true);
+  assert.strictEqual(resultsPanelSource.includes('settingsHideLargeSortWarnings'), true);
+  assert.strictEqual(resultsPanelSource.includes('settingsElapsedTimeDisplay'), true);
   assert.strictEqual(resultsPanelSource.includes('Hide forever'), true);
   assert.deepStrictEqual(
     [
@@ -576,6 +681,9 @@ function htmlSelectOptions(source, selectId) {
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('includeHeaders', false), { key: 'includeHeaders', value: false });
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('includeHeaders', 'false'), null);
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('hideLargeResultWarnings', true), { key: 'hideLargeResultWarnings', value: true });
+  assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('hideLargeSortWarnings', true), { key: 'hideLargeSortWarnings', value: true });
+  assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('elapsedTimeDisplay', 'milliseconds'), { key: 'elapsedTimeDisplay', value: 'milliseconds' });
+  assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('elapsedTimeDisplay', 'seconds'), null);
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('constructor', 1), null);
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('__proto__', true), null);
   const xlsxColumnar = rowsToColumnarPanelResult([{ note: 'x\u0001<&>"\'' }], ['note']);

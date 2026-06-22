@@ -109,11 +109,14 @@ kdb panel settings:
   "kdb-sqltools.results.density": "standard",
   "kdb-sqltools.results.showRowIndex": true,
   "kdb-sqltools.results.includeHeaders": true,
-  "kdb-sqltools.results.includeRowIndex": true
+  "kdb-sqltools.results.includeRowIndex": true,
+  "kdb-sqltools.results.hideLargeResultWarnings": false,
+  "kdb-sqltools.results.hideLargeSortWarnings": false,
+  "kdb-sqltools.results.elapsedTimeDisplay": "auto"
 }
 ```
 
-`fontSize: 0` uses the VS Code default. Density can be `compact`, `standard`, or `comfortable`. `showRowIndex` controls the visible left row-number column; `includeHeaders` and `includeRowIndex` control default copy/export output.
+`fontSize: 0` uses the VS Code default. Density can be `compact`, `standard`, or `comfortable`. `elapsedTimeDisplay` can be `auto` or `milliseconds`. `showRowIndex` controls the visible left row-number column; `includeHeaders` and `includeRowIndex` control default copy/export output. Large-result and large-sort warnings can be suppressed from the panel or these settings.
 
 ## Performance Trace
 

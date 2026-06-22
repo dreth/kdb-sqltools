@@ -234,6 +234,24 @@
           "type": "boolean",
           "default": false,
           "description": "Hide large-result guardrail messages in the kdb results panel."
+        },
+        "kdb-sqltools.results.hideLargeSortWarnings": {
+          "type": "boolean",
+          "default": false,
+          "description": "Skip large-result sort confirmation warnings in the kdb results panel."
+        },
+        "kdb-sqltools.results.elapsedTimeDisplay": {
+          "type": "string",
+          "default": "auto",
+          "enum": [
+            "auto",
+            "milliseconds"
+          ],
+          "enumDescriptions": [
+            "Show elapsed time as milliseconds, seconds, or minutes depending on duration.",
+            "Always show raw elapsed milliseconds."
+          ],
+          "description": "Elapsed time display format in the kdb results panel."
         }
       }
     }
