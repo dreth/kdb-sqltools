@@ -1218,6 +1218,7 @@ export class KdbResultsPanel {
       const INDEX_WIDTH = 64;
       const OVERSCAN_ROWS = 8;
       const OVERSCAN_COLUMNS = 2;
+      const MAX_SCROLL_PIXELS = 24000000;
       const DEFAULT_SETTINGS = {
         cellWidth: 160,
         rowHeight: 28,
@@ -1540,14 +1541,15 @@ export class KdbResultsPanel {
         if (row < 0 || row >= data.rowCount) {
           return;
         }
+        const state = scrollStateForViewport();
         const top = layout.headerHeight + row * layout.rowHeight;
         const bottom = top + layout.rowHeight;
-        const visibleTop = viewport.scrollTop + layout.headerHeight;
-        const visibleBottom = viewport.scrollTop + viewport.clientHeight;
+        const visibleTop = state.virtualTop + layout.headerHeight;
+        const visibleBottom = state.virtualTop + viewport.clientHeight;
         if (top < visibleTop) {
-          viewport.scrollTop = Math.max(0, top - layout.headerHeight);
+          viewport.scrollTop = physicalScrollTopForVirtual(state, Math.max(0, top - layout.headerHeight));
         } else if (bottom > visibleBottom) {
-          viewport.scrollTop = Math.max(0, bottom - viewport.clientHeight);
+          viewport.scrollTop = physicalScrollTopForVirtual(state, Math.max(0, bottom - viewport.clientHeight));
         }
       }
 
@@ -1788,17 +1790,54 @@ export class KdbResultsPanel {
         const columnCount = data.columns.length;
         const rowCount = data.rowCount;
         const totalWidth = layout.indexWidth + columnCount * layout.cellWidth;
-        const totalHeight = layout.headerHeight + rowCount * layout.rowHeight;
+        const state = scrollStateForViewport();
         canvas.style.width = Math.max(totalWidth, viewport.clientWidth) + 'px';
-        canvas.style.height = Math.max(totalHeight, viewport.clientHeight) + 'px';
+        canvas.style.height = state.canvasHeight + 'px';
+        if (viewport.scrollTop !== state.physicalTop) {
+          viewport.scrollTop = state.physicalTop;
+        }
         empty.hidden = rowCount !== 0 || columnCount !== 0;
         empty.style.top = layout.headerHeight + 'px';
 
-        const rows = visibleRange(Math.max(0, viewport.scrollTop - layout.headerHeight), viewport.clientHeight, layout.rowHeight, rowCount, OVERSCAN_ROWS);
+        const rows = visibleRange(state.rowOffset, viewport.clientHeight, layout.rowHeight, rowCount, OVERSCAN_ROWS);
         const columns = visibleColumns();
         renderHeader(columns);
         requestSlice(rows, columns);
         renderRows(rows, columns);
+      }
+
+      function scrollStateForViewport() {
+        return scrollState(viewport.scrollTop, viewport.clientHeight, data.rowCount, layout);
+      }
+
+      function scrollState(physicalScrollTop, viewportHeight, rowCount, currentLayout) {
+        const virtualContentHeight = currentLayout.headerHeight + rowCount * currentLayout.rowHeight;
+        const physicalContentHeight = Math.min(virtualContentHeight, MAX_SCROLL_PIXELS);
+        const canvasHeight = Math.max(physicalContentHeight, viewportHeight);
+        const virtualScrollableHeight = Math.max(0, virtualContentHeight - viewportHeight);
+        const physicalScrollableHeight = Math.max(0, canvasHeight - viewportHeight);
+        const compressed = virtualScrollableHeight > physicalScrollableHeight && physicalScrollableHeight > 0;
+        const physicalTop = clampNumber(physicalScrollTop, 0, physicalScrollableHeight);
+        const virtualTop = compressed
+          ? physicalTop * (virtualScrollableHeight / physicalScrollableHeight)
+          : physicalTop;
+        return {
+          canvasHeight,
+          compressed,
+          physicalTop,
+          virtualTop,
+          virtualScrollableHeight,
+          physicalScrollableHeight,
+          rowOffset: Math.max(0, virtualTop - currentLayout.headerHeight)
+        };
+      }
+
+      function physicalScrollTopForVirtual(state, virtualTop) {
+        const target = clampNumber(virtualTop, 0, state.virtualScrollableHeight);
+        if (!state.compressed || state.virtualScrollableHeight <= 0) {
+          return target;
+        }
+        return target * (state.physicalScrollableHeight / state.virtualScrollableHeight);
       }
 
       function visibleColumns() {
@@ -1874,6 +1913,7 @@ export class KdbResultsPanel {
       }
 
       function renderRows(rows, columns) {
+        const state = scrollStateForViewport();
         const range = normalizedSelection();
         const hasCells = sliceCovers(slice, rows, columns);
         const fragment = document.createDocumentFragment();
@@ -1881,7 +1921,7 @@ export class KdbResultsPanel {
           const rowElement = document.createElement('div');
           rowElement.className = 'row';
           rowElement.setAttribute('role', 'row');
-          rowElement.style.top = (layout.headerHeight + row * layout.rowHeight) + 'px';
+          rowElement.style.top = renderedRowTop(row, state, layout) + 'px';
           rowElement.style.width = canvas.style.width;
           const searchMatched = isSearchMatchedRow(row);
           const searchActive = isActiveSearchRow(row);
@@ -1921,6 +1961,10 @@ export class KdbResultsPanel {
         }
         rowsLayer.textContent = '';
         rowsLayer.appendChild(fragment);
+      }
+
+      function renderedRowTop(row, state, currentLayout) {
+        return state.physicalTop + currentLayout.headerHeight + row * currentLayout.rowHeight - state.virtualTop;
       }
 
       function createCell(options) {
@@ -2258,6 +2302,11 @@ export class KdbResultsPanel {
 
       function clampInteger(value, min, max) {
         return Math.min(Math.max(Math.floor(value), min), max);
+      }
+
+      function clampNumber(value, min, max) {
+        const number = Number(value);
+        return Number.isFinite(number) ? Math.min(Math.max(number, min), max) : min;
       }
 
       vscode.postMessage({ type: 'ready' });

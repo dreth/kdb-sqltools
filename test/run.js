@@ -483,6 +483,16 @@ function htmlSelectOptions(source, selectId) {
   assert.strictEqual(resultsPanelSource.includes('innerHTML'), false, 'kdb results panel must not render grid cells via innerHTML');
   assert.strictEqual(resultsPanelSource.includes(' style="'), false, 'kdb results panel must not rely on inline style attributes for virtual grid positioning');
   assert.strictEqual(resultsPanelSource.includes('createElement'), true, 'kdb results panel should create positioned grid cells as DOM nodes');
+  assert.strictEqual(resultsPanelSource.includes('const MAX_SCROLL_PIXELS = 24000000;'), true);
+  assert.strictEqual(resultsPanelSource.includes('function scrollState(physicalScrollTop, viewportHeight, rowCount, currentLayout)'), true);
+  assert.strictEqual(resultsPanelSource.includes('const physicalContentHeight = Math.min(virtualContentHeight, MAX_SCROLL_PIXELS);'), true);
+  assert.strictEqual(resultsPanelSource.includes('physicalTop * (virtualScrollableHeight / physicalScrollableHeight)'), true);
+  assert.strictEqual(resultsPanelSource.includes('function physicalScrollTopForVirtual(state, virtualTop)'), true);
+  assert.strictEqual(resultsPanelSource.includes('target * (state.physicalScrollableHeight / state.virtualScrollableHeight)'), true);
+  assert.strictEqual(resultsPanelSource.includes("canvas.style.height = state.canvasHeight + 'px';"), true);
+  assert.strictEqual(resultsPanelSource.includes('const rows = visibleRange(state.rowOffset'), true);
+  assert.strictEqual(resultsPanelSource.includes('rowElement.style.top = renderedRowTop(row, state, layout)'), true);
+  assert.strictEqual(resultsPanelSource.includes('rowElement.style.top = (layout.headerHeight + row * layout.rowHeight)'), false);
   assert.deepStrictEqual(htmlSelectOptions(resultsPanelSource, 'copyFormat'), ['csv', 'tsv', 'json', 'ndjson', 'html']);
   assert.deepStrictEqual(htmlSelectOptions(resultsPanelSource, 'exportFormat'), ['csv', 'xlsx', 'tsv', 'json', 'ndjson', 'html']);
   assert.strictEqual(/parquet/i.test([resultsPanelSource, kdbResultsSource, readmeSource, packageSource].join('\n')), false);
