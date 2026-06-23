@@ -1402,6 +1402,11 @@ export class KdbResultsPanel {
       line-height: var(--header-height);
       font-weight: 600;
       background: var(--vscode-editorGroupHeader-tabsBackground);
+      transition: background-color 80ms ease, box-shadow 80ms ease, opacity 80ms ease, transform 80ms ease;
+    }
+    .header.drag-active,
+    .header.drag-active .cell {
+      cursor: grabbing;
     }
     .resize-handle {
       position: absolute;
@@ -1416,10 +1421,31 @@ export class KdbResultsPanel {
       background: var(--vscode-focusBorder);
     }
     .header .cell.drag-source {
-      opacity: 0.7;
+      opacity: 0.68;
+      transform: translateY(-2px);
+      z-index: 6;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25), inset 0 0 0 1px var(--vscode-focusBorder);
     }
     .header .cell.drag-target {
+      background: var(--vscode-list-hoverBackground, var(--vscode-editorGroupHeader-tabsBackground));
       box-shadow: inset 0 0 0 1px var(--vscode-focusBorder);
+    }
+    .header .cell.drag-target-before::before,
+    .header .cell.drag-target-after::after {
+      content: "";
+      position: absolute;
+      top: 3px;
+      bottom: 3px;
+      width: 3px;
+      border-radius: 2px;
+      background: var(--vscode-focusBorder);
+      box-shadow: 0 0 0 1px var(--vscode-editor-background);
+    }
+    .header .cell.drag-target-before::before {
+      left: 0;
+    }
+    .header .cell.drag-target-after::after {
+      right: 0;
     }
     .index {
       color: var(--vscode-descriptionForeground);
@@ -1659,6 +1685,12 @@ export class KdbResultsPanel {
       includeRowIndex.addEventListener('change', () => updateSetting('includeRowIndex', !!includeRowIndex.checked));
       autoFit.addEventListener('change', () => setAutoFitEnabled(!!autoFit.checked));
       interactionMode.addEventListener('change', () => {
+        if (dragMode === 'reorder') {
+          dragging = false;
+          dragMode = '';
+          clearColumnDragState();
+          status.textContent = '';
+        }
         updateSortStatus();
         renderNow();
       });
@@ -1733,8 +1765,8 @@ export class KdbResultsPanel {
           finishColumnReorder();
         }
         dragging = false;
+        clearColumnDragState();
         dragMode = '';
-        columnDragState = null;
         requestRender();
       });
       window.addEventListener('resize', requestRender);
@@ -1825,8 +1857,8 @@ export class KdbResultsPanel {
         lastRenderedColumns = emptyColumnRange();
         selection = null;
         dragging = false;
+        clearColumnDragState();
         dragMode = '';
-        columnDragState = null;
         latestRequestId = 0;
         pendingRequestKey = '';
       }
@@ -2576,6 +2608,7 @@ export class KdbResultsPanel {
       }
 
       function renderHeader(columns, horizontalState, metrics) {
+        header.className = columnDragState && dragMode === 'reorder' ? 'header drag-active' : 'header';
         const range = normalizedSelection();
         const cells = layout.showRowIndex ? [createCell({
           text: '#',
@@ -2604,7 +2637,8 @@ export class KdbResultsPanel {
             width,
             headerCell: true,
             selected: isColumnSelected(column, range),
-            className: headerCellClassName(column)
+            className: headerCellClassName(column),
+            title: headerCellTitle(column)
           }));
         }
         return cells;
@@ -2616,8 +2650,27 @@ export class KdbResultsPanel {
           className += ' drag-source';
         } else if (columnDragState && columnDragState.targetColumn === column) {
           className += ' drag-target';
+          const position = columnDragDropPosition();
+          if (position) {
+            className += ' drag-target-' + position;
+          }
         }
         return className;
+      }
+
+      function headerCellTitle(column) {
+        const text = data.columns[column] || '';
+        if (!columnDragState || dragMode !== 'reorder') {
+          return text;
+        }
+        if (columnDragState.sourceColumn === column) {
+          return 'Dragging ' + text;
+        }
+        if (columnDragState.targetColumn === column) {
+          const position = columnDragDropPosition();
+          return position ? 'Drop ' + position + ' ' + text : text;
+        }
+        return text;
       }
 
       function renderRows(rows, columns, verticalState, horizontalState, metrics) {
@@ -2685,7 +2738,7 @@ export class KdbResultsPanel {
         cell.style.left = options.left + 'px';
         cell.style.top = options.top + 'px';
         cell.style.width = options.width + 'px';
-        cell.title = String(options.text || '');
+        cell.title = String(options.title || options.text || '');
         cell.textContent = String(options.text || '');
         if (options.headerCell && options.column >= 0) {
           const handle = document.createElement('span');
@@ -2785,8 +2838,8 @@ export class KdbResultsPanel {
         const column = Number(event.currentTarget.dataset.column);
         if (headerMode() === 'sort') {
           dragging = false;
+          clearColumnDragState();
           dragMode = '';
-          columnDragState = null;
           status.textContent = '';
           vscode.postMessage({
             type: 'sortColumn',
@@ -2800,11 +2853,7 @@ export class KdbResultsPanel {
         if (headerMode() === 'drag') {
           dragging = true;
           dragMode = 'reorder';
-          columnDragState = {
-            sourceColumn: column,
-            targetColumn: column
-          };
-          status.textContent = 'Drag column to reorder';
+          beginColumnReorder(column);
           viewport.focus();
           renderNow();
           event.preventDefault();
@@ -2821,8 +2870,7 @@ export class KdbResultsPanel {
 
       function onColumnMouseEnter(event) {
         if (dragging && dragMode === 'reorder' && columnDragState) {
-          columnDragState.targetColumn = Number(event.currentTarget.dataset.column);
-          renderNow();
+          updateColumnDragTarget(Number(event.currentTarget.dataset.column));
           return;
         }
         if (!dragging || dragMode !== 'column' || !selection) {
@@ -2831,6 +2879,53 @@ export class KdbResultsPanel {
         selection.focusRow = data.rowCount - 1;
         selection.focusColumn = Number(event.currentTarget.dataset.column);
         updateSelection();
+      }
+
+      function beginColumnReorder(column) {
+        columnDragState = {
+          sourceColumn: column,
+          targetColumn: column
+        };
+        document.body.style.cursor = 'grabbing';
+        status.textContent = columnDragStatusText();
+      }
+
+      function updateColumnDragTarget(column) {
+        if (!columnDragState || columnDragState.targetColumn === column) {
+          return;
+        }
+        columnDragState.targetColumn = column;
+        status.textContent = columnDragStatusText();
+        renderNow();
+      }
+
+      function clearColumnDragState() {
+        if (!columnDragState) {
+          return;
+        }
+        columnDragState = null;
+        document.body.style.cursor = '';
+      }
+
+      function columnDragDropPosition() {
+        if (!columnDragState) {
+          return '';
+        }
+        const sourceColumn = Number(columnDragState.sourceColumn);
+        const targetColumn = Number(columnDragState.targetColumn);
+        if (!Number.isFinite(sourceColumn) || !Number.isFinite(targetColumn) || sourceColumn === targetColumn) {
+          return '';
+        }
+        return sourceColumn < targetColumn ? 'after' : 'before';
+      }
+
+      function columnDragStatusText() {
+        const position = columnDragDropPosition();
+        if (!position || !columnDragState) {
+          return 'Drag column to reorder';
+        }
+        const targetColumnName = data.columns[columnDragState.targetColumn] || '';
+        return targetColumnName ? 'Drop ' + position + ' ' + targetColumnName : 'Drag column to reorder';
       }
 
       function finishColumnReorder() {
