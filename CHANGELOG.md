@@ -1,5 +1,13 @@
 # Change Log
 
+## 0.2.7
+
+- Kept focus in the q editor while kdb result panels update after running queries.
+- Added kdb table viewport right-click Copy support using the same selected-range copy path as `Ctrl/Cmd+C`.
+- Added command-palette feedback commands for bug reports, feature requests, and general feedback with prefilled GitHub issue links.
+- Documented feedback links and clarified that VS Code settings cannot host extension feedback buttons.
+- Re-verified new kdb result panels continue to open beside existing result panels when available.
+
 ## 0.2.6
 
 - Changed new kdb result tabs to open in the same editor group as an existing kdb result panel when one is available, so `Ctrl/Cmd+Shift+Enter` keeps bottom/result layouts intact instead of opening beside the active script editor.
