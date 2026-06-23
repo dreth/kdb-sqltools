@@ -6,12 +6,13 @@ import { selectedTextOrCurrentLine } from './q-text';
 import KdbDriver from './ls/driver';
 import { emptyColumnarPanelResult } from './kdb-results';
 import { QValue, qValueToColumnarPanel } from './ls/q-ipc';
-import { KdbPanelResult, KdbResultsPanel } from './results-panel';
+import { KdbPanelResult, KdbResultsPanel, KdbResultsPanelRunMode } from './results-panel';
 import { configurePerfTrace, endPerfSpan, perfSpan } from './perf';
 const { publisher, name, displayName } = require('../package.json');
 
 const SQLTOOLS_EXECUTE_QUERY = 'sqltools.executeQuery';
 const RESULTS_TARGET_SETTING = 'results.target';
+const KDB_PANEL_DEFAULT_RUN_MODE_SETTING = 'results.kdbPanel.defaultRunMode';
 const PERFORMANCE_TRACE_SETTING = 'performance.trace';
 const LAST_PANEL_CONNECTION_KEY = 'kdb-sqltools.lastPanelConnectionId';
 const OPEN_USER_SETTINGS_JSON_ACTION = 'Open User Settings JSON';
@@ -45,6 +46,11 @@ export async function activate(extContext: ExtensionContext): Promise<IDriverExt
     vscode.commands.registerCommand('kdb-sqltools.runSelectionOrBlockInSqltools', () => runQSelectionOrLine(extContext, 'sqltools')),
     vscode.commands.registerCommand('kdb-sqltools.runFileInKdbPanel', () => runQFile(extContext, 'kdbPanel')),
     vscode.commands.registerCommand('kdb-sqltools.runSelectionOrBlockInKdbPanel', () => runQSelectionOrLine(extContext, 'kdbPanel')),
+    vscode.commands.registerCommand('kdb-sqltools.runFileInKdbPanelReplace', () => runQFile(extContext, 'kdbPanel', 'replace')),
+    vscode.commands.registerCommand('kdb-sqltools.runSelectionOrBlockInKdbPanelReplace', () => runQSelectionOrLine(extContext, 'kdbPanel', 'replace')),
+    vscode.commands.registerCommand('kdb-sqltools.runFileInNewKdbPanel', () => runQFile(extContext, 'kdbPanel', 'new')),
+    vscode.commands.registerCommand('kdb-sqltools.runSelectionOrBlockInNewKdbPanel', () => runQSelectionOrLine(extContext, 'kdbPanel', 'new')),
+    vscode.commands.registerCommand('kdb-sqltools.openKeyboardShortcuts', openKeyboardShortcuts),
     vscode.commands.registerCommand('kdb-sqltools.copyExampleConnectionSettings', copyExampleConnectionSettings),
     vscode.languages.registerCodeLensProvider([{ language: 'q' }, { pattern: '**/*.q' }], new QRunCodeLensProvider())
   );
@@ -82,17 +88,25 @@ export async function activate(extContext: ExtensionContext): Promise<IDriverExt
 
 export function deactivate() {}
 
-async function runQFile(extContext: ExtensionContext, target?: ResultsTarget): Promise<void> {
+async function runQFile(
+  extContext: ExtensionContext,
+  target?: ResultsTarget,
+  kdbPanelMode?: KdbResultsPanelRunMode
+): Promise<void> {
   const editor = vscode.window.activeTextEditor;
   if (!editor) {
     vscode.window.showWarningMessage('Open a q file before running q code.');
     return;
   }
 
-  await executeQText(extContext, editor.document.getText(), target);
+  await executeQText(extContext, editor.document.getText(), target, kdbPanelMode);
 }
 
-async function runQSelectionOrLine(extContext: ExtensionContext, target?: ResultsTarget): Promise<void> {
+async function runQSelectionOrLine(
+  extContext: ExtensionContext,
+  target?: ResultsTarget,
+  kdbPanelMode?: KdbResultsPanelRunMode
+): Promise<void> {
   const editor = vscode.window.activeTextEditor;
   if (!editor) {
     vscode.window.showWarningMessage('Open a q file before running q code.');
@@ -101,10 +115,15 @@ async function runQSelectionOrLine(extContext: ExtensionContext, target?: Result
 
   const selectionText = editor.selection.isEmpty ? '' : editor.document.getText(editor.selection);
   const text = selectedTextOrCurrentLine(editor.document.getText(), selectionText, editor.selection.active.line);
-  await executeQText(extContext, text, target);
+  await executeQText(extContext, text, target, kdbPanelMode);
 }
 
-async function executeQText(extContext: ExtensionContext, text: string, target?: ResultsTarget): Promise<void> {
+async function executeQText(
+  extContext: ExtensionContext,
+  text: string,
+  target?: ResultsTarget,
+  kdbPanelMode?: KdbResultsPanelRunMode
+): Promise<void> {
   if (!text || text.trim().length === 0) {
     vscode.window.showWarningMessage('No q code selected to run.');
     return;
@@ -115,7 +134,7 @@ async function executeQText(extContext: ExtensionContext, text: string, target?:
     return;
   }
 
-  await executeQTextInKdbPanel(extContext, text);
+  await executeQTextInKdbPanel(extContext, text, kdbPanelMode || configuredKdbPanelRunMode());
 }
 
 function configuredResultsTarget(): ResultsTarget {
@@ -123,9 +142,18 @@ function configuredResultsTarget(): ResultsTarget {
   return target === 'sqltools' ? 'sqltools' : 'kdbPanel';
 }
 
+function configuredKdbPanelRunMode(): KdbResultsPanelRunMode {
+  const mode = vscode.workspace.getConfiguration('kdb-sqltools').get<string>(KDB_PANEL_DEFAULT_RUN_MODE_SETTING, 'new');
+  return mode === 'replace' ? 'replace' : 'new';
+}
+
 function updatePerfTraceSetting(): void {
   const enabled = vscode.workspace.getConfiguration('kdb-sqltools').get<boolean>(PERFORMANCE_TRACE_SETTING, false);
   configurePerfTrace(enabled);
+}
+
+async function openKeyboardShortcuts(): Promise<void> {
+  await vscode.commands.executeCommand('workbench.action.openGlobalKeybindings', 'kdb-sqltools');
 }
 
 async function copyExampleConnectionSettings(): Promise<void> {
@@ -160,13 +188,17 @@ function exampleGlobalConnectionSettings(): string {
   }, null, 2);
 }
 
-async function executeQTextInKdbPanel(extContext: ExtensionContext, text: string): Promise<void> {
+async function executeQTextInKdbPanel(
+  extContext: ExtensionContext,
+  text: string,
+  kdbPanelMode: KdbResultsPanelRunMode
+): Promise<void> {
   const connection = await pickKdbConnection(extContext);
   if (!connection) {
     return;
   }
 
-  KdbResultsPanel.showLoading(extContext, { query: text, connectionName: connection.name });
+  const panel = KdbResultsPanel.showLoading(extContext, { query: text, connectionName: connection.name }, kdbPanelMode);
 
   const driver = new KdbDriver(connection, async () => []);
   const started = Date.now();
@@ -221,10 +253,10 @@ async function executeQTextInKdbPanel(extContext: ExtensionContext, text: string
         endPerfSpan(panelResultSpan, { error: true });
       }
     }
-    KdbResultsPanel.showResult(extContext, panelResult);
+    panel.showResult(panelResult);
   } catch (error) {
     const err = toError(error);
-    KdbResultsPanel.showResult(extContext, {
+    panel.showResult({
       table: emptyColumnarPanelResult(),
       query: text,
       connectionName: connection.name,
