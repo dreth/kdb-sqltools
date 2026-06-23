@@ -1,8 +1,0 @@
-# GitHub Pages custom domains use a real docs/CNAME file containing exactly one domain.
-# Do not commit docs/CNAME until the exact target domain is confirmed.
-#
-# Example:
-# kdb-sqltools.dac.sg
-#
-# Alternative example:
-# kdb-sqltools.dac.ac

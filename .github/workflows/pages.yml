@@ -6,10 +6,12 @@ on:
       - main
     paths:
       - docs/**
+      - mkdocs.yml
       - .github/workflows/pages.yml
   pull_request:
     paths:
       - docs/**
+      - mkdocs.yml
       - .github/workflows/pages.yml
   workflow_dispatch:
 
@@ -23,47 +25,49 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  validate:
-    name: Validate static docs
+  build:
+    name: Build MkDocs
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Validate docs files
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.x'
+
+      - name: Install docs dependencies
         run: |
-          test -f docs/index.html
-          test -f docs/styles.css
-          test -f docs/README.md
-          if [ -f docs/CNAME ]; then
-            grep -Eq '^[A-Za-z0-9.-]+$' docs/CNAME
-          fi
-          ! grep -RInE '<script|https://.*(cdn|unpkg|jsdelivr)' docs/index.html docs/styles.css
+          python -m pip install --upgrade pip
+          pip install -r docs/requirements.txt
+
+      - name: Build docs
+        run: mkdocs build --strict
+
+      - name: Configure Pages
+        if: github.event_name != 'pull_request'
+        uses: actions/configure-pages@v6
+        with:
+          enablement: true
+
+      - name: Upload Pages artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: ./site
 
   deploy:
     name: Deploy Pages
     if: github.event_name != 'pull_request'
-    needs: validate
+    needs: build
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Configure Pages
-        uses: actions/configure-pages@v6
-        with:
-          enablement: true
-
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v5
-        with:
-          path: ./docs
-
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5

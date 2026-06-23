@@ -1,0 +1,62 @@
+# Settings
+
+Set these in VS Code User or Workspace settings JSON.
+
+## Result target and panel behavior
+
+| Setting | Default | Values | Use |
+| --- | --- | --- | --- |
+| `kdb-sqltools.results.target` | `kdbPanel` | `kdbPanel`, `sqltools` | Default target for `kdb+: Run q Script` and `kdb+: Run Selection`. |
+| `kdb-sqltools.results.kdbPanel.defaultRunMode` | `new` | `new`, `replace` | Whether default kdb panel runs open a new result tab or reuse an existing one. |
+| `kdb-sqltools.results.kdbPanel.initialViewColumn` | `active` | `active`, `beside`, `one`, `two`, `three` | Editor group for the first kdb result panel. Later new result tabs open beside existing kdb result tabs when possible. |
+| `kdb-sqltools.results.kdbPanel.arrayDisplayFormat` | `commaSpace` | `commaSpace`, `space`, `raw` | Array/list cell display. |
+| `kdb-sqltools.performance.trace` | `false` | `true`, `false` | Logs query timing and memory snapshots to the extension host console with the `[kdb-sqltools:perf]` prefix. |
+
+Array display examples:
+
+| Value | Display |
+| --- | --- |
+| `commaSpace` | `1, 2, 3` |
+| `space` | `1 2 3` |
+| `raw` | `[1 2 3]` where q-like bracketed display is available |
+
+## Panel size and density
+
+| Setting | Default | Use |
+| --- | --- | --- |
+| `kdb-sqltools.results.density` | `standard` | Active density preset: `compact`, `standard`, or `comfortable`. |
+| `kdb-sqltools.results.compact.cellWidth` | `140` | Compact density cell width in pixels. |
+| `kdb-sqltools.results.compact.rowHeight` | `24` | Compact density row height in pixels. |
+| `kdb-sqltools.results.compact.fontSize` | `0` | Compact density font size. `0` uses the VS Code default. |
+| `kdb-sqltools.results.standard.cellWidth` | `160` | Standard density cell width in pixels. |
+| `kdb-sqltools.results.standard.rowHeight` | `28` | Standard density row height in pixels. |
+| `kdb-sqltools.results.standard.fontSize` | `0` | Standard density font size. `0` uses the VS Code default. |
+| `kdb-sqltools.results.comfortable.cellWidth` | `180` | Comfortable density cell width in pixels. |
+| `kdb-sqltools.results.comfortable.rowHeight` | `32` | Comfortable density row height in pixels. |
+| `kdb-sqltools.results.comfortable.fontSize` | `0` | Comfortable density font size. `0` uses the VS Code default. |
+| `kdb-sqltools.results.cellWidth` | `160` | Legacy fallback cell width. Density-specific settings are used first. |
+| `kdb-sqltools.results.rowHeight` | `28` | Legacy fallback row height. Density-specific settings are used first. |
+| `kdb-sqltools.results.fontSize` | `0` | Legacy fallback font size. Density-specific settings are used first. |
+
+## Copy, export, and warnings
+
+| Setting | Default | Use |
+| --- | --- | --- |
+| `kdb-sqltools.results.showRowIndex` | `true` | Show the left row-number column in the panel. |
+| `kdb-sqltools.results.includeHeaders` | `true` | Include column headers by default when copying or exporting. |
+| `kdb-sqltools.results.includeRowIndex` | `true` | Include 1-based row numbers by default when copying or exporting. |
+| `kdb-sqltools.results.hideLargeResultWarnings` | `false` | Hide large-result guardrail messages in the panel. |
+| `kdb-sqltools.results.hideLargeSortWarnings` | `false` | Skip large-result sort confirmation warnings. |
+| `kdb-sqltools.results.elapsedTimeDisplay` | `auto` | Use `auto` or `milliseconds` for elapsed time display. |
+
+## Example
+
+```json
+{
+  "kdb-sqltools.results.target": "kdbPanel",
+  "kdb-sqltools.results.kdbPanel.defaultRunMode": "replace",
+  "kdb-sqltools.results.kdbPanel.arrayDisplayFormat": "space",
+  "kdb-sqltools.results.includeHeaders": true,
+  "kdb-sqltools.results.includeRowIndex": true
+}
+```

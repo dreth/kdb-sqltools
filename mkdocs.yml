@@ -1,0 +1,43 @@
+site_name: kdb-sqltools
+site_url: https://kdb-sqltools.dac.sg/
+repo_url: https://github.com/dreth/kdb-sqltools
+repo_name: dreth/kdb-sqltools
+site_description: Practical documentation for the SQLTools kdb driver.
+docs_dir: docs
+site_dir: site
+exclude_docs: |
+  README.md
+  requirements.txt
+
+theme:
+  name: material
+  features:
+    - navigation.instant
+    - navigation.sections
+    - navigation.top
+    - search.highlight
+    - search.suggest
+    - toc.follow
+    - content.code.copy
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - pymdownx.superfences
+  - pymdownx.highlight
+  - tables
+
+nav:
+  - Overview: index.md
+  - Installation: installation.md
+  - Connections: connections.md
+  - Running q: running-q.md
+  - Results panel: results-panel.md
+  - Copy and export: copy-export.md
+  - Settings: settings.md
+  - Troubleshooting: troubleshooting.md
+  - Feedback: feedback.md
