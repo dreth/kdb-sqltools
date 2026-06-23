@@ -24,7 +24,11 @@ export interface CellWindow {
 }
 
 export type RowValue = { [key: string]: unknown };
-export interface ExportOptions {
+export type ArrayDisplayFormat = 'commaSpace' | 'space' | 'raw';
+export interface CellTextOptions {
+  arrayDisplayFormat?: ArrayDisplayFormat;
+}
+export interface ExportOptions extends CellTextOptions {
   includeHeaders?: boolean;
   includeRowIndex?: boolean;
 }
@@ -42,8 +46,8 @@ export interface ColumnarPanelResult {
   columns: string[];
   rowCount: number;
   cellValue(rowIndex: number, columnIndex: number): unknown;
-  cellText(rowIndex: number, columnIndex: number): string;
-  cellWindow(rowRange: VisibleIndexRange, columnRange: VisibleIndexRange): CellWindow;
+  cellText(rowIndex: number, columnIndex: number, options?: CellTextOptions): string;
+  cellWindow(rowRange: VisibleIndexRange, columnRange: VisibleIndexRange, options?: CellTextOptions): CellWindow;
   toText(format: TextExportFormat, range: CellRange, optionsOrIncludeHeaders?: boolean | ExportOptions): string;
 }
 
@@ -153,7 +157,7 @@ export function rowsToTsv(
       headers.push(cellValueToText(rowIndexColumnName(columns, clamped)));
     }
     for (let columnIndex = clamped.startColumn; columnIndex <= clamped.endColumn; columnIndex++) {
-      headers.push(cellValueToText(columns[columnIndex]));
+      headers.push(cellValueToText(columns[columnIndex], options));
     }
     lines.push(headers.join('\t'));
   }
@@ -165,7 +169,7 @@ export function rowsToTsv(
       values.push(String(rowIndex + 1));
     }
     for (let columnIndex = clamped.startColumn; columnIndex <= clamped.endColumn; columnIndex++) {
-      values.push(cellValueToText(row[columns[columnIndex]]));
+      values.push(cellValueToText(row[columns[columnIndex]], options));
     }
     lines.push(values.join('\t'));
   }
@@ -191,7 +195,7 @@ export function rowsToCsv(
       headers.push(escapeCsvCell(cellValueToCsvText(rowIndexColumnName(columns, clamped))));
     }
     for (let columnIndex = clamped.startColumn; columnIndex <= clamped.endColumn; columnIndex++) {
-      headers.push(escapeCsvCell(cellValueToCsvText(columns[columnIndex])));
+      headers.push(escapeCsvCell(cellValueToCsvText(columns[columnIndex], options)));
     }
     lines.push(headers.join(','));
   }
@@ -203,7 +207,7 @@ export function rowsToCsv(
       values.push(String(rowIndex + 1));
     }
     for (let columnIndex = clamped.startColumn; columnIndex <= clamped.endColumn; columnIndex++) {
-      values.push(escapeCsvCell(cellValueToCsvText(row[columns[columnIndex]])));
+      values.push(escapeCsvCell(cellValueToCsvText(row[columns[columnIndex]], options)));
     }
     lines.push(values.join(','));
   }
@@ -259,7 +263,7 @@ export function rowsToHtml(
       parts.push('<th>', escapeHtml(cellValueToCsvText(rowIndexColumnName(columns, clamped))), '</th>');
     }
     for (let columnIndex = clamped.startColumn; columnIndex <= clamped.endColumn; columnIndex++) {
-      parts.push('<th>', escapeHtml(cellValueToCsvText(columns[columnIndex])), '</th>');
+      parts.push('<th>', escapeHtml(cellValueToCsvText(columns[columnIndex], options)), '</th>');
     }
     parts.push('</tr></thead>');
   }
@@ -272,7 +276,7 @@ export function rowsToHtml(
       parts.push('<td>', String(rowIndex + 1), '</td>');
     }
     for (let columnIndex = clamped.startColumn; columnIndex <= clamped.endColumn; columnIndex++) {
-      parts.push('<td>', escapeHtml(cellValueToCsvText(row[columns[columnIndex]])), '</td>');
+      parts.push('<td>', escapeHtml(cellValueToCsvText(row[columns[columnIndex]], options)), '</td>');
     }
     parts.push('</tr>');
   }
@@ -312,7 +316,7 @@ export function rowsToMarkdown(
       values.push(String(rowIndex + 1));
     }
     for (let columnIndex = clamped.startColumn; columnIndex <= clamped.endColumn; columnIndex++) {
-      values.push(escapeMarkdownTableCell(row[columns[columnIndex]]));
+      values.push(escapeMarkdownTableCell(row[columns[columnIndex]], options));
     }
     lines.push(markdownTableRow(values));
   }
@@ -361,11 +365,11 @@ export function createColumnarPanelResult(
       }
       return cellValue(rowIndex, columnIndex);
     },
-    cellText(rowIndex: number, columnIndex: number): string {
-      return cellValueToText(result.cellValue(rowIndex, columnIndex));
+    cellText(rowIndex: number, columnIndex: number, options?: CellTextOptions): string {
+      return cellValueToText(result.cellValue(rowIndex, columnIndex), options);
     },
-    cellWindow(rowRange: VisibleIndexRange, columnRange: VisibleIndexRange): CellWindow {
-      return columnarToCellWindow(result, rowRange, columnRange);
+    cellWindow(rowRange: VisibleIndexRange, columnRange: VisibleIndexRange, options?: CellTextOptions): CellWindow {
+      return columnarToCellWindow(result, rowRange, columnRange, options);
     },
     toText(format: TextExportFormat, range: CellRange, optionsOrIncludeHeaders: boolean | ExportOptions = true): string {
       return columnarToTextFormat(result, range, format, optionsOrIncludeHeaders);
@@ -423,7 +427,8 @@ export function applyColumnarRowOrder(result: ColumnarPanelResult, rowOrder: num
 export function sortedColumnarRowOrder(
   result: ColumnarPanelResult,
   columnIndex: number,
-  direction: ColumnarSortDirection
+  direction: ColumnarSortDirection,
+  options?: CellTextOptions
 ): number[] {
   if (columnIndex < 0 || columnIndex >= result.columns.length) {
     throw new RangeError(`Column index ${columnIndex} is outside ${result.columns.length} columns`);
@@ -432,7 +437,7 @@ export function sortedColumnarRowOrder(
   const texts: string[] = [];
   const rowOrder: number[] = [];
   for (let rowIndex = 0; rowIndex < result.rowCount; rowIndex++) {
-    texts[rowIndex] = result.cellText(rowIndex, columnIndex);
+    texts[rowIndex] = result.cellText(rowIndex, columnIndex, options);
     rowOrder.push(rowIndex);
   }
 
@@ -466,7 +471,8 @@ export function compareColumnarCellText(
 export function columnarToCellWindow(
   result: ColumnarPanelResult,
   rowRange: VisibleIndexRange,
-  columnRange: VisibleIndexRange
+  columnRange: VisibleIndexRange,
+  options?: CellTextOptions
 ): CellWindow {
   const clamped = clampCellRange(
     {
@@ -487,7 +493,7 @@ export function columnarToCellWindow(
   for (let rowIndex = clamped.startRow; rowIndex <= clamped.endRow; rowIndex++) {
     const values: string[] = [];
     for (let columnIndex = clamped.startColumn; columnIndex <= clamped.endColumn; columnIndex++) {
-      values.push(result.cellText(rowIndex, columnIndex));
+      values.push(result.cellText(rowIndex, columnIndex, options));
     }
     cells.push(values);
   }
@@ -539,7 +545,7 @@ function columnarToTsv(result: ColumnarPanelResult, range: CellRange, options: N
       headers.push(cellValueToText(rowIndexColumnName(result.columns, clamped)));
     }
     for (let columnIndex = clamped.startColumn; columnIndex <= clamped.endColumn; columnIndex++) {
-      headers.push(cellValueToText(result.columns[columnIndex]));
+      headers.push(cellValueToText(result.columns[columnIndex], options));
     }
     lines.push(headers.join('\t'));
   }
@@ -550,7 +556,7 @@ function columnarToTsv(result: ColumnarPanelResult, range: CellRange, options: N
       values.push(String(rowIndex + 1));
     }
     for (let columnIndex = clamped.startColumn; columnIndex <= clamped.endColumn; columnIndex++) {
-      values.push(cellValueToText(result.cellValue(rowIndex, columnIndex)));
+      values.push(cellValueToText(result.cellValue(rowIndex, columnIndex), options));
     }
     lines.push(values.join('\t'));
   }
@@ -570,7 +576,7 @@ function columnarToCsv(result: ColumnarPanelResult, range: CellRange, options: N
       headers.push(escapeCsvCell(cellValueToCsvText(rowIndexColumnName(result.columns, clamped))));
     }
     for (let columnIndex = clamped.startColumn; columnIndex <= clamped.endColumn; columnIndex++) {
-      headers.push(escapeCsvCell(cellValueToCsvText(result.columns[columnIndex])));
+      headers.push(escapeCsvCell(cellValueToCsvText(result.columns[columnIndex], options)));
     }
     lines.push(headers.join(','));
   }
@@ -581,7 +587,7 @@ function columnarToCsv(result: ColumnarPanelResult, range: CellRange, options: N
       values.push(String(rowIndex + 1));
     }
     for (let columnIndex = clamped.startColumn; columnIndex <= clamped.endColumn; columnIndex++) {
-      values.push(escapeCsvCell(cellValueToCsvText(result.cellValue(rowIndex, columnIndex))));
+      values.push(escapeCsvCell(cellValueToCsvText(result.cellValue(rowIndex, columnIndex), options)));
     }
     lines.push(values.join(','));
   }
@@ -619,7 +625,7 @@ function columnarToHtml(result: ColumnarPanelResult, range: CellRange, options: 
       parts.push('<th>', escapeHtml(cellValueToCsvText(rowIndexColumnName(result.columns, clamped))), '</th>');
     }
     for (let columnIndex = clamped.startColumn; columnIndex <= clamped.endColumn; columnIndex++) {
-      parts.push('<th>', escapeHtml(cellValueToCsvText(result.columns[columnIndex])), '</th>');
+      parts.push('<th>', escapeHtml(cellValueToCsvText(result.columns[columnIndex], options)), '</th>');
     }
     parts.push('</tr></thead>');
   }
@@ -631,7 +637,7 @@ function columnarToHtml(result: ColumnarPanelResult, range: CellRange, options: 
       parts.push('<td>', String(rowIndex + 1), '</td>');
     }
     for (let columnIndex = clamped.startColumn; columnIndex <= clamped.endColumn; columnIndex++) {
-      parts.push('<td>', escapeHtml(cellValueToCsvText(result.cellValue(rowIndex, columnIndex))), '</td>');
+      parts.push('<td>', escapeHtml(cellValueToCsvText(result.cellValue(rowIndex, columnIndex), options)), '</td>');
     }
     parts.push('</tr>');
   }
@@ -664,7 +670,7 @@ function columnarToMarkdown(result: ColumnarPanelResult, range: CellRange, optio
       values.push(String(rowIndex + 1));
     }
     for (let columnIndex = clamped.startColumn; columnIndex <= clamped.endColumn; columnIndex++) {
-      values.push(escapeMarkdownTableCell(result.cellValue(rowIndex, columnIndex)));
+      values.push(escapeMarkdownTableCell(result.cellValue(rowIndex, columnIndex), options));
     }
     lines.push(markdownTableRow(values));
   }
@@ -675,7 +681,8 @@ export function rowsToCellWindow(
   rows: RowValue[],
   columns: string[],
   rowRange: VisibleIndexRange,
-  columnRange: VisibleIndexRange
+  columnRange: VisibleIndexRange,
+  options?: CellTextOptions
 ): CellWindow {
   const clamped = clampCellRange(
     {
@@ -697,7 +704,7 @@ export function rowsToCellWindow(
     const row = rows[rowIndex] || {};
     const values: string[] = [];
     for (let columnIndex = clamped.startColumn; columnIndex <= clamped.endColumn; columnIndex++) {
-      values.push(cellValueToText(row[columns[columnIndex]]));
+      values.push(cellValueToText(row[columns[columnIndex]], options));
     }
     cells.push(values);
   }
@@ -711,8 +718,8 @@ export function rowsToCellWindow(
   };
 }
 
-export function cellValueToText(value: unknown): string {
-  return sanitizeTsvCell(cellValueToReadableText(value));
+export function cellValueToText(value: unknown, options?: CellTextOptions): string {
+  return sanitizeTsvCell(cellValueToReadableText(value, options));
 }
 
 export function visibleIndexRange(
@@ -781,15 +788,15 @@ function numericSortValue(value: string): number | null {
   return Number.isFinite(number) ? number : null;
 }
 
-function cellValueToCsvText(value: unknown): string {
-  return cellValueToReadableText(value);
+function cellValueToCsvText(value: unknown, options?: CellTextOptions): string {
+  return cellValueToReadableText(value, options);
 }
 
-function cellValueToReadableText(value: unknown): string {
-  return readableValueText(value, true);
+function cellValueToReadableText(value: unknown, options?: CellTextOptions): string {
+  return readableValueText(value, true, normalizeCellTextOptions(options));
 }
 
-function readableValueText(value: unknown, topLevel: boolean): string {
+function readableValueText(value: unknown, topLevel: boolean, options: NormalizedCellTextOptions): string {
   if (value === null || value === undefined) {
     return '';
   }
@@ -803,13 +810,13 @@ function readableValueText(value: unknown, topLevel: boolean): string {
   }
 
   if (Array.isArray(value)) {
-    const text = value.map(item => readableValueText(item, false)).join(' , ');
-    return topLevel ? text : `[${text}]`;
+    const text = value.map(item => readableValueText(item, false, options)).join(arrayDisplaySeparator(options.arrayDisplayFormat));
+    return topLevel && options.arrayDisplayFormat !== 'raw' ? text : `[${text}]`;
   }
 
   if (isPlainObject(value)) {
     const parts = Object.keys(value as { [key: string]: unknown }).map(key => {
-      return `${JSON.stringify(key)}: ${readableValueText((value as { [key: string]: unknown })[key], false)}`;
+      return `${JSON.stringify(key)}: ${readableValueText((value as { [key: string]: unknown })[key], false, options)}`;
     });
     return `{${parts.join(', ')}}`;
   }
@@ -898,6 +905,11 @@ function rangeContainsColumn(columns: string[], range: CellRange, name: string):
 interface NormalizedExportOptions {
   includeHeaders: boolean;
   includeRowIndex: boolean;
+  arrayDisplayFormat: ArrayDisplayFormat;
+}
+
+interface NormalizedCellTextOptions {
+  arrayDisplayFormat: ArrayDisplayFormat;
 }
 
 function normalizeExportOptions(
@@ -905,13 +917,28 @@ function normalizeExportOptions(
   defaultIncludeHeaders: boolean
 ): NormalizedExportOptions {
   if (typeof value === 'boolean') {
-    return { includeHeaders: value, includeRowIndex: false };
+    return { includeHeaders: value, includeRowIndex: false, arrayDisplayFormat: 'commaSpace' };
   }
 
   return {
     includeHeaders: value && typeof value.includeHeaders === 'boolean' ? value.includeHeaders : defaultIncludeHeaders,
     includeRowIndex: value ? value.includeRowIndex === true : false,
+    arrayDisplayFormat: normalizeArrayDisplayFormat(value && value.arrayDisplayFormat),
   };
+}
+
+function normalizeCellTextOptions(value: CellTextOptions | undefined): NormalizedCellTextOptions {
+  return {
+    arrayDisplayFormat: normalizeArrayDisplayFormat(value && value.arrayDisplayFormat),
+  };
+}
+
+function normalizeArrayDisplayFormat(value: any): ArrayDisplayFormat {
+  return value === 'space' || value === 'raw' ? value : 'commaSpace';
+}
+
+function arrayDisplaySeparator(format: ArrayDisplayFormat): string {
+  return format === 'commaSpace' ? ', ' : ' ';
 }
 
 function stringifyJson(value: unknown): string {
@@ -954,8 +981,8 @@ function escapeHtml(value: string): string {
   });
 }
 
-function escapeMarkdownTableCell(value: unknown): string {
-  return cellValueToReadableText(value)
+function escapeMarkdownTableCell(value: unknown, options?: CellTextOptions): string {
+  return cellValueToReadableText(value, options)
     .replace(/\\/g, '\\\\')
     .replace(/\|/g, '\\|')
     .replace(/\r\n|\r|\n/g, '<br>');

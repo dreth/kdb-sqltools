@@ -3,7 +3,9 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import JSZip = require('jszip');
 import {
+  ArrayDisplayFormat,
   CellRange,
+  CellTextOptions,
   ColumnarPanelResult,
   ExportFormat,
   TextExportFormat,
@@ -72,6 +74,7 @@ interface KdbPanelSettings {
   hideLargeResultWarnings: boolean;
   hideLargeSortWarnings: boolean;
   elapsedTimeDisplay: KdbPanelElapsedTimeDisplay;
+  arrayDisplayFormat: ArrayDisplayFormat;
 }
 
 interface CopyExportEstimate {
@@ -108,6 +111,7 @@ const DEFAULT_PANEL_SETTINGS: KdbPanelSettings = {
   hideLargeResultWarnings: false,
   hideLargeSortWarnings: false,
   elapsedTimeDisplay: 'auto',
+  arrayDisplayFormat: 'commaSpace',
 };
 const DEFAULT_DENSITY_SIZE_SETTINGS: { [density in KdbPanelDensity]: Pick<KdbPanelSettings, 'cellWidth' | 'rowHeight' | 'fontSize'> } = {
   compact: {
@@ -551,7 +555,8 @@ export class KdbResultsPanel {
         totalColumns: table.columns.length,
       }) : null;
     try {
-      const slice = table.cellWindow(rowRange, columnRange);
+      const cellTextOptions = panelCellTextOptions();
+      const slice = table.cellWindow(rowRange, columnRange, cellTextOptions);
       const sliceDetails = tracePerf ? {
         rows: slice.endRow >= slice.startRow ? slice.endRow - slice.startRow + 1 : 0,
         columns: slice.endColumn >= slice.startColumn ? slice.endColumn - slice.startColumn + 1 : 0,
@@ -612,6 +617,7 @@ export class KdbResultsPanel {
     let capped = false;
     let partial = false;
     let cancelled = false;
+    const cellTextOptions = panelCellTextOptions();
 
     try {
       const needle = query.toLowerCase();
@@ -621,7 +627,7 @@ export class KdbResultsPanel {
           let rowMatched = false;
           for (let columnIndex = 0; columnIndex < table.columns.length; columnIndex++) {
             scannedCells += 1;
-            if (table.cellText(rowIndex, columnIndex).toLowerCase().indexOf(needle) !== -1) {
+            if (table.cellText(rowIndex, columnIndex, cellTextOptions).toLowerCase().indexOf(needle) !== -1) {
               rowMatched = true;
               break;
             }
@@ -750,7 +756,7 @@ export class KdbResultsPanel {
         cancellable: false,
       }, async () => {
         await yieldToEventLoop();
-        sortedRowOrder = sortedColumnarRowOrder(table, columnIndex, nextSort.direction);
+        sortedRowOrder = sortedColumnarRowOrder(table, columnIndex, nextSort.direction, panelCellTextOptions());
       });
 
       if (!this.result || this.version !== requestVersion || !sortedRowOrder) {
@@ -793,7 +799,8 @@ export class KdbResultsPanel {
       return;
     }
 
-    const estimate = estimateCopyExport(table, clamped, format, includeHeaders, includeRowIndex);
+    const cellTextOptions = panelCellTextOptions();
+    const estimate = estimateCopyExport(table, clamped, format, includeHeaders, includeRowIndex, cellTextOptions);
     if (!(await this.confirmLargeCopyExport('copy', format, estimate))) {
       if (this.isCurrentVersion(requestVersion)) {
         this.post({ type: 'copySkipped', version: requestVersion, format });
@@ -807,6 +814,7 @@ export class KdbResultsPanel {
     const text = table.toText(format, clamped, {
       includeHeaders,
       includeRowIndex,
+      arrayDisplayFormat: cellTextOptions.arrayDisplayFormat,
     });
     if (Buffer.byteLength(text, 'utf8') > COPY_WARNING_BYTES) {
       const choice = await vscode.window.showWarningMessage(
@@ -869,7 +877,8 @@ export class KdbResultsPanel {
       }
     }
 
-    const estimate = estimateCopyExport(table, clamped, format, includeHeaders, includeRowIndex);
+    const cellTextOptions = panelCellTextOptions();
+    const estimate = estimateCopyExport(table, clamped, format, includeHeaders, includeRowIndex, cellTextOptions);
     if (!(await this.confirmLargeCopyExport('export', format, estimate))) {
       if (this.isCurrentVersion(requestVersion)) {
         this.post({ type: 'exportSkipped', version: requestVersion, format });
@@ -894,10 +903,11 @@ export class KdbResultsPanel {
     }
 
     const content = format === 'xlsx'
-      ? await columnarToXlsx(table, clamped, includeHeaders, includeRowIndex)
+      ? await columnarToXlsx(table, clamped, includeHeaders, includeRowIndex, cellTextOptions)
       : Buffer.from(table.toText(format, clamped, {
         includeHeaders,
         includeRowIndex,
+        arrayDisplayFormat: cellTextOptions.arrayDisplayFormat,
       }), 'utf8');
     if (!this.isCurrentVersion(requestVersion)) {
       return;
@@ -1509,6 +1519,11 @@ export class KdbResultsPanel {
           <option value="auto">Auto</option>
           <option value="milliseconds">Milliseconds</option>
         </select></label>
+        <label class="settings-row"><span>Arrays</span><select id="settingsArrayDisplayFormat">
+          <option value="commaSpace">Comma + space</option>
+          <option value="space">Spaces</option>
+          <option value="raw">Raw brackets</option>
+        </select></label>
         <label class="settings-row"><span>Density</span><select id="settingsDensity">
           <option value="compact">Compact</option>
           <option value="standard">Standard</option>
@@ -1573,7 +1588,8 @@ export class KdbResultsPanel {
         includeRowIndex: true,
         hideLargeResultWarnings: false,
         hideLargeSortWarnings: false,
-        elapsedTimeDisplay: 'auto'
+        elapsedTimeDisplay: 'auto',
+        arrayDisplayFormat: 'commaSpace'
       };
       const viewport = document.getElementById('viewport');
       const canvas = document.getElementById('canvas');
@@ -1597,6 +1613,7 @@ export class KdbResultsPanel {
       const settingsHideLargeResultWarnings = document.getElementById('settingsHideLargeResultWarnings');
       const settingsHideLargeSortWarnings = document.getElementById('settingsHideLargeSortWarnings');
       const settingsElapsedTimeDisplay = document.getElementById('settingsElapsedTimeDisplay');
+      const settingsArrayDisplayFormat = document.getElementById('settingsArrayDisplayFormat');
       const settingsDensity = document.getElementById('settingsDensity');
       const settingsCellWidth = document.getElementById('settingsCellWidth');
       const settingsRowHeight = document.getElementById('settingsRowHeight');
@@ -1712,6 +1729,7 @@ export class KdbResultsPanel {
       settingsHideLargeResultWarnings.addEventListener('change', () => updateSetting('hideLargeResultWarnings', !!settingsHideLargeResultWarnings.checked));
       settingsHideLargeSortWarnings.addEventListener('change', () => updateSetting('hideLargeSortWarnings', !!settingsHideLargeSortWarnings.checked));
       settingsElapsedTimeDisplay.addEventListener('change', () => updateSetting('elapsedTimeDisplay', String(settingsElapsedTimeDisplay.value || 'auto')));
+      settingsArrayDisplayFormat.addEventListener('change', () => updateSetting('arrayDisplayFormat', normalizeArrayDisplayFormat(settingsArrayDisplayFormat.value)));
       settingsDensity.addEventListener('change', () => updateDensitySetting(String(settingsDensity.value || 'standard')));
       settingsCellWidth.addEventListener('change', () => updateNumberSetting('cellWidth', settingsCellWidth, 80, 600));
       settingsRowHeight.addEventListener('change', () => updateNumberSetting('rowHeight', settingsRowHeight, 20, 80));
@@ -2100,7 +2118,8 @@ export class KdbResultsPanel {
           includeRowIndex: typeof value.includeRowIndex === 'boolean' ? value.includeRowIndex : DEFAULT_SETTINGS.includeRowIndex,
           hideLargeResultWarnings: typeof value.hideLargeResultWarnings === 'boolean' ? value.hideLargeResultWarnings : DEFAULT_SETTINGS.hideLargeResultWarnings,
           hideLargeSortWarnings: typeof value.hideLargeSortWarnings === 'boolean' ? value.hideLargeSortWarnings : DEFAULT_SETTINGS.hideLargeSortWarnings,
-          elapsedTimeDisplay: normalizeElapsedTimeDisplay(value.elapsedTimeDisplay)
+          elapsedTimeDisplay: normalizeElapsedTimeDisplay(value.elapsedTimeDisplay),
+          arrayDisplayFormat: normalizeArrayDisplayFormat(value.arrayDisplayFormat)
         };
       }
 
@@ -2113,6 +2132,7 @@ export class KdbResultsPanel {
         settingsHideLargeResultWarnings.checked = settings.hideLargeResultWarnings;
         settingsHideLargeSortWarnings.checked = settings.hideLargeSortWarnings;
         settingsElapsedTimeDisplay.value = settings.elapsedTimeDisplay;
+        settingsArrayDisplayFormat.value = settings.arrayDisplayFormat;
         settingsDensity.value = settings.density;
         settingsCellWidth.value = String(settings.cellWidth);
         settingsRowHeight.value = String(settings.rowHeight);
@@ -2130,12 +2150,21 @@ export class KdbResultsPanel {
           includeRowIndex: settings.includeRowIndex,
           hideLargeResultWarnings: settings.hideLargeResultWarnings,
           hideLargeSortWarnings: settings.hideLargeSortWarnings,
-          elapsedTimeDisplay: settings.elapsedTimeDisplay
+          elapsedTimeDisplay: settings.elapsedTimeDisplay,
+          arrayDisplayFormat: settings.arrayDisplayFormat
         };
         next[key] = value;
         applySettings(next);
         if (key === 'cellWidth' || key === 'fontSize' || key === 'density') {
           autoColumnWidths = Object.create(null);
+        }
+        if (key === 'arrayDisplayFormat') {
+          slice = emptySlice();
+          pendingRequestKey = '';
+          autoColumnWidths = Object.create(null);
+          if (String(searchInput.value || '').length > 0) {
+            queueSearchRows();
+          }
         }
         updateSummary();
         updateLargeResultWarning();
@@ -2318,6 +2347,10 @@ export class KdbResultsPanel {
 
       function normalizeElapsedTimeDisplay(value) {
         return value === 'milliseconds' ? 'milliseconds' : 'auto';
+      }
+
+      function normalizeArrayDisplayFormat(value) {
+        return value === 'space' || value === 'raw' ? value : 'commaSpace';
       }
 
       function updateSummary() {
@@ -3257,7 +3290,12 @@ function panelSettings(): KdbPanelSettings {
       DEFAULT_PANEL_SETTINGS.hideLargeSortWarnings
     ),
     elapsedTimeDisplay: panelElapsedTimeDisplay(config.get<string>('elapsedTimeDisplay')),
+    arrayDisplayFormat: panelArrayDisplayFormat(config.get<string>('kdbPanel.arrayDisplayFormat')),
   };
+}
+
+function panelCellTextOptions(): CellTextOptions {
+  return { arrayDisplayFormat: panelSettings().arrayDisplayFormat };
 }
 
 function panelSizeSettings(
@@ -3324,9 +3362,10 @@ function hasConfiguredSettingValue(inspection: any): boolean {
 }
 
 function panelSettingConfigKey(key: string, density: KdbPanelDensity): string {
-  return key === 'cellWidth' || key === 'rowHeight' || key === 'fontSize'
-    ? `${density}.${key}`
-    : key;
+  if (key === 'cellWidth' || key === 'rowHeight' || key === 'fontSize') {
+    return `${density}.${key}`;
+  }
+  return key === 'arrayDisplayFormat' ? 'kdbPanel.arrayDisplayFormat' : key;
 }
 
 function panelTitle(panelNumber: number): string {
@@ -3366,6 +3405,7 @@ const RESULT_SETTING_UPDATE_ALLOWLIST: { [key: string]: PanelSettingUpdateValida
   hideLargeResultWarnings: booleanSettingUpdate,
   hideLargeSortWarnings: booleanSettingUpdate,
   elapsedTimeDisplay: elapsedTimeDisplaySettingUpdate,
+  arrayDisplayFormat: arrayDisplayFormatSettingUpdate,
 };
 
 function normalizePanelSettingUpdate(key: any, value: any): { key: string; value: PanelSettingUpdateValue } | null {
@@ -3404,6 +3444,10 @@ function panelElapsedTimeDisplay(value: any): KdbPanelElapsedTimeDisplay {
   return value === 'milliseconds' ? 'milliseconds' : 'auto';
 }
 
+function panelArrayDisplayFormat(value: any): ArrayDisplayFormat {
+  return value === 'space' || value === 'raw' ? value : 'commaSpace';
+}
+
 function numberSettingUpdate(value: any, min: number, max: number): number | null {
   const number = Number(value);
   if (!Number.isFinite(number)) {
@@ -3419,6 +3463,10 @@ function densitySettingUpdate(value: any): string | null {
 
 function elapsedTimeDisplaySettingUpdate(value: any): string | null {
   return value === 'auto' || value === 'milliseconds' ? value : null;
+}
+
+function arrayDisplayFormatSettingUpdate(value: any): string | null {
+  return value === 'commaSpace' || value === 'space' || value === 'raw' ? value : null;
 }
 
 function booleanSettingUpdate(value: any): boolean | null {
@@ -3610,10 +3658,11 @@ function estimateCopyExport(
   range: CellRange,
   format: ExportFormat,
   includeHeaders: boolean,
-  includeRowIndex: boolean
+  includeRowIndex: boolean,
+  cellTextOptions: CellTextOptions = {}
 ): CopyExportEstimate {
   const shape = exportShape(range, { includeHeaders, includeRowIndex });
-  const averageCellBytes = estimateAverageCellBytes(result, range, shape.selectedRows, shape.selectedColumns);
+  const averageCellBytes = estimateAverageCellBytes(result, range, shape.selectedRows, shape.selectedColumns, cellTextOptions);
   const estimatedDataBytes = shape.selectedCells * (averageCellBytes + formatCellOverhead(format));
   const estimatedHeaderBytes = includeHeaders
     ? estimateHeaderBytes(result, range, includeRowIndex) + shape.outputColumns * formatCellOverhead(format)
@@ -3661,7 +3710,8 @@ function estimateAverageCellBytes(
   result: ColumnarPanelResult,
   range: CellRange,
   selectedRows: number,
-  selectedColumns: number
+  selectedColumns: number,
+  cellTextOptions: CellTextOptions = {}
 ): number {
   if (selectedRows <= 0 || selectedColumns <= 0) {
     return 4;
@@ -3678,7 +3728,7 @@ function estimateAverageCellBytes(
     const rowIndex = Math.min(range.endRow, range.startRow + rowOffset);
     for (let columnOffset = 0; columnOffset < selectedColumns && sampledCells < sampledRows * sampledColumns; columnOffset += columnStep) {
       const columnIndex = Math.min(range.endColumn, range.startColumn + columnOffset);
-      sampledBytes += Buffer.byteLength(result.cellText(rowIndex, columnIndex), 'utf8');
+      sampledBytes += Buffer.byteLength(result.cellText(rowIndex, columnIndex, cellTextOptions), 'utf8');
       sampledCells += 1;
     }
   }
@@ -3763,7 +3813,8 @@ async function columnarToXlsx(
   result: ColumnarPanelResult,
   range: CellRange,
   includeHeaders: boolean,
-  includeRowIndex: boolean
+  includeRowIndex: boolean,
+  cellTextOptions: CellTextOptions = {}
 ): Promise<Uint8Array> {
   const limitError = validateXlsxSheetLimits(range, { includeHeaders, includeRowIndex });
   if (limitError) {
@@ -3793,7 +3844,7 @@ async function columnarToXlsx(
     '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>' +
     '</Relationships>');
   zip.file('xl/styles.xml', stylesXml());
-  zip.file('xl/worksheets/sheet1.xml', sheetXml(result, range, includeHeaders, includeRowIndex));
+  zip.file('xl/worksheets/sheet1.xml', sheetXml(result, range, includeHeaders, includeRowIndex, cellTextOptions));
   return zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' });
 }
 
@@ -3801,7 +3852,8 @@ function sheetXml(
   result: ColumnarPanelResult,
   range: CellRange,
   includeHeaders: boolean,
-  includeRowIndex: boolean
+  includeRowIndex: boolean,
+  cellTextOptions: CellTextOptions
 ): string {
   const selectedRows = range.endRow - range.startRow + 1;
   const selectedColumns = range.endColumn - range.startColumn + 1 + (includeRowIndex ? 1 : 0);
@@ -3811,7 +3863,7 @@ function sheetXml(
     '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
     `<dimension ref="${dimension}"/>` +
     '<sheetData>' +
-    sheetRowsXml(result, range, includeHeaders, includeRowIndex) +
+    sheetRowsXml(result, range, includeHeaders, includeRowIndex, cellTextOptions) +
     '</sheetData>' +
     '</worksheet>';
 }
@@ -3820,7 +3872,8 @@ function sheetRowsXml(
   result: ColumnarPanelResult,
   range: CellRange,
   includeHeaders: boolean,
-  includeRowIndex: boolean
+  includeRowIndex: boolean,
+  cellTextOptions: CellTextOptions
 ): string {
   const parts: string[] = [];
   let outputRow = 1;
@@ -3842,7 +3895,7 @@ function sheetRowsXml(
       values.push(String(rowIndex + 1));
     }
     for (let columnIndex = range.startColumn; columnIndex <= range.endColumn; columnIndex++) {
-      values.push(result.cellText(rowIndex, columnIndex));
+      values.push(result.cellText(rowIndex, columnIndex, cellTextOptions));
     }
     parts.push(sheetRowXml(outputRow, values));
     outputRow += 1;
