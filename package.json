@@ -55,7 +55,11 @@
     "onCommand:kdb-sqltools.runFileInNewKdbPanel",
     "onCommand:kdb-sqltools.runSelectionOrBlockInNewKdbPanel",
     "onCommand:kdb-sqltools.openKeyboardShortcuts",
-    "onCommand:kdb-sqltools.copyExampleConnectionSettings"
+    "onCommand:kdb-sqltools.copyExampleConnectionSettings",
+    "onCommand:kdb-sqltools.copyKdbPanelSelection",
+    "onCommand:kdb-sqltools.reportBug",
+    "onCommand:kdb-sqltools.requestFeature",
+    "onCommand:kdb-sqltools.giveFeedback"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -144,6 +148,30 @@
         "title": "Copy Example Global Connection Settings",
         "category": "kdb+",
         "icon": "$(copy)"
+      },
+      {
+        "command": "kdb-sqltools.copyKdbPanelSelection",
+        "title": "Copy",
+        "category": "kdb Results",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "kdb-sqltools.reportBug",
+        "title": "Report Bug",
+        "category": "kdb+",
+        "icon": "$(bug)"
+      },
+      {
+        "command": "kdb-sqltools.requestFeature",
+        "title": "Request Feature",
+        "category": "kdb+",
+        "icon": "$(lightbulb)"
+      },
+      {
+        "command": "kdb-sqltools.giveFeedback",
+        "title": "Give Feedback",
+        "category": "kdb+",
+        "icon": "$(comment-discussion)"
       }
     ],
     "keybindings": [
@@ -239,6 +267,26 @@
         },
         {
           "command": "kdb-sqltools.openKeyboardShortcuts"
+        },
+        {
+          "command": "kdb-sqltools.copyKdbPanelSelection",
+          "when": "false"
+        },
+        {
+          "command": "kdb-sqltools.reportBug"
+        },
+        {
+          "command": "kdb-sqltools.requestFeature"
+        },
+        {
+          "command": "kdb-sqltools.giveFeedback"
+        }
+      ],
+      "webview/context": [
+        {
+          "command": "kdb-sqltools.copyKdbPanelSelection",
+          "when": "webviewId == 'kdbSqltoolsResults' && webviewSection == 'kdbResultsTable'",
+          "group": "navigation"
         }
       ]
     },

@@ -603,6 +603,10 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(commandTitle('kdb-sqltools.runFileInNewKdbPanel'), 'Run q Script in New kdb Panel');
   assert.strictEqual(commandTitle('kdb-sqltools.runSelectionOrBlockInNewKdbPanel'), 'Run Selection in New kdb Panel');
   assert.strictEqual(commandTitle('kdb-sqltools.openKeyboardShortcuts'), 'Open kdb Keyboard Shortcuts');
+  assert.strictEqual(commandTitle('kdb-sqltools.copyKdbPanelSelection'), 'Copy');
+  assert.strictEqual(commandTitle('kdb-sqltools.reportBug'), 'Report Bug');
+  assert.strictEqual(commandTitle('kdb-sqltools.requestFeature'), 'Request Feature');
+  assert.strictEqual(commandTitle('kdb-sqltools.giveFeedback'), 'Give Feedback');
   assert.strictEqual(keybinding('kdb-sqltools.runSelectionOrBlockInKdbPanelReplace').key, 'ctrl+enter');
   assert.strictEqual(keybinding('kdb-sqltools.runSelectionOrBlockInKdbPanelReplace').mac, 'cmd+enter');
   assert.strictEqual(keybinding('kdb-sqltools.runSelectionOrBlockInNewKdbPanel').key, 'ctrl+shift+enter');
@@ -610,8 +614,26 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(keybinding('kdb-sqltools.runFileInKdbPanelReplace').key, 'ctrl+alt+enter');
   assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.runSelectionOrBlockInNewKdbPanel'));
   assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.runSelectionOrBlockInKdbPanelReplace'));
+  assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.copyKdbPanelSelection'));
+  assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.reportBug'));
+  assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.requestFeature'));
+  assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.giveFeedback'));
   assert.strictEqual(extensionSource.includes("'kdb-sqltools.runSelectionOrBlockInNewKdbPanel'"), true);
   assert.strictEqual(extensionSource.includes("'kdb-sqltools.runSelectionOrBlockInKdbPanelReplace'"), true);
+  assert.strictEqual(extensionSource.includes("'kdb-sqltools.copyKdbPanelSelection'"), true);
+  assert.strictEqual(extensionSource.includes("'kdb-sqltools.reportBug'"), true);
+  assert.strictEqual(extensionSource.includes("'kdb-sqltools.requestFeature'"), true);
+  assert.strictEqual(extensionSource.includes("'kdb-sqltools.giveFeedback'"), true);
+  assert.strictEqual(extensionSource.includes('vscode.env.openExternal(vscode.Uri.parse(githubIssueUrl(feedbackIssueTemplate(kind))))'), true);
+  assert.strictEqual(extensionSource.includes('GITHUB_ISSUES_NEW_URL'), true);
+  assert.strictEqual(readmeSource.includes('VS Code settings cannot host extension buttons'), true);
+  assert.strictEqual(readmeSource.includes('[Bug report][bug-report]'), true);
+  assert.strictEqual(readmeSource.includes('[Feature request][feature-request]'), true);
+  assert.strictEqual(readmeSource.includes('[General feedback][general-feedback]'), true);
+  assert.ok(packageJson.contributes.menus['webview/context'].some(menu =>
+    menu.command === 'kdb-sqltools.copyKdbPanelSelection' &&
+      menu.when === "webviewId == 'kdbSqltoolsResults' && webviewSection == 'kdbResultsTable'"
+  ));
   assert.strictEqual(extensionSource.includes('configuredKdbPanelRunMode()'), true);
   assert.strictEqual(extensionSource.includes("get<string>(KDB_PANEL_DEFAULT_RUN_MODE_SETTING, 'new')"), true);
   assert.strictEqual(extensionSource.includes("workbench.action.openGlobalKeybindings"), true);
@@ -625,8 +647,10 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('this.result = undefined;'), true);
   assert.strictEqual(resultsPanelSource.includes('this.loading = undefined;'), true);
   assert.strictEqual(resultsPanelSource.includes('this.disposables.splice(0).forEach(disposable => disposable.dispose())'), true);
-  assert.strictEqual(resultsPanelSource.includes('this.panel.reveal();'), true);
+  assert.strictEqual(resultsPanelSource.includes('this.panel.reveal(this.panel.viewColumn, true);'), true);
+  assert.strictEqual(resultsPanelSource.includes('this.panel.reveal();'), false);
   assert.strictEqual(resultsPanelSource.includes('this.panel.reveal(vscode.ViewColumn.Beside)'), false);
+  assert.strictEqual(resultsPanelSource.includes('{ viewColumn, preserveFocus: true }'), true);
   assert.strictEqual(resultsPanelSource.includes('initialResultViewColumn()'), true);
   assert.strictEqual(resultsPanelSource.includes('panelTitle(panelNumber)'), true);
   const ensurePanelSource = resultsPanelSource.slice(
@@ -653,7 +677,7 @@ function panelFormatElapsedMs(milliseconds, display) {
     resultsPanelSource.indexOf('private disposePanel')
   );
   assert.strictEqual(resultsPanelConstructorSource.includes('viewColumn: vscode.ViewColumn = initialResultViewColumn()'), true);
-  assert.strictEqual(resultsPanelConstructorSource.includes('panelTitle(panelNumber),\n      viewColumn,'), true);
+  assert.strictEqual(resultsPanelConstructorSource.includes('panelTitle(panelNumber),\n      { viewColumn, preserveFocus: true },'), true);
   assert.strictEqual(/function textExportFormat[\s\S]*return 'csv';/.test(resultsPanelSource), true);
   assert.strictEqual(/function exportFormat[\s\S]*return 'csv';/.test(resultsPanelSource), true);
   assert.strictEqual(resultsPanelSource.includes('sheetXml(result, range, includeHeaders, includeRowIndex)'), true);
@@ -818,6 +842,12 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('private isCurrentVersion(version: number): boolean'), true);
   assert.strictEqual(resultsPanelSource.includes('function isCurrentVersionMessage(msg)'), true);
   assert.strictEqual(resultsPanelSource.includes("msg.type === 'copied' && isCurrentVersionMessage(msg)"), true);
+  assert.strictEqual(resultsPanelSource.includes("data-vscode-context='{\"webviewSection\":\"kdbResultsTable\",\"preventDefaultContextMenuItems\":true}'"), true);
+  assert.strictEqual(resultsPanelSource.includes("viewport.addEventListener('contextmenu'"), true);
+  assert.strictEqual(resultsPanelSource.includes("vscode.postMessage({ type: 'tableContextMenu' });"), true);
+  assert.strictEqual(resultsPanelSource.includes("message.type === 'tableContextMenu'"), true);
+  assert.strictEqual(resultsPanelSource.includes("msg.type === 'copySelection'"), true);
+  assert.strictEqual(resultsPanelSource.includes('public static copySelectionFromActivePanel(): void'), true);
   const copySelectionSource = resultsPanelSource.slice(
     resultsPanelSource.indexOf('function copySelection'),
     resultsPanelSource.indexOf('function exportSelection')
