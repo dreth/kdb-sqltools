@@ -288,7 +288,7 @@
             "Open the first kdb results panel in editor group two.",
             "Open the first kdb results panel in editor group three."
           ],
-          "description": "Initial editor group for a newly-created kdb results panel. VS Code does not expose an API for extensions to create a bottom split automatically."
+          "description": "Initial editor group for the first kdb results panel. Later new result tabs open in the same editor group as an existing kdb results panel when one is present. VS Code does not expose an API for extensions to create a bottom split automatically."
         },
         "kdb-sqltools.performance.trace": {
           "type": "boolean",

@@ -88,7 +88,7 @@ Default kdb-panel runs open a new result tab unless you set `"kdb-sqltools.resul
 
 Default keybindings in q files are `Ctrl+Enter` / `Cmd+Enter` for selection replace, `Ctrl+Shift+Enter` / `Cmd+Shift+Enter` for selection in a new result tab, and `Ctrl+Alt+Enter` / `Cmd+Alt+Enter` for whole-script replace. Change them in VS Code's Keyboard Shortcuts UI or `keybindings.json`; extension settings cannot define arbitrary VS Code keybindings. The `kdb+: Open kdb Keyboard Shortcuts` command opens the Keyboard Shortcuts UI.
 
-When replacing results, the extension reveals the existing kdb result tab in its current editor group instead of forcing `ViewColumn.Beside`. VS Code does not provide an extension API to create a bottom split automatically. The first new kdb result tab uses `"kdb-sqltools.results.kdbPanel.initialViewColumn"` (`active`, `beside`, `one`, `two`, or `three`).
+When replacing results, the extension reveals the existing kdb result tab in its current editor group instead of forcing `ViewColumn.Beside`. New kdb result tabs open beside existing kdb result tabs when one is already present. VS Code does not provide an extension API to create a bottom split automatically, so the first new kdb result tab uses `"kdb-sqltools.results.kdbPanel.initialViewColumn"` (`active`, `beside`, `one`, `two`, or `three`).
 
 To use SQLTools' own results target instead, set:
 
