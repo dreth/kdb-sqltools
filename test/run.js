@@ -629,6 +629,31 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('this.panel.reveal(vscode.ViewColumn.Beside)'), false);
   assert.strictEqual(resultsPanelSource.includes('initialResultViewColumn()'), true);
   assert.strictEqual(resultsPanelSource.includes('panelTitle(panelNumber)'), true);
+  const ensurePanelSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('private static ensure'),
+    resultsPanelSource.indexOf('private static newPanelViewColumn')
+  );
+  assert.strictEqual(ensurePanelSource.includes("if (mode === 'new')"), true);
+  assert.strictEqual(ensurePanelSource.includes('KdbResultsPanel.newPanelViewColumn()'), true);
+  assert.strictEqual(ensurePanelSource.includes('new KdbResultsPanel(context, initialResultViewColumn())'), false);
+  const newPanelViewColumnSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('private static newPanelViewColumn'),
+    resultsPanelSource.indexOf('private static reusablePanel')
+  );
+  assert.strictEqual(newPanelViewColumnSource.includes('const anchor = KdbResultsPanel.reusablePanel();'), true);
+  assert.strictEqual(newPanelViewColumnSource.includes('anchor.panel.viewColumn !== undefined'), true);
+  assert.strictEqual(newPanelViewColumnSource.includes('anchor.panel.viewColumn'), true);
+  assert.ok(
+    newPanelViewColumnSource.indexOf('anchor.panel.viewColumn') <
+      newPanelViewColumnSource.indexOf('initialResultViewColumn()'),
+    'new panels should prefer an existing results panel viewColumn before initial placement'
+  );
+  const resultsPanelConstructorSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('private constructor'),
+    resultsPanelSource.indexOf('private disposePanel')
+  );
+  assert.strictEqual(resultsPanelConstructorSource.includes('viewColumn: vscode.ViewColumn = initialResultViewColumn()'), true);
+  assert.strictEqual(resultsPanelConstructorSource.includes('panelTitle(panelNumber),\n      viewColumn,'), true);
   assert.strictEqual(/function textExportFormat[\s\S]*return 'csv';/.test(resultsPanelSource), true);
   assert.strictEqual(/function exportFormat[\s\S]*return 'csv';/.test(resultsPanelSource), true);
   assert.strictEqual(resultsPanelSource.includes('sheetXml(result, range, includeHeaders, includeRowIndex)'), true);

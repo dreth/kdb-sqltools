@@ -199,11 +199,22 @@ export class KdbResultsPanel {
   }
 
   private static ensure(context: vscode.ExtensionContext, mode: KdbResultsPanelRunMode): KdbResultsPanel {
-    if (mode === 'new' || KdbResultsPanel.panels.length === 0) {
+    if (mode === 'new') {
+      return new KdbResultsPanel(context, KdbResultsPanel.newPanelViewColumn());
+    }
+
+    if (KdbResultsPanel.panels.length === 0) {
       return new KdbResultsPanel(context);
     }
 
     return KdbResultsPanel.reusablePanel() || new KdbResultsPanel(context);
+  }
+
+  private static newPanelViewColumn(): vscode.ViewColumn {
+    const anchor = KdbResultsPanel.reusablePanel();
+    return anchor && anchor.panel.viewColumn !== undefined
+      ? anchor.panel.viewColumn
+      : initialResultViewColumn();
   }
 
   private static reusablePanel(): KdbResultsPanel | undefined {
@@ -215,12 +226,12 @@ export class KdbResultsPanel {
       KdbResultsPanel.panels[0];
   }
 
-  private constructor(_context: vscode.ExtensionContext) {
+  private constructor(_context: vscode.ExtensionContext, viewColumn: vscode.ViewColumn = initialResultViewColumn()) {
     const panelNumber = KdbResultsPanel.nextPanelNumber++;
     this.panel = vscode.window.createWebviewPanel(
       'kdbSqltoolsResults',
       panelTitle(panelNumber),
-      initialResultViewColumn(),
+      viewColumn,
       {
         enableScripts: true,
         retainContextWhenHidden: true,
