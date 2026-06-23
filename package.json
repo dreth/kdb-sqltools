@@ -50,6 +50,11 @@
     "onCommand:kdb-sqltools.runSelectionOrBlockInSqltools",
     "onCommand:kdb-sqltools.runFileInKdbPanel",
     "onCommand:kdb-sqltools.runSelectionOrBlockInKdbPanel",
+    "onCommand:kdb-sqltools.runFileInKdbPanelReplace",
+    "onCommand:kdb-sqltools.runSelectionOrBlockInKdbPanelReplace",
+    "onCommand:kdb-sqltools.runFileInNewKdbPanel",
+    "onCommand:kdb-sqltools.runSelectionOrBlockInNewKdbPanel",
+    "onCommand:kdb-sqltools.openKeyboardShortcuts",
     "onCommand:kdb-sqltools.copyExampleConnectionSettings"
   ],
   "main": "./out/extension.js",
@@ -105,10 +110,60 @@
         "icon": "$(table)"
       },
       {
+        "command": "kdb-sqltools.runFileInKdbPanelReplace",
+        "title": "Run q Script in kdb Panel (Replace)",
+        "category": "kdb+",
+        "icon": "$(replace)"
+      },
+      {
+        "command": "kdb-sqltools.runSelectionOrBlockInKdbPanelReplace",
+        "title": "Run Selection in kdb Panel (Replace)",
+        "category": "kdb+",
+        "icon": "$(replace)"
+      },
+      {
+        "command": "kdb-sqltools.runFileInNewKdbPanel",
+        "title": "Run q Script in New kdb Panel",
+        "category": "kdb+",
+        "icon": "$(new-file)"
+      },
+      {
+        "command": "kdb-sqltools.runSelectionOrBlockInNewKdbPanel",
+        "title": "Run Selection in New kdb Panel",
+        "category": "kdb+",
+        "icon": "$(new-file)"
+      },
+      {
+        "command": "kdb-sqltools.openKeyboardShortcuts",
+        "title": "Open kdb Keyboard Shortcuts",
+        "category": "kdb+",
+        "icon": "$(keyboard)"
+      },
+      {
         "command": "kdb-sqltools.copyExampleConnectionSettings",
         "title": "Copy Example Global Connection Settings",
         "category": "kdb+",
         "icon": "$(copy)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "kdb-sqltools.runSelectionOrBlockInKdbPanelReplace",
+        "key": "ctrl+enter",
+        "mac": "cmd+enter",
+        "when": "editorTextFocus && (editorLangId == q || resourceExtname == .q)"
+      },
+      {
+        "command": "kdb-sqltools.runSelectionOrBlockInNewKdbPanel",
+        "key": "ctrl+shift+enter",
+        "mac": "cmd+shift+enter",
+        "when": "editorTextFocus && (editorLangId == q || resourceExtname == .q)"
+      },
+      {
+        "command": "kdb-sqltools.runFileInKdbPanelReplace",
+        "key": "ctrl+alt+enter",
+        "mac": "cmd+alt+enter",
+        "when": "editorTextFocus && (editorLangId == q || resourceExtname == .q)"
       }
     ],
     "menus": {
@@ -122,6 +177,16 @@
       "editor/context": [
         {
           "command": "kdb-sqltools.runSelectionOrBlock",
+          "when": "editorLangId == q || resourceExtname == .q",
+          "group": "navigation"
+        },
+        {
+          "command": "kdb-sqltools.runSelectionOrBlockInKdbPanelReplace",
+          "when": "editorLangId == q || resourceExtname == .q",
+          "group": "navigation"
+        },
+        {
+          "command": "kdb-sqltools.runSelectionOrBlockInNewKdbPanel",
           "when": "editorLangId == q || resourceExtname == .q",
           "group": "navigation"
         },
@@ -155,6 +220,25 @@
         {
           "command": "kdb-sqltools.runSelectionOrBlockInKdbPanel",
           "when": "editorLangId == q || resourceExtname == .q"
+        },
+        {
+          "command": "kdb-sqltools.runFileInKdbPanelReplace",
+          "when": "editorLangId == q || resourceExtname == .q"
+        },
+        {
+          "command": "kdb-sqltools.runSelectionOrBlockInKdbPanelReplace",
+          "when": "editorLangId == q || resourceExtname == .q"
+        },
+        {
+          "command": "kdb-sqltools.runFileInNewKdbPanel",
+          "when": "editorLangId == q || resourceExtname == .q"
+        },
+        {
+          "command": "kdb-sqltools.runSelectionOrBlockInNewKdbPanel",
+          "when": "editorLangId == q || resourceExtname == .q"
+        },
+        {
+          "command": "kdb-sqltools.openKeyboardShortcuts"
         }
       ]
     },
@@ -173,6 +257,38 @@
             "Use the lightweight kdb results panel."
           ],
           "description": "Result target used by the default kdb-sqltools q run commands."
+        },
+        "kdb-sqltools.results.kdbPanel.defaultRunMode": {
+          "type": "string",
+          "default": "new",
+          "enum": [
+            "replace",
+            "new"
+          ],
+          "enumDescriptions": [
+            "Reuse the current or first kdb results panel.",
+            "Open a new kdb results panel for each default kdb-panel run."
+          ],
+          "description": "Result-tab behavior used by the default kdb panel run commands. Explicit Replace and New commands ignore this setting."
+        },
+        "kdb-sqltools.results.kdbPanel.initialViewColumn": {
+          "type": "string",
+          "default": "active",
+          "enum": [
+            "active",
+            "beside",
+            "one",
+            "two",
+            "three"
+          ],
+          "enumDescriptions": [
+            "Open the first kdb results panel in the active editor group.",
+            "Open the first kdb results panel beside the active editor group.",
+            "Open the first kdb results panel in editor group one.",
+            "Open the first kdb results panel in editor group two.",
+            "Open the first kdb results panel in editor group three."
+          ],
+          "description": "Initial editor group for a newly-created kdb results panel. VS Code does not expose an API for extensions to create a bottom split automatically."
         },
         "kdb-sqltools.performance.trace": {
           "type": "boolean",
@@ -214,6 +330,69 @@
             "Use roomier row height and padding."
           ],
           "description": "Visual density for the kdb results panel."
+        },
+        "kdb-sqltools.results.compact.cellWidth": {
+          "type": "number",
+          "default": 140,
+          "minimum": 80,
+          "maximum": 600,
+          "description": "Compact density cell width in pixels for the kdb results panel."
+        },
+        "kdb-sqltools.results.compact.rowHeight": {
+          "type": "number",
+          "default": 24,
+          "minimum": 20,
+          "maximum": 80,
+          "description": "Compact density row height in pixels for the kdb results panel."
+        },
+        "kdb-sqltools.results.compact.fontSize": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 32,
+          "description": "Compact density font size in pixels for the kdb results panel. Use 0 for the VS Code default."
+        },
+        "kdb-sqltools.results.standard.cellWidth": {
+          "type": "number",
+          "default": 160,
+          "minimum": 80,
+          "maximum": 600,
+          "description": "Standard density cell width in pixels for the kdb results panel."
+        },
+        "kdb-sqltools.results.standard.rowHeight": {
+          "type": "number",
+          "default": 28,
+          "minimum": 20,
+          "maximum": 80,
+          "description": "Standard density row height in pixels for the kdb results panel."
+        },
+        "kdb-sqltools.results.standard.fontSize": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 32,
+          "description": "Standard density font size in pixels for the kdb results panel. Use 0 for the VS Code default."
+        },
+        "kdb-sqltools.results.comfortable.cellWidth": {
+          "type": "number",
+          "default": 180,
+          "minimum": 80,
+          "maximum": 600,
+          "description": "Comfortable density cell width in pixels for the kdb results panel."
+        },
+        "kdb-sqltools.results.comfortable.rowHeight": {
+          "type": "number",
+          "default": 32,
+          "minimum": 20,
+          "maximum": 80,
+          "description": "Comfortable density row height in pixels for the kdb results panel."
+        },
+        "kdb-sqltools.results.comfortable.fontSize": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 32,
+          "description": "Comfortable density font size in pixels for the kdb results panel. Use 0 for the VS Code default."
         },
         "kdb-sqltools.results.showRowIndex": {
           "type": "boolean",

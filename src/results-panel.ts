@@ -54,6 +54,7 @@ interface KdbPanelMetadata {
 type KdbPanelDensity = 'compact' | 'standard' | 'comfortable';
 type KdbPanelElapsedTimeDisplay = 'auto' | 'milliseconds';
 type KdbPanelSortDirection = 'asc' | 'desc';
+export type KdbResultsPanelRunMode = 'replace' | 'new';
 
 interface KdbPanelSortState {
   columnName: string;
@@ -108,10 +109,30 @@ const DEFAULT_PANEL_SETTINGS: KdbPanelSettings = {
   hideLargeSortWarnings: false,
   elapsedTimeDisplay: 'auto',
 };
+const DEFAULT_DENSITY_SIZE_SETTINGS: { [density in KdbPanelDensity]: Pick<KdbPanelSettings, 'cellWidth' | 'rowHeight' | 'fontSize'> } = {
+  compact: {
+    cellWidth: 140,
+    rowHeight: 24,
+    fontSize: 0,
+  },
+  standard: {
+    cellWidth: 160,
+    rowHeight: 28,
+    fontSize: 0,
+  },
+  comfortable: {
+    cellWidth: 180,
+    rowHeight: 32,
+    fontSize: 0,
+  },
+};
 
 export class KdbResultsPanel {
-  private static current: KdbResultsPanel | undefined;
+  private static panels: KdbResultsPanel[] = [];
+  private static lastActivePanel: KdbResultsPanel | undefined;
+  private static nextPanelNumber = 1;
   private panel: vscode.WebviewPanel;
+  private disposed = false;
   private ready = false;
   private result: KdbPanelResult | undefined;
   private loading: LoadingState | undefined;
@@ -126,8 +147,12 @@ export class KdbResultsPanel {
   private activeSearchId = 0;
   private hideLargeResultWarningOnce = false;
 
-  public static showLoading(context: vscode.ExtensionContext, state: LoadingState): KdbResultsPanel {
-    const panel = KdbResultsPanel.ensure(context);
+  public static showLoading(
+    context: vscode.ExtensionContext,
+    state: LoadingState,
+    mode: KdbResultsPanelRunMode = 'replace'
+  ): KdbResultsPanel {
+    const panel = KdbResultsPanel.ensure(context, mode);
     panel.version += 1;
     panel.firstSliceVersion = 0;
     panel.rowOrder = undefined;
@@ -137,54 +162,91 @@ export class KdbResultsPanel {
     panel.visibleTableCache = undefined;
     panel.loading = state;
     panel.result = undefined;
-    panel.panel.reveal(vscode.ViewColumn.Beside);
+    panel.revealExisting();
     panel.post({ type: 'loading', state: { ...state, version: panel.version, settings: panelSettings() } });
     return panel;
   }
 
-  public static showResult(context: vscode.ExtensionContext, result: KdbPanelResult): KdbResultsPanel {
-    const panel = KdbResultsPanel.ensure(context);
-    panel.version += 1;
-    panel.firstSliceVersion = 0;
-    panel.rowOrder = undefined;
-    panel.sortState = undefined;
-    panel.hideLargeResultWarningOnce = false;
-    panel.baseVisibleTableCache = undefined;
-    panel.visibleTableCache = undefined;
-    panel.loading = undefined;
-    panel.hiddenColumnNames = panel.hiddenColumnNamesForNewResult(result.table.columns);
-    panel.hiddenColumnSchema = result.table.columns.slice();
-    panel.result = result;
-    panel.panel.reveal(vscode.ViewColumn.Beside);
-    panel.postResultMetadata();
+  public static showResult(
+    context: vscode.ExtensionContext,
+    result: KdbPanelResult,
+    mode: KdbResultsPanelRunMode = 'replace'
+  ): KdbResultsPanel {
+    const panel = KdbResultsPanel.ensure(context, mode);
+    panel.showResult(result);
     return panel;
   }
 
-  private static ensure(context: vscode.ExtensionContext): KdbResultsPanel {
-    if (KdbResultsPanel.current) {
-      return KdbResultsPanel.current;
+  public showResult(result: KdbPanelResult): KdbResultsPanel {
+    if (this.disposed) {
+      return KdbResultsPanel.showResult(this.context, result, 'replace');
+    }
+    this.version += 1;
+    this.firstSliceVersion = 0;
+    this.rowOrder = undefined;
+    this.sortState = undefined;
+    this.hideLargeResultWarningOnce = false;
+    this.baseVisibleTableCache = undefined;
+    this.visibleTableCache = undefined;
+    this.loading = undefined;
+    this.hiddenColumnNames = this.hiddenColumnNamesForNewResult(result.table.columns);
+    this.hiddenColumnSchema = result.table.columns.slice();
+    this.result = result;
+    this.revealExisting();
+    this.postResultMetadata();
+    return this;
+  }
+
+  private static ensure(context: vscode.ExtensionContext, mode: KdbResultsPanelRunMode): KdbResultsPanel {
+    if (mode === 'new' || KdbResultsPanel.panels.length === 0) {
+      return new KdbResultsPanel(context);
     }
 
-    KdbResultsPanel.current = new KdbResultsPanel(context);
-    return KdbResultsPanel.current;
+    return KdbResultsPanel.reusablePanel() || new KdbResultsPanel(context);
+  }
+
+  private static reusablePanel(): KdbResultsPanel | undefined {
+    return KdbResultsPanel.panels.find(panel => panel.panel.active) ||
+      (KdbResultsPanel.lastActivePanel && KdbResultsPanel.panels.indexOf(KdbResultsPanel.lastActivePanel) !== -1
+        ? KdbResultsPanel.lastActivePanel
+        : undefined) ||
+      KdbResultsPanel.panels.find(panel => panel.panel.visible) ||
+      KdbResultsPanel.panels[0];
   }
 
   private constructor(private readonly context: vscode.ExtensionContext) {
+    const panelNumber = KdbResultsPanel.nextPanelNumber++;
     this.panel = vscode.window.createWebviewPanel(
       'kdbSqltoolsResults',
-      'kdb Results',
-      vscode.ViewColumn.Beside,
+      panelTitle(panelNumber),
+      initialResultViewColumn(),
       {
         enableScripts: true,
         retainContextWhenHidden: true,
         localResourceRoots: [],
       }
     );
+    KdbResultsPanel.panels.push(this);
+    KdbResultsPanel.lastActivePanel = this;
     this.panel.webview.html = this.html(this.panel.webview);
     this.panel.onDidDispose(() => {
-      KdbResultsPanel.current = undefined;
+      this.disposed = true;
+      KdbResultsPanel.panels = KdbResultsPanel.panels.filter(panel => panel !== this);
+      if (KdbResultsPanel.lastActivePanel === this) {
+        KdbResultsPanel.lastActivePanel = KdbResultsPanel.panels[0];
+      }
+    }, undefined, this.context.subscriptions);
+    this.panel.onDidChangeViewState(event => {
+      if (event.webviewPanel.active) {
+        KdbResultsPanel.lastActivePanel = this;
+      }
     }, undefined, this.context.subscriptions);
     this.panel.webview.onDidReceiveMessage(message => this.onMessage(message), undefined, this.context.subscriptions);
+  }
+
+  private revealExisting(): void {
+    this.panel.reveal();
+    KdbResultsPanel.lastActivePanel = this;
   }
 
   private async onMessage(message: any): Promise<void> {
@@ -224,7 +286,13 @@ export class KdbResultsPanel {
       return;
     }
 
-    if (message.type === 'hideColumn' || message.type === 'showColumn' || message.type === 'resetHiddenColumns') {
+    if (
+      message.type === 'hideColumn' ||
+      message.type === 'showColumn' ||
+      message.type === 'hideAllColumns' ||
+      message.type === 'showAllColumns' ||
+      message.type === 'resetHiddenColumns'
+    ) {
       this.updateColumnVisibility(message);
       return;
     }
@@ -797,11 +865,20 @@ export class KdbResultsPanel {
       return;
     }
 
-    if (message.type === 'resetHiddenColumns') {
+    if (message.type === 'resetHiddenColumns' || message.type === 'showAllColumns') {
       if (this.hiddenColumnNames.length > 0) {
         this.hiddenColumnNames = [];
         this.refreshResultView();
       }
+      return;
+    }
+
+    if (message.type === 'hideAllColumns') {
+      this.hiddenColumnSchema = this.result.table.columns.slice();
+      this.hiddenColumnNames = this.result.table.columns.slice();
+      this.rowOrder = undefined;
+      this.sortState = undefined;
+      this.refreshResultView();
       return;
     }
 
@@ -812,14 +889,6 @@ export class KdbResultsPanel {
 
     if (message.type === 'hideColumn') {
       if (this.hiddenColumnNames.indexOf(columnName) === -1) {
-        if (this.visibleColumnNames(this.result).length <= 1) {
-          this.post({
-            type: 'columnVisibilitySkipped',
-            version: this.version,
-            message: 'At least one column must stay visible',
-          });
-          return;
-        }
         this.hiddenColumnSchema = this.result.table.columns.slice();
         this.hiddenColumnNames = this.hiddenColumnNames.concat(columnName);
         if (this.sortState && this.sortState.columnName === columnName) {
@@ -852,7 +921,7 @@ export class KdbResultsPanel {
         names.push(column);
       }
     });
-    return names.length >= columns.length ? names.slice(0, Math.max(0, columns.length - 1)) : names;
+    return names;
   }
 
   private refreshResultView(): void {
@@ -870,7 +939,11 @@ export class KdbResultsPanel {
     }
 
     const config = vscode.workspace.getConfiguration('kdb-sqltools.results');
-    await config.update(normalized.key, normalized.value, vscode.ConfigurationTarget.Global);
+    const settingKey = panelSettingConfigKey(
+      normalized.key,
+      panelDensity(message && message.density ? message.density : config.get<string>('density'))
+    );
+    await config.update(settingKey, normalized.value, vscode.ConfigurationTarget.Global);
     this.post({ type: 'settings', settings: panelSettings() });
   }
 
@@ -1029,6 +1102,11 @@ export class KdbResultsPanel {
       justify-content: space-between;
       gap: 8px;
       color: var(--vscode-descriptionForeground);
+    }
+    .settings-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
     }
     .column-list {
       display: grid;
@@ -1232,6 +1310,7 @@ export class KdbResultsPanel {
       box-shadow: inset 0 0 0 1px var(--vscode-editor-findMatchBorder, var(--vscode-focusBorder));
     }
     .empty {
+      position: absolute;
       padding: 16px;
       color: var(--vscode-descriptionForeground);
     }
@@ -1284,7 +1363,12 @@ export class KdbResultsPanel {
         <label class="settings-row"><span>Font size</span><input id="settingsFontSize" type="number" min="0" max="32" step="1"></label>
         <div class="settings-section">
           <div class="settings-heading"><span>Columns</span><span id="hiddenColumns">All visible</span></div>
+          <div class="settings-actions">
+            <button id="selectAllColumns" type="button">Select all</button>
+            <button id="deselectAllColumns" type="button">Deselect all</button>
+          </div>
           <div id="columnList" class="column-list" role="list"></div>
+          <button id="autoFitColumns" class="reset-columns" disabled>Auto-fit visible columns</button>
           <button id="resetColumns" class="reset-columns" disabled>Reset hidden columns</button>
           <button id="resetColumnWidths" class="reset-columns" disabled>Reset column widths</button>
         </div>
@@ -1363,6 +1447,9 @@ export class KdbResultsPanel {
       const settingsFontSize = document.getElementById('settingsFontSize');
       const hiddenColumns = document.getElementById('hiddenColumns');
       const columnList = document.getElementById('columnList');
+      const selectAllColumns = document.getElementById('selectAllColumns');
+      const deselectAllColumns = document.getElementById('deselectAllColumns');
+      const autoFitColumns = document.getElementById('autoFitColumns');
       const resetColumns = document.getElementById('resetColumns');
       const resetColumnWidths = document.getElementById('resetColumnWidths');
       const spinner = document.getElementById('spinner');
@@ -1458,7 +1545,7 @@ export class KdbResultsPanel {
       settingsHideLargeResultWarnings.addEventListener('change', () => updateSetting('hideLargeResultWarnings', !!settingsHideLargeResultWarnings.checked));
       settingsHideLargeSortWarnings.addEventListener('change', () => updateSetting('hideLargeSortWarnings', !!settingsHideLargeSortWarnings.checked));
       settingsElapsedTimeDisplay.addEventListener('change', () => updateSetting('elapsedTimeDisplay', String(settingsElapsedTimeDisplay.value || 'auto')));
-      settingsDensity.addEventListener('change', () => updateSetting('density', String(settingsDensity.value || 'standard')));
+      settingsDensity.addEventListener('change', () => updateDensitySetting(String(settingsDensity.value || 'standard')));
       settingsCellWidth.addEventListener('change', () => updateNumberSetting('cellWidth', settingsCellWidth, 80, 600));
       settingsRowHeight.addEventListener('change', () => updateNumberSetting('rowHeight', settingsRowHeight, 20, 80));
       settingsFontSize.addEventListener('change', () => updateNumberSetting('fontSize', settingsFontSize, 0, 32));
@@ -1474,6 +1561,15 @@ export class KdbResultsPanel {
         updateSetting('hideLargeResultWarnings', true);
         updateLargeResultWarning();
       });
+      selectAllColumns.addEventListener('click', () => {
+        status.textContent = 'All data columns visible';
+        vscode.postMessage({ type: 'showAllColumns' });
+      });
+      deselectAllColumns.addEventListener('click', () => {
+        status.textContent = 'All data columns hidden';
+        vscode.postMessage({ type: 'hideAllColumns' });
+      });
+      autoFitColumns.addEventListener('click', autoFitVisibleColumnWidths);
       resetColumns.addEventListener('click', () => vscode.postMessage({ type: 'resetHiddenColumns' }));
       resetColumnWidths.addEventListener('click', resetColumnWidthOverrides);
       viewport.addEventListener('scroll', requestRender);
@@ -1550,6 +1646,7 @@ export class KdbResultsPanel {
         if (data.allColumns.length === 0) {
           data.allColumns = data.columns.slice();
         }
+        applySettings(settings);
         resetWindowState();
         updateSummary();
         status.textContent = '';
@@ -1577,6 +1674,7 @@ export class KdbResultsPanel {
         slice = normalizeSlice(msg.slice || {});
         pendingRequestKey = '';
         updateAutoColumnWidthsFromSlice();
+        renderColumnSettings();
         renderNow();
       }
 
@@ -1803,15 +1901,15 @@ export class KdbResultsPanel {
       }
 
       function layoutFromSettings(settings) {
-        const densityDelta = settings.density === 'compact' ? -4 : settings.density === 'comfortable' ? 4 : 0;
-        const rowHeight = clampInteger(settings.rowHeight + densityDelta, 20, 80);
+        const rowHeight = clampInteger(settings.rowHeight, 20, 80);
+        const showRowIndex = settings.showRowIndex || (data.rowCount > 0 && data.columns.length === 0);
         return {
           cellWidth: settings.cellWidth,
           rowHeight,
           headerHeight: clampInteger(rowHeight + 4, 24, 88),
           cellPaddingX: settings.density === 'compact' ? 5 : settings.density === 'comfortable' ? 11 : 8,
-          indexWidth: settings.showRowIndex ? INDEX_WIDTH : 0,
-          showRowIndex: settings.showRowIndex
+          indexWidth: showRowIndex ? INDEX_WIDTH : 0,
+          showRowIndex
         };
       }
 
@@ -1866,7 +1964,11 @@ export class KdbResultsPanel {
         updateSummary();
         updateLargeResultWarning();
         requestRender();
-        vscode.postMessage({ type: 'updateSetting', key, value });
+        vscode.postMessage({ type: 'updateSetting', key, value, density: settings.density });
+      }
+
+      function updateDensitySetting(value) {
+        updateSetting('density', normalizeDensity(value));
       }
 
       function updateNumberSetting(key, input, min, max) {
@@ -1880,7 +1982,12 @@ export class KdbResultsPanel {
 
       function renderColumnSettings() {
         const hidden = columnNameLookup(data.hiddenColumnNames);
-        hiddenColumns.textContent = data.hiddenColumnCount > 0 ? data.hiddenColumnCount + ' hidden' : 'All visible';
+        hiddenColumns.textContent = data.hiddenColumnCount > 0
+          ? data.hiddenColumnCount + ' hidden'
+          : 'All visible';
+        selectAllColumns.disabled = data.allColumns.length === 0 || data.hiddenColumnCount === 0;
+        deselectAllColumns.disabled = data.allColumns.length === 0 || data.hiddenColumnCount >= data.allColumns.length;
+        autoFitColumns.disabled = !hasVisibleSliceColumns();
         resetColumns.disabled = data.hiddenColumnCount <= 0;
         resetColumnWidths.disabled = !hasColumnWidthOverrides();
         columnList.textContent = '';
@@ -1903,6 +2010,10 @@ export class KdbResultsPanel {
           fragment.appendChild(label);
         });
         columnList.appendChild(fragment);
+      }
+
+      function hasVisibleSliceColumns() {
+        return slice.endColumn >= slice.startColumn && data.columns.length > 0;
       }
 
       function updateAutoColumnWidthsFromSlice() {
@@ -1956,6 +2067,32 @@ export class KdbResultsPanel {
       function resetColumnWidthOverrides() {
         columnWidthOverrides = Object.create(null);
         status.textContent = 'Column widths reset';
+        renderColumnSettings();
+        requestRender();
+      }
+
+      function autoFitVisibleColumnWidths() {
+        if (!hasVisibleSliceColumns()) {
+          status.textContent = data.columns.length === 0 ? 'No visible data columns' : 'No visible slice to fit';
+          renderColumnSettings();
+          return;
+        }
+
+        let fitted = 0;
+        for (let column = slice.startColumn; column <= slice.endColumn; column++) {
+          if (column < 0 || column >= data.columns.length) {
+            continue;
+          }
+          let desired = measuredColumnTextWidth(data.columns[column]);
+          for (let rowOffset = 0; rowOffset < slice.cells.length; rowOffset++) {
+            const row = slice.cells[rowOffset] || [];
+            desired = Math.max(desired, measuredColumnTextWidth(row[column - slice.startColumn]));
+          }
+          columnWidthOverrides[columnWidthKey(column)] = clampInteger(desired, MIN_COLUMN_WIDTH, AUTO_COLUMN_WIDTH_CAP);
+          fitted += 1;
+        }
+
+        status.textContent = fitted > 0 ? 'Auto-fit ' + fitted + ' visible columns' : 'No visible slice to fit';
         renderColumnSettings();
         requestRender();
       }
@@ -2098,8 +2235,11 @@ export class KdbResultsPanel {
         if (viewport.scrollLeft !== horizontalState.physicalLeft) {
           viewport.scrollLeft = horizontalState.physicalLeft;
         }
-        empty.hidden = rowCount !== 0 || columnCount !== 0;
+        const noVisibleColumns = rowCount > 0 && columnCount === 0;
+        empty.hidden = rowCount !== 0 && !noVisibleColumns;
+        empty.textContent = noVisibleColumns ? 'No visible data columns' : '0 rows';
         empty.style.top = layout.headerHeight + 'px';
+        empty.style.left = layout.indexWidth + 'px';
 
         const rows = visibleRange(verticalState.rowOffset, viewport.clientHeight, layout.rowHeight, rowCount, OVERSCAN_ROWS);
         const columns = visibleColumns(horizontalState, metrics);
@@ -2800,11 +2940,13 @@ function nonceValue(): string {
 
 function panelSettings(): KdbPanelSettings {
   const config = vscode.workspace.getConfiguration('kdb-sqltools.results');
+  const density = panelDensity(config.get<string>('density'));
+  const size = panelSizeSettings(config, density);
   return {
-    cellWidth: boundedSettingNumber(config.get<number>('cellWidth'), DEFAULT_PANEL_SETTINGS.cellWidth, 80, 600),
-    rowHeight: boundedSettingNumber(config.get<number>('rowHeight'), DEFAULT_PANEL_SETTINGS.rowHeight, 20, 80),
-    fontSize: boundedSettingNumber(config.get<number>('fontSize'), DEFAULT_PANEL_SETTINGS.fontSize, 0, 32),
-    density: panelDensity(config.get<string>('density')),
+    cellWidth: size.cellWidth,
+    rowHeight: size.rowHeight,
+    fontSize: size.fontSize,
+    density,
     showRowIndex: booleanSetting(config.get<boolean>('showRowIndex'), DEFAULT_PANEL_SETTINGS.showRowIndex),
     includeHeaders: booleanSetting(config.get<boolean>('includeHeaders'), DEFAULT_PANEL_SETTINGS.includeHeaders),
     includeRowIndex: booleanSetting(config.get<boolean>('includeRowIndex'), DEFAULT_PANEL_SETTINGS.includeRowIndex),
@@ -2818,6 +2960,98 @@ function panelSettings(): KdbPanelSettings {
     ),
     elapsedTimeDisplay: panelElapsedTimeDisplay(config.get<string>('elapsedTimeDisplay')),
   };
+}
+
+function panelSizeSettings(
+  config: vscode.WorkspaceConfiguration,
+  density: KdbPanelDensity
+): Pick<KdbPanelSettings, 'cellWidth' | 'rowHeight' | 'fontSize'> {
+  const defaults = DEFAULT_DENSITY_SIZE_SETTINGS[density];
+  return {
+    cellWidth: densitySizeSetting(config, density, 'cellWidth', defaults.cellWidth, DEFAULT_PANEL_SETTINGS.cellWidth, 80, 600),
+    rowHeight: densitySizeSetting(config, density, 'rowHeight', defaults.rowHeight, DEFAULT_PANEL_SETTINGS.rowHeight, 20, 80),
+    fontSize: densitySizeSetting(config, density, 'fontSize', defaults.fontSize, DEFAULT_PANEL_SETTINGS.fontSize, 0, 32),
+  };
+}
+
+function densitySizeSetting(
+  config: vscode.WorkspaceConfiguration,
+  density: KdbPanelDensity,
+  key: 'cellWidth' | 'rowHeight' | 'fontSize',
+  densityDefault: number,
+  legacyDefault: number,
+  min: number,
+  max: number
+): number {
+  const densityKey = `${density}.${key}`;
+  return panelSizeSettingValue(
+    config.get<number>(densityKey),
+    config.inspect<number>(densityKey),
+    config.get<number>(key),
+    config.inspect<number>(key),
+    densityDefault,
+    legacyDefault,
+    min,
+    max
+  );
+}
+
+function panelSizeSettingValue(
+  densityValue: any,
+  densityInspection: any,
+  legacyValue: any,
+  legacyInspection: any,
+  densityDefault: number,
+  legacyDefault: number,
+  min: number,
+  max: number
+): number {
+  if (hasConfiguredSettingValue(densityInspection)) {
+    return boundedSettingNumber(densityValue, densityDefault, min, max);
+  }
+
+  if (hasConfiguredSettingValue(legacyInspection)) {
+    return boundedSettingNumber(legacyValue, legacyDefault, min, max);
+  }
+
+  return boundedSettingNumber(densityValue, densityDefault, min, max);
+}
+
+function hasConfiguredSettingValue(inspection: any): boolean {
+  return !!inspection && (
+    inspection.globalValue !== undefined ||
+    inspection.workspaceValue !== undefined ||
+    inspection.workspaceFolderValue !== undefined
+  );
+}
+
+function panelSettingConfigKey(key: string, density: KdbPanelDensity): string {
+  return key === 'cellWidth' || key === 'rowHeight' || key === 'fontSize'
+    ? `${density}.${key}`
+    : key;
+}
+
+function panelTitle(panelNumber: number): string {
+  return panelNumber <= 1 ? 'kdb Results' : `kdb Results ${panelNumber}`;
+}
+
+function initialResultViewColumn(): vscode.ViewColumn {
+  const value = vscode.workspace
+    .getConfiguration('kdb-sqltools.results.kdbPanel')
+    .get<string>('initialViewColumn', 'active');
+  switch (value) {
+    case 'beside':
+      return vscode.ViewColumn.Beside;
+    case 'one':
+      return vscode.ViewColumn.One;
+    case 'two':
+      return vscode.ViewColumn.Two;
+    case 'three':
+      return vscode.ViewColumn.Three;
+    case 'active':
+    default:
+      return vscode.ViewColumn.Active;
+  }
 }
 
 type PanelSettingUpdateValue = string | number | boolean;

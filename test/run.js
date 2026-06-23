@@ -563,6 +563,7 @@ function panelFormatElapsedMs(milliseconds, display) {
   const readmeSource = fs.readFileSync(path.join(__dirname, '..', 'README.md'), 'utf8');
   const packageSource = fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8');
   const commandTitle = commandId => packageJson.contributes.commands.find(command => command.command === commandId).title;
+  const keybinding = commandId => packageJson.contributes.keybindings.find(binding => binding.command === commandId);
   assert.strictEqual(resultsPanelSource.includes('innerHTML'), false, 'kdb results panel must not render grid cells via innerHTML');
   assert.strictEqual(resultsPanelSource.includes(' style="'), false, 'kdb results panel must not rely on inline style attributes for virtual grid positioning');
   assert.strictEqual(resultsPanelSource.includes('createElement'), true, 'kdb results panel should create positioned grid cells as DOM nodes');
@@ -597,6 +598,29 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(commandTitle('kdb-sqltools.runSelectionOrBlockInSqltools'), 'Run Selection in SQLTools Results');
   assert.strictEqual(commandTitle('kdb-sqltools.runFileInKdbPanel'), 'Run q Script in kdb Panel');
   assert.strictEqual(commandTitle('kdb-sqltools.runSelectionOrBlockInKdbPanel'), 'Run Selection in kdb Panel');
+  assert.strictEqual(commandTitle('kdb-sqltools.runFileInKdbPanelReplace'), 'Run q Script in kdb Panel (Replace)');
+  assert.strictEqual(commandTitle('kdb-sqltools.runSelectionOrBlockInKdbPanelReplace'), 'Run Selection in kdb Panel (Replace)');
+  assert.strictEqual(commandTitle('kdb-sqltools.runFileInNewKdbPanel'), 'Run q Script in New kdb Panel');
+  assert.strictEqual(commandTitle('kdb-sqltools.runSelectionOrBlockInNewKdbPanel'), 'Run Selection in New kdb Panel');
+  assert.strictEqual(commandTitle('kdb-sqltools.openKeyboardShortcuts'), 'Open kdb Keyboard Shortcuts');
+  assert.strictEqual(keybinding('kdb-sqltools.runSelectionOrBlockInKdbPanelReplace').key, 'ctrl+enter');
+  assert.strictEqual(keybinding('kdb-sqltools.runSelectionOrBlockInKdbPanelReplace').mac, 'cmd+enter');
+  assert.strictEqual(keybinding('kdb-sqltools.runSelectionOrBlockInNewKdbPanel').key, 'ctrl+shift+enter');
+  assert.strictEqual(keybinding('kdb-sqltools.runSelectionOrBlockInNewKdbPanel').mac, 'cmd+shift+enter');
+  assert.strictEqual(keybinding('kdb-sqltools.runFileInKdbPanelReplace').key, 'ctrl+alt+enter');
+  assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.runSelectionOrBlockInNewKdbPanel'));
+  assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.runSelectionOrBlockInKdbPanelReplace'));
+  assert.strictEqual(extensionSource.includes("'kdb-sqltools.runSelectionOrBlockInNewKdbPanel'"), true);
+  assert.strictEqual(extensionSource.includes("'kdb-sqltools.runSelectionOrBlockInKdbPanelReplace'"), true);
+  assert.strictEqual(extensionSource.includes('configuredKdbPanelRunMode()'), true);
+  assert.strictEqual(extensionSource.includes("get<string>(KDB_PANEL_DEFAULT_RUN_MODE_SETTING, 'new')"), true);
+  assert.strictEqual(extensionSource.includes("workbench.action.openGlobalKeybindings"), true);
+  assert.strictEqual(resultsPanelSource.includes('private static panels: KdbResultsPanel[] = [];'), true);
+  assert.strictEqual(resultsPanelSource.includes('private static lastActivePanel'), true);
+  assert.strictEqual(resultsPanelSource.includes('this.panel.reveal();'), true);
+  assert.strictEqual(resultsPanelSource.includes('this.panel.reveal(vscode.ViewColumn.Beside)'), false);
+  assert.strictEqual(resultsPanelSource.includes('initialResultViewColumn()'), true);
+  assert.strictEqual(resultsPanelSource.includes('panelTitle(panelNumber)'), true);
   assert.strictEqual(/function textExportFormat[\s\S]*return 'csv';/.test(resultsPanelSource), true);
   assert.strictEqual(/function exportFormat[\s\S]*return 'csv';/.test(resultsPanelSource), true);
   assert.strictEqual(resultsPanelSource.includes('sheetXml(result, range, includeHeaders, includeRowIndex)'), true);
@@ -627,10 +651,22 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(extensionSource.includes('client.query(text)'), true, 'kdbPanel execution should query IPC directly');
   const resultSettings = packageJson.contributes.configuration.properties;
   assert.strictEqual(resultSettings['kdb-sqltools.results.target'].default, 'kdbPanel');
+  assert.strictEqual(resultSettings['kdb-sqltools.results.kdbPanel.defaultRunMode'].default, 'new');
+  assert.deepStrictEqual(resultSettings['kdb-sqltools.results.kdbPanel.defaultRunMode'].enum, ['replace', 'new']);
+  assert.strictEqual(resultSettings['kdb-sqltools.results.kdbPanel.initialViewColumn'].default, 'active');
+  assert.deepStrictEqual(resultSettings['kdb-sqltools.results.kdbPanel.initialViewColumn'].enum, ['active', 'beside', 'one', 'two', 'three']);
   assert.strictEqual(resultSettings['kdb-sqltools.performance.trace'].type, 'boolean');
   assert.strictEqual(resultSettings['kdb-sqltools.performance.trace'].default, false);
   assert.strictEqual(/extension host console/i.test(resultSettings['kdb-sqltools.performance.trace'].description), true);
   assert.deepStrictEqual(resultSettings['kdb-sqltools.results.density'].enum, ['compact', 'standard', 'comfortable']);
+  assert.deepStrictEqual(
+    ['compact', 'standard', 'comfortable'].map(density => [
+      resultSettings[`kdb-sqltools.results.${density}.cellWidth`].default,
+      resultSettings[`kdb-sqltools.results.${density}.rowHeight`].default,
+      resultSettings[`kdb-sqltools.results.${density}.fontSize`].default,
+    ]),
+    [[140, 24, 0], [160, 28, 0], [180, 32, 0]]
+  );
   assert.strictEqual(resultSettings['kdb-sqltools.results.showRowIndex'].type, 'boolean');
   assert.strictEqual(resultSettings['kdb-sqltools.results.showRowIndex'].default, true);
   assert.strictEqual(resultSettings['kdb-sqltools.results.includeHeaders'].type, 'boolean');
@@ -664,6 +700,10 @@ function panelFormatElapsedMs(milliseconds, display) {
   );
   assert.strictEqual(resultsPanelSource.includes('RESULT_SETTING_UPDATE_ALLOWLIST'), true);
   assert.strictEqual(resultsPanelSource.includes("message.type === 'updateSetting'"), true);
+  assert.strictEqual(resultsPanelSource.includes('const settingKey = panelSettingConfigKey('), true);
+  assert.strictEqual(resultsPanelSource.includes("`${density}.${key}`"), true);
+  assert.strictEqual(resultsPanelSource.includes('DEFAULT_DENSITY_SIZE_SETTINGS'), true);
+  assert.strictEqual(resultsPanelSource.includes('function panelSizeSettingValue'), true);
   assert.strictEqual(resultsPanelSource.includes('vscode.ConfigurationTarget.Global'), true);
   const numberSettingUpdateSource = resultsPanelSource.slice(
     resultsPanelSource.indexOf('function numberSettingUpdate'),
@@ -686,6 +726,25 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('elapsedTimeDisplay', 'seconds'), null);
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('constructor', 1), null);
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('__proto__', true), null);
+  assert.strictEqual(resultsPanelInternals.panelSettingConfigKey('cellWidth', 'compact'), 'compact.cellWidth');
+  assert.strictEqual(resultsPanelInternals.panelSettingConfigKey('rowHeight', 'comfortable'), 'comfortable.rowHeight');
+  assert.strictEqual(resultsPanelInternals.panelSettingConfigKey('includeHeaders', 'compact'), 'includeHeaders');
+  assert.strictEqual(
+    resultsPanelInternals.panelSizeSettingValue(140, { defaultValue: 140 }, 500, { globalValue: 500 }, 140, 160, 80, 600),
+    500
+  );
+  assert.strictEqual(
+    resultsPanelInternals.panelSizeSettingValue(1000.9, { workspaceValue: 1000.9 }, 500, { globalValue: 500 }, 140, 160, 80, 600),
+    600
+  );
+  assert.strictEqual(
+    resultsPanelInternals.panelSizeSettingValue('abc', { globalValue: 'abc' }, 500, { globalValue: 500 }, 140, 160, 80, 600),
+    140
+  );
+  assert.strictEqual(
+    resultsPanelInternals.panelSizeSettingValue(undefined, undefined, undefined, undefined, 24, 28, 20, 80),
+    24
+  );
   const xlsxColumnar = rowsToColumnarPanelResult([{ note: 'x\u0001<&>"\'' }], ['note']);
   const xlsxBytes = await resultsPanelInternals.columnarToXlsx(
     xlsxColumnar,
@@ -737,17 +796,30 @@ function panelFormatElapsedMs(milliseconds, display) {
     true
   );
   assert.strictEqual(resultsPanelSource.includes('layout.showRowIndex'), true);
-  assert.strictEqual(resultsPanelSource.includes('settings.showRowIndex ? INDEX_WIDTH : 0'), true);
+  assert.strictEqual(resultsPanelSource.includes('const showRowIndex = settings.showRowIndex || (data.rowCount > 0 && data.columns.length === 0);'), true);
+  assert.strictEqual(resultsPanelSource.includes('indexWidth: showRowIndex ? INDEX_WIDTH : 0'), true);
   assert.strictEqual(kdbResultsSource.includes('filterColumnarPanelResult'), true);
   assert.strictEqual(resultsPanelSource.includes('hiddenColumnNames'), true);
   assert.strictEqual(resultsPanelSource.includes('private hiddenColumnSchema'), true);
   assert.strictEqual(resultsPanelSource.includes('hiddenColumnNamesForNewResult(result.table.columns)'), true);
   assert.strictEqual(resultsPanelSource.includes('sameColumnNames(this.hiddenColumnSchema, columns)'), true);
-  assert.strictEqual(resultsPanelSource.includes('At least one column must stay visible'), true);
+  assert.strictEqual(resultsPanelSource.includes('At least one column must stay visible'), false);
+  assert.strictEqual(resultsPanelSource.includes("message.type === 'hideAllColumns'"), true);
+  assert.strictEqual(resultsPanelSource.includes("message.type === 'showAllColumns'"), true);
+  assert.strictEqual(resultsPanelSource.includes("type: 'hideAllColumns'"), true);
+  assert.strictEqual(resultsPanelSource.includes("type: 'showAllColumns'"), true);
+  assert.strictEqual(resultsPanelSource.includes('id="selectAllColumns"'), true);
+  assert.strictEqual(resultsPanelSource.includes('id="deselectAllColumns"'), true);
+  assert.strictEqual(resultsPanelSource.includes('No visible data columns'), true);
+  assert.strictEqual(resultsPanelSource.includes('return names.length >= columns.length'), false);
   assert.strictEqual(readmeSource.includes('only when the full column list matches'), true);
   assert.strictEqual(resultsPanelSource.includes("message.type === 'hideColumn'"), true);
   assert.strictEqual(resultsPanelSource.includes("message.type === 'showColumn'"), true);
   assert.strictEqual(resultsPanelSource.includes("message.type === 'resetHiddenColumns'"), true);
+  assert.strictEqual(resultsPanelSource.includes('id="autoFitColumns"'), true);
+  assert.strictEqual(resultsPanelSource.includes('function autoFitVisibleColumnWidths()'), true);
+  assert.strictEqual(resultsPanelSource.includes('measuredColumnTextWidth(data.columns[column])'), true);
+  assert.strictEqual(resultsPanelSource.includes('AUTO_COLUMN_WIDTH_CAP'), true);
   assert.strictEqual(packageSource.includes('hiddenColumn'), false, 'hidden columns must not be globally persisted');
   assert.deepStrictEqual(htmlSelectOptions(resultsPanelSource, 'interactionMode'), ['select', 'sort']);
   assert.ok(
@@ -1312,7 +1384,7 @@ function panelFormatElapsedMs(milliseconds, display) {
 function loadResultsPanelInternals() {
   const filename = path.join(__dirname, '..', 'out', 'results-panel.js');
   const source = fs.readFileSync(filename, 'utf8') +
-    '\nmodule.exports.__test = { columnarToXlsx, normalizePanelSettingUpdate };';
+    '\nmodule.exports.__test = { columnarToXlsx, normalizePanelSettingUpdate, panelSettingConfigKey, panelSizeSettingValue };';
   const testModule = new Module(filename, module);
   testModule.filename = filename;
   testModule.paths = Module._nodeModulePaths(path.dirname(filename));
@@ -1331,7 +1403,7 @@ function mockVscode() {
     ConfigurationTarget: { Global: 1 },
     ProgressLocation: { Notification: 15, Window: 10 },
     Uri: { file: fsPath => ({ fsPath }) },
-    ViewColumn: { Beside: 2 },
+    ViewColumn: { Active: -1, Beside: -2, One: 1, Two: 2, Three: 3 },
     env: {},
     window: {},
     workspace: {},

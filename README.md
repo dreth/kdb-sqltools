@@ -79,6 +79,17 @@ The `kdb+: Copy Example Global Connection Settings` command copies this User-set
 
 The kdb results panel is the default target for `kdb+: Run q Script` and `kdb+: Run Selection`. It runs through this extension's direct driver path and avoids SQLTools `*.session.sql` editor documents. `Run Selection` sends the selected text exactly; with no selection, it sends only the current physical line. A blank current line uses the normal no-code warning.
 
+Default kdb-panel runs open a new result tab unless you set `"kdb-sqltools.results.kdbPanel.defaultRunMode": "replace"`. Explicit commands are also available:
+
+- `kdb+: Run Selection in kdb Panel (Replace)` reuses the current or first existing kdb result tab.
+- `kdb+: Run Selection in New kdb Panel` opens an independent result tab.
+- `kdb+: Run q Script in kdb Panel (Replace)` reuses an existing kdb result tab.
+- `kdb+: Run q Script in New kdb Panel` opens an independent result tab.
+
+Default keybindings in q files are `Ctrl+Enter` / `Cmd+Enter` for selection replace, `Ctrl+Shift+Enter` / `Cmd+Shift+Enter` for selection in a new result tab, and `Ctrl+Alt+Enter` / `Cmd+Alt+Enter` for whole-script replace. Change them in VS Code's Keyboard Shortcuts UI or `keybindings.json`; extension settings cannot define arbitrary VS Code keybindings. The `kdb+: Open kdb Keyboard Shortcuts` command opens the Keyboard Shortcuts UI.
+
+When replacing results, the extension reveals the existing kdb result tab in its current editor group instead of forcing `ViewColumn.Beside`. VS Code does not provide an extension API to create a bottom split automatically. The first new kdb result tab uses `"kdb-sqltools.results.kdbPanel.initialViewColumn"` (`active`, `beside`, `one`, `two`, or `three`).
+
 To use SQLTools' own results target instead, set:
 
 ```json
@@ -91,7 +102,9 @@ The kdb panel virtualizes rows and columns and transfers only the visible cell w
 
 Selection supports individual ranges, whole rows, whole columns, and all cells. With no selection, copy/export actions use all cells.
 
-Columns can be hidden from the panel settings menu for the current panel session. Hidden columns stay hidden for later results in that panel only when the full column list matches, and reset restores all columns. Hidden-column choices are not saved globally.
+Columns can be hidden from the panel settings menu for the current panel session. Select all and Deselect all controls are available; deselecting all data columns leaves the row-number column and a clear empty state. Hidden columns stay hidden for later results in that panel only when the full column list matches, and reset restores all columns. Hidden-column choices are not saved globally.
+
+Column widths can be dragged per session. Auto-fit visible columns sizes the currently rendered slice only, including headers, so it does not scan very large results. Reset column widths clears session width overrides.
 
 Header clicks default to column selection. Change the toolbar mode from Select to Sort to sort visible columns in the extension; repeated clicks cycle ascending, descending, and original order. Sorting uses the panel's visible cell text, warns before sorting very large row counts, and resets on the third click.
 
@@ -107,6 +120,17 @@ kdb panel settings:
   "kdb-sqltools.results.rowHeight": 28,
   "kdb-sqltools.results.fontSize": 0,
   "kdb-sqltools.results.density": "standard",
+  "kdb-sqltools.results.kdbPanel.defaultRunMode": "new",
+  "kdb-sqltools.results.kdbPanel.initialViewColumn": "active",
+  "kdb-sqltools.results.compact.cellWidth": 140,
+  "kdb-sqltools.results.compact.rowHeight": 24,
+  "kdb-sqltools.results.compact.fontSize": 0,
+  "kdb-sqltools.results.standard.cellWidth": 160,
+  "kdb-sqltools.results.standard.rowHeight": 28,
+  "kdb-sqltools.results.standard.fontSize": 0,
+  "kdb-sqltools.results.comfortable.cellWidth": 180,
+  "kdb-sqltools.results.comfortable.rowHeight": 32,
+  "kdb-sqltools.results.comfortable.fontSize": 0,
   "kdb-sqltools.results.showRowIndex": true,
   "kdb-sqltools.results.includeHeaders": true,
   "kdb-sqltools.results.includeRowIndex": true,
@@ -116,7 +140,7 @@ kdb panel settings:
 }
 ```
 
-`fontSize: 0` uses the VS Code default. Density can be `compact`, `standard`, or `comfortable`. `elapsedTimeDisplay` can be `auto` or `milliseconds`. `showRowIndex` controls the visible left row-number column; `includeHeaders` and `includeRowIndex` control default copy/export output. Large-result and large-sort warnings can be suppressed from the panel or these settings.
+`fontSize: 0` uses the VS Code default. Density can be `compact`, `standard`, or `comfortable`; each density has its own saved `cellWidth`, `rowHeight`, and `fontSize`. The legacy top-level size settings remain as fallbacks for existing user configuration. `elapsedTimeDisplay` can be `auto` or `milliseconds`. `showRowIndex` controls the visible left row-number column; `includeHeaders` and `includeRowIndex` control default copy/export output. Large-result and large-sort warnings can be suppressed from the panel or these settings.
 
 ## Performance Trace
 
