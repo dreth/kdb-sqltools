@@ -131,6 +131,7 @@ export class KdbResultsPanel {
   private static panels: KdbResultsPanel[] = [];
   private static lastActivePanel: KdbResultsPanel | undefined;
   private static nextPanelNumber = 1;
+  private readonly disposables: vscode.Disposable[] = [];
   private panel: vscode.WebviewPanel;
   private disposed = false;
   private ready = false;
@@ -179,7 +180,7 @@ export class KdbResultsPanel {
 
   public showResult(result: KdbPanelResult): KdbResultsPanel {
     if (this.disposed) {
-      return KdbResultsPanel.showResult(this.context, result, 'replace');
+      return this;
     }
     this.version += 1;
     this.firstSliceVersion = 0;
@@ -214,7 +215,7 @@ export class KdbResultsPanel {
       KdbResultsPanel.panels[0];
   }
 
-  private constructor(private readonly context: vscode.ExtensionContext) {
+  private constructor(_context: vscode.ExtensionContext) {
     const panelNumber = KdbResultsPanel.nextPanelNumber++;
     this.panel = vscode.window.createWebviewPanel(
       'kdbSqltoolsResults',
@@ -229,19 +230,36 @@ export class KdbResultsPanel {
     KdbResultsPanel.panels.push(this);
     KdbResultsPanel.lastActivePanel = this;
     this.panel.webview.html = this.html(this.panel.webview);
-    this.panel.onDidDispose(() => {
-      this.disposed = true;
-      KdbResultsPanel.panels = KdbResultsPanel.panels.filter(panel => panel !== this);
-      if (KdbResultsPanel.lastActivePanel === this) {
-        KdbResultsPanel.lastActivePanel = KdbResultsPanel.panels[0];
-      }
-    }, undefined, this.context.subscriptions);
+    this.panel.onDidDispose(() => this.disposePanel(), undefined, this.disposables);
     this.panel.onDidChangeViewState(event => {
       if (event.webviewPanel.active) {
         KdbResultsPanel.lastActivePanel = this;
       }
-    }, undefined, this.context.subscriptions);
-    this.panel.webview.onDidReceiveMessage(message => this.onMessage(message), undefined, this.context.subscriptions);
+    }, undefined, this.disposables);
+    this.panel.webview.onDidReceiveMessage(message => this.onMessage(message), undefined, this.disposables);
+  }
+
+  private disposePanel(): void {
+    if (this.disposed) {
+      return;
+    }
+
+    this.disposed = true;
+    this.ready = false;
+    KdbResultsPanel.panels = KdbResultsPanel.panels.filter(panel => panel !== this);
+    if (KdbResultsPanel.lastActivePanel === this) {
+      KdbResultsPanel.lastActivePanel = KdbResultsPanel.panels[0];
+    }
+    this.result = undefined;
+    this.loading = undefined;
+    this.rowOrder = undefined;
+    this.sortState = undefined;
+    this.hiddenColumnNames = [];
+    this.hiddenColumnSchema = undefined;
+    this.baseVisibleTableCache = undefined;
+    this.visibleTableCache = undefined;
+    this.activeSearchId += 1;
+    this.disposables.splice(0).forEach(disposable => disposable.dispose());
   }
 
   private revealExisting(): void {
