@@ -1,0 +1,59 @@
+name: Publish VS Code Extension
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    name: Publish to VS Code Marketplace
+    runs-on: ubuntu-latest
+    environment: marketplace
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Tests intentionally run locally by Hermes before tagging/release.
+      # - name: Compile
+      #   run: npm run compile
+      #
+      # - name: Test
+      #   run: npm test
+      #
+      # - name: Live kdb test
+      #   run: KDB_SQLTOOLS_LIVE_REQUIRED=1 npm run test:live-kdb
+
+      - name: Azure login with GitHub OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      - name: Package VSIX
+        run: npx @vscode/vsce package --out kdb-sqltools.vsix
+
+      - name: Publish to VS Code Marketplace with Microsoft Entra credential
+        run: npx @vscode/vsce publish --packagePath kdb-sqltools.vsix --azure-credential
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: kdb-sqltools-vsix
+          path: kdb-sqltools.vsix
