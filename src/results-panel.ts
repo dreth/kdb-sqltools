@@ -226,12 +226,19 @@ export class KdbResultsPanel {
       KdbResultsPanel.panels[0];
   }
 
+  public static copySelectionFromActivePanel(): void {
+    const panel = KdbResultsPanel.reusablePanel();
+    if (panel) {
+      panel.post({ type: 'copySelection' });
+    }
+  }
+
   private constructor(_context: vscode.ExtensionContext, viewColumn: vscode.ViewColumn = initialResultViewColumn()) {
     const panelNumber = KdbResultsPanel.nextPanelNumber++;
     this.panel = vscode.window.createWebviewPanel(
       'kdbSqltoolsResults',
       panelTitle(panelNumber),
-      viewColumn,
+      { viewColumn, preserveFocus: true },
       {
         enableScripts: true,
         retainContextWhenHidden: true,
@@ -274,7 +281,7 @@ export class KdbResultsPanel {
   }
 
   private revealExisting(): void {
-    this.panel.reveal();
+    this.panel.reveal(this.panel.viewColumn, true);
     KdbResultsPanel.lastActivePanel = this;
   }
 
@@ -290,6 +297,11 @@ export class KdbResultsPanel {
       } else if (this.loading) {
         this.post({ type: 'loading', state: { ...this.loading, version: this.version, settings: panelSettings() } });
       }
+      return;
+    }
+
+    if (message.type === 'tableContextMenu') {
+      KdbResultsPanel.lastActivePanel = this;
       return;
     }
 
@@ -1419,7 +1431,7 @@ export class KdbResultsPanel {
     <span id="selection" class="selection"></span>
   </div>
   <div id="message" class="message" hidden></div>
-  <div id="viewport" tabindex="0">
+  <div id="viewport" tabindex="0" data-vscode-context='{"webviewSection":"kdbResultsTable","preventDefaultContextMenuItems":true}'>
     <div id="canvas">
       <div id="header" class="header" role="row"></div>
       <div id="rows"></div>
@@ -1540,6 +1552,8 @@ export class KdbResultsPanel {
         } else if (msg.type === 'columnVisibilitySkipped' && isCurrentVersionMessage(msg)) {
           status.textContent = String(msg.message || 'Column visibility unchanged');
           renderColumnSettings();
+        } else if (msg.type === 'copySelection') {
+          copySelection();
         }
       });
 
@@ -1603,6 +1617,9 @@ export class KdbResultsPanel {
       resetColumns.addEventListener('click', () => vscode.postMessage({ type: 'resetHiddenColumns' }));
       resetColumnWidths.addEventListener('click', resetColumnWidthOverrides);
       viewport.addEventListener('scroll', requestRender);
+      viewport.addEventListener('contextmenu', () => {
+        vscode.postMessage({ type: 'tableContextMenu' });
+      });
       window.addEventListener('keydown', event => {
         if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c' && hasTableCells()) {
           event.preventDefault();

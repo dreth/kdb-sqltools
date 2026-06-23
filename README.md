@@ -88,6 +88,8 @@ Default kdb-panel runs open a new result tab unless you set `"kdb-sqltools.resul
 
 Default keybindings in q files are `Ctrl+Enter` / `Cmd+Enter` for selection replace, `Ctrl+Shift+Enter` / `Cmd+Shift+Enter` for selection in a new result tab, and `Ctrl+Alt+Enter` / `Cmd+Alt+Enter` for whole-script replace. Change them in VS Code's Keyboard Shortcuts UI or `keybindings.json`; extension settings cannot define arbitrary VS Code keybindings. The `kdb+: Open kdb Keyboard Shortcuts` command opens the Keyboard Shortcuts UI.
 
+Running kdb-panel commands keeps focus in the q editor while the result tab updates.
+
 When replacing results, the extension reveals the existing kdb result tab in its current editor group instead of forcing `ViewColumn.Beside`. New kdb result tabs open beside existing kdb result tabs when one is already present. VS Code does not provide an extension API to create a bottom split automatically, so the first new kdb result tab uses `"kdb-sqltools.results.kdbPanel.initialViewColumn"` (`active`, `beside`, `one`, `two`, or `three`).
 
 To use SQLTools' own results target instead, set:
@@ -110,7 +112,7 @@ Header clicks default to column selection. Change the toolbar mode from Select t
 
 Toolbar search runs in the extension against visible columns only. It returns capped row-match metadata to the webview instead of transferring all result cells, and the status marks capped or partial scans.
 
-Copy formats: CSV, TSV, JSON, NDJSON, HTML. Export formats: CSV, XLSX, TSV, JSON, NDJSON, HTML. XLSX export writes a real `.xlsx` workbook and rejects output beyond Excel's sheet limits. Large copy/export actions prompt before materializing output. The row-number/header copy and export options are enabled by default and persist globally from the panel settings menu.
+Copy formats: CSV, TSV, JSON, NDJSON, HTML. Right-click Copy in the table viewport uses the same selected range and copy settings as `Ctrl+C` / `Cmd+C`. Export formats: CSV, XLSX, TSV, JSON, NDJSON, HTML. XLSX export writes a real `.xlsx` workbook and rejects output beyond Excel's sheet limits. Large copy/export actions prompt before materializing output. The row-number/header copy and export options are enabled by default and persist globally from the panel settings menu.
 
 kdb panel settings:
 
@@ -153,6 +155,24 @@ Enable it with either:
 ```
 
 or by launching VS Code with `KDB_SQLTOOLS_PERF=1`.
+
+## Feedback
+
+VS Code settings cannot host extension buttons, so feedback actions are available as Command Palette commands:
+
+- `kdb+: Report Bug`
+- `kdb+: Request Feature`
+- `kdb+: Give Feedback`
+
+GitHub links:
+
+- [Bug report][bug-report]
+- [Feature request][feature-request]
+- [General feedback][general-feedback]
+
+[bug-report]: https://github.com/dreth/kdb-sqltools/issues/new?title=Bug%3A%20&labels=bug&body=%23%23%20What%20happened%0A%0A%0A%23%23%20Expected%20behavior%0A%0A%0A%23%23%20Steps%20to%20reproduce%0A1.%20%0A2.%20%0A3.%20%0A%0A%23%23%20Environment%0A-%20VS%20Code%3A%0A-%20kdb-sqltools%3A%0A-%20OS%3A%0A-%20kdb%2B%2Fq%3A
+[feature-request]: https://github.com/dreth/kdb-sqltools/issues/new?title=Feature%20request%3A%20&labels=enhancement&body=%23%23%20What%20would%20you%20like%20to%20do%3F%0A%0A%0A%23%23%20Why%20is%20this%20useful%3F%0A%0A%0A%23%23%20Current%20workaround%0A
+[general-feedback]: https://github.com/dreth/kdb-sqltools/issues/new?title=Feedback%3A%20&labels=feedback&body=%23%23%20Feedback%0A%0A%0A%23%23%20Context%0A
 
 ## Limitations
 

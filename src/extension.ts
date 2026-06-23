@@ -15,13 +15,21 @@ const RESULTS_TARGET_SETTING = 'results.target';
 const KDB_PANEL_DEFAULT_RUN_MODE_SETTING = 'results.kdbPanel.defaultRunMode';
 const PERFORMANCE_TRACE_SETTING = 'performance.trace';
 const LAST_PANEL_CONNECTION_KEY = 'kdb-sqltools.lastPanelConnectionId';
+const GITHUB_ISSUES_NEW_URL = 'https://github.com/dreth/kdb-sqltools/issues/new';
 const OPEN_USER_SETTINGS_JSON_ACTION = 'Open User Settings JSON';
 const OPEN_SQLTOOLS_SETTINGS_ACTION = 'Open SQLTools Settings';
 
 type ResultsTarget = 'sqltools' | 'kdbPanel';
+type FeedbackKind = 'bug' | 'feature' | 'feedback';
 
 interface KdbConnectionPick extends vscode.QuickPickItem {
   connection: IConnection<any>;
+}
+
+interface FeedbackIssueTemplate {
+  title: string;
+  labels: string;
+  body: string;
 }
 
 export async function activate(extContext: ExtensionContext): Promise<IDriverExtensionApi> {
@@ -52,6 +60,10 @@ export async function activate(extContext: ExtensionContext): Promise<IDriverExt
     vscode.commands.registerCommand('kdb-sqltools.runSelectionOrBlockInNewKdbPanel', () => runQSelectionOrLine(extContext, 'kdbPanel', 'new')),
     vscode.commands.registerCommand('kdb-sqltools.openKeyboardShortcuts', openKeyboardShortcuts),
     vscode.commands.registerCommand('kdb-sqltools.copyExampleConnectionSettings', copyExampleConnectionSettings),
+    vscode.commands.registerCommand('kdb-sqltools.copyKdbPanelSelection', () => KdbResultsPanel.copySelectionFromActivePanel()),
+    vscode.commands.registerCommand('kdb-sqltools.reportBug', () => openFeedbackIssue('bug')),
+    vscode.commands.registerCommand('kdb-sqltools.requestFeature', () => openFeedbackIssue('feature')),
+    vscode.commands.registerCommand('kdb-sqltools.giveFeedback', () => openFeedbackIssue('feedback')),
     vscode.languages.registerCodeLensProvider([{ language: 'q' }, { pattern: '**/*.q' }], new QRunCodeLensProvider())
   );
 
@@ -169,6 +181,75 @@ async function copyExampleConnectionSettings(): Promise<void> {
   } else if (action === OPEN_SQLTOOLS_SETTINGS_ACTION) {
     await vscode.commands.executeCommand('sqltools.openSettings');
   }
+}
+
+async function openFeedbackIssue(kind: FeedbackKind): Promise<void> {
+  await vscode.env.openExternal(vscode.Uri.parse(githubIssueUrl(feedbackIssueTemplate(kind))));
+}
+
+function githubIssueUrl(template: FeedbackIssueTemplate): string {
+  const query = [
+    ['title', template.title],
+    ['body', template.body],
+    ['labels', template.labels],
+  ].map(([key, value]) => `${key}=${encodeURIComponent(value)}`).join('&');
+  return `${GITHUB_ISSUES_NEW_URL}?${query}`;
+}
+
+function feedbackIssueTemplate(kind: FeedbackKind): FeedbackIssueTemplate {
+  if (kind === 'bug') {
+    return {
+      title: 'Bug: ',
+      labels: 'bug',
+      body: [
+        '## What happened',
+        '',
+        '',
+        '## Expected behavior',
+        '',
+        '',
+        '## Steps to reproduce',
+        '1. ',
+        '2. ',
+        '3. ',
+        '',
+        '## Environment',
+        '- VS Code:',
+        '- kdb-sqltools:',
+        '- OS:',
+        '- kdb+/q:',
+      ].join('\n'),
+    };
+  }
+
+  if (kind === 'feature') {
+    return {
+      title: 'Feature request: ',
+      labels: 'enhancement',
+      body: [
+        '## What would you like to do?',
+        '',
+        '',
+        '## Why is this useful?',
+        '',
+        '',
+        '## Current workaround',
+        '',
+      ].join('\n'),
+    };
+  }
+
+  return {
+    title: 'Feedback: ',
+    labels: 'feedback',
+    body: [
+      '## Feedback',
+      '',
+      '',
+      '## Context',
+      '',
+    ].join('\n'),
+  };
 }
 
 function exampleGlobalConnectionSettings(): string {
