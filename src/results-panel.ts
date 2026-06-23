@@ -140,9 +140,11 @@ export class KdbResultsPanel {
   private version = 0;
   private firstSliceVersion = 0;
   private hiddenColumnNames: string[] = [];
+  private columnOrder: string[] | undefined;
   private rowOrder: number[] | undefined;
   private sortState: KdbPanelSortState | undefined;
   private hiddenColumnSchema: string[] | undefined;
+  private columnOrderSchema: string[] | undefined;
   private baseVisibleTableCache: { version: number; source: ColumnarPanelResult; table: ColumnarPanelResult } | undefined;
   private visibleTableCache: { version: number; source: ColumnarPanelResult; table: ColumnarPanelResult } | undefined;
   private activeSearchId = 0;
@@ -192,6 +194,8 @@ export class KdbResultsPanel {
     this.loading = undefined;
     this.hiddenColumnNames = this.hiddenColumnNamesForNewResult(result.table.columns);
     this.hiddenColumnSchema = result.table.columns.slice();
+    this.columnOrder = this.columnOrderForNewResult(result.table.columns);
+    this.columnOrderSchema = result.table.columns.slice();
     this.result = result;
     this.revealExisting();
     this.postResultMetadata();
@@ -274,6 +278,8 @@ export class KdbResultsPanel {
     this.sortState = undefined;
     this.hiddenColumnNames = [];
     this.hiddenColumnSchema = undefined;
+    this.columnOrder = undefined;
+    this.columnOrderSchema = undefined;
     this.baseVisibleTableCache = undefined;
     this.visibleTableCache = undefined;
     this.activeSearchId += 1;
@@ -340,6 +346,11 @@ export class KdbResultsPanel {
 
     if (message.type === 'sortColumn') {
       await this.sortColumn(message);
+      return;
+    }
+
+    if (message.type === 'reorderColumn') {
+      this.reorderColumn(message);
       return;
     }
 
@@ -464,7 +475,25 @@ export class KdbResultsPanel {
 
   private visibleColumnNames(result: KdbPanelResult): string[] {
     const hidden = columnNameLookup(this.hiddenColumnNames);
-    return result.table.columns.filter(column => !hidden[column]);
+    return this.orderedColumnNames(result.table.columns).filter(column => !hidden[column]);
+  }
+
+  private orderedColumnNames(columns: string[]): string[] {
+    const available = columnNameLookup(columns);
+    const ordered: string[] = [];
+    if (this.columnOrder) {
+      this.columnOrder.forEach(column => {
+        if (available[column] && ordered.indexOf(column) === -1) {
+          ordered.push(column);
+        }
+      });
+    }
+    columns.forEach(column => {
+      if (ordered.indexOf(column) === -1) {
+        ordered.push(column);
+      }
+    });
+    return ordered;
   }
 
   private activeHiddenColumnNames(result: KdbPanelResult): string[] {
@@ -901,6 +930,37 @@ export class KdbResultsPanel {
     return clampCellRange(requested, table.rowCount, table.columns.length);
   }
 
+  private reorderColumn(message: any): void {
+    const requestVersion = integerOrNull(message.version);
+    if (requestVersion === null || !this.result || requestVersion !== this.version) {
+      return;
+    }
+
+    const sourceColumnName = typeof message.sourceColumnName === 'string' ? message.sourceColumnName : '';
+    const targetColumnName = typeof message.targetColumnName === 'string' ? message.targetColumnName : '';
+    if (!sourceColumnName || !targetColumnName || sourceColumnName === targetColumnName) {
+      return;
+    }
+
+    const visibleColumns = this.visibleColumnNames(this.result);
+    if (visibleColumns.indexOf(sourceColumnName) === -1 || visibleColumns.indexOf(targetColumnName) === -1) {
+      return;
+    }
+
+    const nextVisibleColumns = moveColumnName(visibleColumns, sourceColumnName, targetColumnName);
+    if (sameColumnNames(visibleColumns, nextVisibleColumns)) {
+      return;
+    }
+
+    this.columnOrder = mergeVisibleColumnOrder(
+      this.orderedColumnNames(this.result.table.columns),
+      nextVisibleColumns,
+      this.hiddenColumnNames
+    );
+    this.columnOrderSchema = this.result.table.columns.slice();
+    this.refreshResultView();
+  }
+
   private updateColumnVisibility(message: any): void {
     if (!this.result) {
       return;
@@ -959,6 +1019,26 @@ export class KdbResultsPanel {
     const names: string[] = [];
     this.hiddenColumnNames.forEach(column => {
       if (available[column] && names.indexOf(column) === -1) {
+        names.push(column);
+      }
+    });
+    return names;
+  }
+
+  private columnOrderForNewResult(columns: string[]): string[] | undefined {
+    if (!sameColumnNames(this.columnOrderSchema, columns) || !this.columnOrder) {
+      return undefined;
+    }
+
+    const available = columnNameLookup(columns);
+    const names: string[] = [];
+    this.columnOrder.forEach(column => {
+      if (available[column] && names.indexOf(column) === -1) {
+        names.push(column);
+      }
+    });
+    columns.forEach(column => {
+      if (names.indexOf(column) === -1) {
         names.push(column);
       }
     });
@@ -1335,6 +1415,12 @@ export class KdbResultsPanel {
     .resize-handle:hover {
       background: var(--vscode-focusBorder);
     }
+    .header .cell.drag-source {
+      opacity: 0.7;
+    }
+    .header .cell.drag-target {
+      box-shadow: inset 0 0 0 1px var(--vscode-focusBorder);
+    }
     .index {
       color: var(--vscode-descriptionForeground);
       text-align: right;
@@ -1366,12 +1452,15 @@ export class KdbResultsPanel {
       <option value="json">JSON</option>
       <option value="ndjson">NDJSON</option>
       <option value="html">HTML</option>
+      <option value="markdown">Markdown</option>
     </select>
     <button id="copy" disabled>Copy</button>
     <button id="export" disabled>Export</button>
     <label class="checkbox"><input id="includeRowIndex" type="checkbox" checked>Row #</label>
     <label class="checkbox"><input id="includeHeaders" type="checkbox" checked>Headers</label>
+    <label class="checkbox"><input id="autoFit" type="checkbox" disabled>Auto-fit</label>
     <select id="interactionMode" aria-label="Header mode">
+      <option value="drag">Drag</option>
       <option value="select">Select</option>
       <option value="sort">Sort</option>
     </select>
@@ -1409,7 +1498,6 @@ export class KdbResultsPanel {
             <button id="deselectAllColumns" type="button">Deselect all</button>
           </div>
           <div id="columnList" class="column-list" role="list"></div>
-          <button id="autoFitColumns" class="reset-columns" disabled>Auto-fit visible columns</button>
           <button id="resetColumns" class="reset-columns" disabled>Reset hidden columns</button>
           <button id="resetColumnWidths" class="reset-columns" disabled>Reset column widths</button>
         </div>
@@ -1470,6 +1558,7 @@ export class KdbResultsPanel {
       const exportButton = document.getElementById('export');
       const includeRowIndex = document.getElementById('includeRowIndex');
       const includeHeaders = document.getElementById('includeHeaders');
+      const autoFit = document.getElementById('autoFit');
       const interactionMode = document.getElementById('interactionMode');
       const sortStatus = document.getElementById('sortStatus');
       const searchInput = document.getElementById('searchInput');
@@ -1490,7 +1579,6 @@ export class KdbResultsPanel {
       const columnList = document.getElementById('columnList');
       const selectAllColumns = document.getElementById('selectAllColumns');
       const deselectAllColumns = document.getElementById('deselectAllColumns');
-      const autoFitColumns = document.getElementById('autoFitColumns');
       const resetColumns = document.getElementById('resetColumns');
       const resetColumnWidths = document.getElementById('resetColumnWidths');
       const spinner = document.getElementById('spinner');
@@ -1521,6 +1609,8 @@ export class KdbResultsPanel {
       let autoColumnWidths = Object.create(null);
       let columnWidthSchema = [];
       let resizeState = null;
+      let autoFitEnabled = false;
+      let columnDragState = null;
 
       window.addEventListener('message', event => {
         const msg = event.data || {};
@@ -1567,6 +1657,7 @@ export class KdbResultsPanel {
       exportButton.addEventListener('click', exportSelection);
       includeHeaders.addEventListener('change', () => updateSetting('includeHeaders', !!includeHeaders.checked));
       includeRowIndex.addEventListener('change', () => updateSetting('includeRowIndex', !!includeRowIndex.checked));
+      autoFit.addEventListener('change', () => setAutoFitEnabled(!!autoFit.checked));
       interactionMode.addEventListener('change', () => {
         updateSortStatus();
         renderNow();
@@ -1613,7 +1704,6 @@ export class KdbResultsPanel {
         status.textContent = 'All data columns hidden';
         vscode.postMessage({ type: 'hideAllColumns' });
       });
-      autoFitColumns.addEventListener('click', autoFitVisibleColumnWidths);
       resetColumns.addEventListener('click', () => vscode.postMessage({ type: 'resetHiddenColumns' }));
       resetColumnWidths.addEventListener('click', resetColumnWidthOverrides);
       viewport.addEventListener('scroll', requestRender);
@@ -1639,8 +1729,13 @@ export class KdbResultsPanel {
           resizeState = null;
           document.body.style.cursor = '';
         }
+        if (dragMode === 'reorder') {
+          finishColumnReorder();
+        }
         dragging = false;
         dragMode = '';
+        columnDragState = null;
+        requestRender();
       });
       window.addEventListener('resize', requestRender);
 
@@ -1731,6 +1826,7 @@ export class KdbResultsPanel {
         selection = null;
         dragging = false;
         dragMode = '';
+        columnDragState = null;
         latestRequestId = 0;
         pendingRequestKey = '';
       }
@@ -2035,7 +2131,7 @@ export class KdbResultsPanel {
           : 'All visible';
         selectAllColumns.disabled = data.allColumns.length === 0 || data.hiddenColumnCount === 0;
         deselectAllColumns.disabled = data.allColumns.length === 0 || data.hiddenColumnCount >= data.allColumns.length;
-        updateAutoFitButtonState();
+        updateAutoFitControlState();
         resetColumns.disabled = data.hiddenColumnCount <= 0;
         resetColumnWidths.disabled = !hasColumnWidthOverrides();
         columnList.textContent = '';
@@ -2068,11 +2164,25 @@ export class KdbResultsPanel {
         return data.columns.length > 0 && lastRenderedColumns.end >= lastRenderedColumns.start;
       }
 
-      function updateAutoFitButtonState() {
-        autoFitColumns.disabled = !hasVisibleColumnsForAutoFit();
+      function updateAutoFitControlState() {
+        autoFit.disabled = data.columns.length === 0;
+        autoFit.title = autoFit.disabled ? 'No visible data columns' : 'Fit headers and rendered cells as you scroll';
+      }
+
+      function setAutoFitEnabled(enabled) {
+        autoFitEnabled = enabled && data.columns.length > 0;
+        autoFit.checked = autoFitEnabled;
+        autoColumnWidths = Object.create(null);
+        status.textContent = autoFitEnabled ? 'Auto-fit enabled' : 'Auto-fit disabled';
+        updateAutoColumnWidthsFromSlice();
+        updateAutoFitControlState();
+        requestRender();
       }
 
       function updateAutoColumnWidthsFromSlice() {
+        if (!autoFitEnabled || !hasVisibleSliceColumns()) {
+          return;
+        }
         let changed = false;
         for (let column = slice.startColumn; column <= slice.endColumn; column++) {
           if (column < 0 || column >= data.columns.length) {
@@ -2082,16 +2192,14 @@ export class KdbResultsPanel {
           if (Number.isFinite(columnWidthOverrides[key])) {
             continue;
           }
-          let desired = Math.max(settings.cellWidth, measuredColumnTextWidth(data.columns[column]));
+          let desired = measuredColumnTextWidth(data.columns[column]);
           for (let rowOffset = 0; rowOffset < slice.cells.length; rowOffset++) {
             const row = slice.cells[rowOffset] || [];
             const text = String(row[column - slice.startColumn] || '');
-            if (isArrayDisplayText(text)) {
-              desired = Math.max(desired, measuredColumnTextWidth(text));
-            }
+            desired = Math.max(desired, measuredColumnTextWidth(text));
           }
           desired = clampInteger(desired, MIN_COLUMN_WIDTH, AUTO_COLUMN_WIDTH_CAP);
-          if (!Number.isFinite(autoColumnWidths[key]) || desired > autoColumnWidths[key]) {
+          if (autoColumnWidths[key] !== desired) {
             autoColumnWidths[key] = desired;
             changed = true;
           }
@@ -2099,11 +2207,6 @@ export class KdbResultsPanel {
         if (changed) {
           requestRender();
         }
-      }
-
-      function isArrayDisplayText(text) {
-        const value = String(text || '').trim();
-        return value.indexOf(' , ') !== -1 && value.charAt(0) !== '{';
       }
 
       function measuredColumnTextWidth(text) {
@@ -2122,55 +2225,11 @@ export class KdbResultsPanel {
 
       function resetColumnWidthOverrides() {
         columnWidthOverrides = Object.create(null);
-        status.textContent = 'Column widths reset';
+        autoColumnWidths = Object.create(null);
+        status.textContent = autoFitEnabled ? 'Column widths reset; auto-fit active' : 'Column widths reset';
+        updateAutoColumnWidthsFromSlice();
         renderColumnSettings();
         requestRender();
-      }
-
-      function autoFitVisibleColumnWidths() {
-        const columns = autoFitColumnRange();
-        if (columns.end < columns.start || data.columns.length === 0) {
-          status.textContent = data.columns.length === 0 ? 'No visible data columns' : 'No visible columns to fit';
-          renderColumnSettings();
-          return;
-        }
-
-        const includeSlice = hasVisibleSliceColumns() && columnRangesOverlap(columns, slice);
-        let fitted = 0;
-        for (let column = columns.start; column <= columns.end; column++) {
-          if (column < 0 || column >= data.columns.length) {
-            continue;
-          }
-          let desired = measuredColumnTextWidth(data.columns[column]);
-          if (includeSlice && column >= slice.startColumn && column <= slice.endColumn) {
-            for (let rowOffset = 0; rowOffset < slice.cells.length; rowOffset++) {
-              const row = slice.cells[rowOffset] || [];
-              desired = Math.max(desired, measuredColumnTextWidth(row[column - slice.startColumn]));
-            }
-          }
-          columnWidthOverrides[columnWidthKey(column)] = clampInteger(desired, MIN_COLUMN_WIDTH, AUTO_COLUMN_WIDTH_CAP);
-          fitted += 1;
-        }
-
-        status.textContent = fitted > 0
-          ? 'Auto-fit ' + fitted + ' visible columns' + (includeSlice ? '' : ' from headers')
-          : 'No visible columns to fit';
-        renderColumnSettings();
-        requestRender();
-      }
-
-      function autoFitColumnRange() {
-        if (!hasVisibleColumnsForAutoFit()) {
-          return emptyColumnRange();
-        }
-
-        return lastRenderedColumns;
-      }
-
-      function columnRangesOverlap(left, right) {
-        return left.end >= left.start &&
-          right.endColumn >= right.startColumn &&
-          Math.max(left.start, right.startColumn) <= Math.min(left.end, right.endColumn);
       }
 
       function hasColumnWidthOverrides() {
@@ -2178,7 +2237,8 @@ export class KdbResultsPanel {
       }
 
       function headerMode() {
-        return String(interactionMode.value || 'select') === 'sort' ? 'sort' : 'select';
+        const value = String(interactionMode.value || 'drag');
+        return value === 'sort' || value === 'select' ? value : 'drag';
       }
 
       function updateSortStatus() {
@@ -2271,7 +2331,7 @@ export class KdbResultsPanel {
       }
 
       function resultMessageText(value) {
-        return value.messages.slice().join('\\n');
+        return value.error ? value.messages.slice().join('\\n') : '';
       }
 
       function updateLargeResultWarning() {
@@ -2320,7 +2380,7 @@ export class KdbResultsPanel {
         const rows = visibleRange(verticalState.rowOffset, viewport.clientHeight, layout.rowHeight, rowCount, OVERSCAN_ROWS);
         const columns = visibleColumns(horizontalState, metrics);
         lastRenderedColumns = columns;
-        updateAutoFitButtonState();
+        updateAutoFitControlState();
         renderHeader(columns, horizontalState, metrics);
         requestSlice(rows, columns);
         renderRows(rows, columns, verticalState, horizontalState, metrics);
@@ -2481,7 +2541,7 @@ export class KdbResultsPanel {
           return clampInteger(override, MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH);
         }
         const autoWidth = autoColumnWidths[key];
-        if (Number.isFinite(autoWidth)) {
+        if (autoFitEnabled && Number.isFinite(autoWidth)) {
           return clampInteger(autoWidth, MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH);
         }
         return clampInteger(settings.cellWidth, MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH);
@@ -2544,10 +2604,20 @@ export class KdbResultsPanel {
             width,
             headerCell: true,
             selected: isColumnSelected(column, range),
-            className: 'cell'
+            className: headerCellClassName(column)
           }));
         }
         return cells;
+      }
+
+      function headerCellClassName(column) {
+        let className = 'cell';
+        if (columnDragState && columnDragState.sourceColumn === column) {
+          className += ' drag-source';
+        } else if (columnDragState && columnDragState.targetColumn === column) {
+          className += ' drag-target';
+        }
+        return className;
       }
 
       function renderRows(rows, columns, verticalState, horizontalState, metrics) {
@@ -2669,6 +2739,8 @@ export class KdbResultsPanel {
         const column = Number(event.currentTarget.dataset.column);
         const key = columnWidthKey(column);
         delete columnWidthOverrides[key];
+        delete autoColumnWidths[key];
+        updateAutoColumnWidthsFromSlice();
         status.textContent = data.columns[column] + ' width reset';
         renderColumnSettings();
         requestRender();
@@ -2714,6 +2786,7 @@ export class KdbResultsPanel {
         if (headerMode() === 'sort') {
           dragging = false;
           dragMode = '';
+          columnDragState = null;
           status.textContent = '';
           vscode.postMessage({
             type: 'sortColumn',
@@ -2721,6 +2794,19 @@ export class KdbResultsPanel {
             columnIndex: column,
             columnName: data.columns[column]
           });
+          event.preventDefault();
+          return;
+        }
+        if (headerMode() === 'drag') {
+          dragging = true;
+          dragMode = 'reorder';
+          columnDragState = {
+            sourceColumn: column,
+            targetColumn: column
+          };
+          status.textContent = 'Drag column to reorder';
+          viewport.focus();
+          renderNow();
           event.preventDefault();
           return;
         }
@@ -2734,12 +2820,44 @@ export class KdbResultsPanel {
       }
 
       function onColumnMouseEnter(event) {
+        if (dragging && dragMode === 'reorder' && columnDragState) {
+          columnDragState.targetColumn = Number(event.currentTarget.dataset.column);
+          renderNow();
+          return;
+        }
         if (!dragging || dragMode !== 'column' || !selection) {
           return;
         }
         selection.focusRow = data.rowCount - 1;
         selection.focusColumn = Number(event.currentTarget.dataset.column);
         updateSelection();
+      }
+
+      function finishColumnReorder() {
+        if (!columnDragState) {
+          return;
+        }
+        const sourceColumn = Number(columnDragState.sourceColumn);
+        const targetColumn = Number(columnDragState.targetColumn);
+        const sourceColumnName = data.columns[sourceColumn] || '';
+        const targetColumnName = data.columns[targetColumn] || '';
+        if (
+          sourceColumnName &&
+          targetColumnName &&
+          sourceColumn !== targetColumn
+        ) {
+          status.textContent = 'Moving ' + sourceColumnName;
+          vscode.postMessage({
+            type: 'reorderColumn',
+            version: data.version,
+            sourceColumn,
+            targetColumn,
+            sourceColumnName,
+            targetColumnName
+          });
+        } else {
+          status.textContent = '';
+        }
       }
 
       function onRowMouseDown(event) {
@@ -3233,6 +3351,33 @@ function sameColumnNames(left: string[] | undefined, right: string[]): boolean {
   return true;
 }
 
+function moveColumnName(columns: string[], sourceColumnName: string, targetColumnName: string): string[] {
+  const sourceIndex = columns.indexOf(sourceColumnName);
+  const targetIndex = columns.indexOf(targetColumnName);
+  if (sourceIndex === -1 || targetIndex === -1 || sourceIndex === targetIndex) {
+    return columns.slice();
+  }
+
+  const next = columns.slice();
+  const moved = next.splice(sourceIndex, 1)[0];
+  next.splice(targetIndex, 0, moved);
+  return next;
+}
+
+function mergeVisibleColumnOrder(fullOrder: string[], visibleOrder: string[], hiddenColumns: string[]): string[] {
+  const hidden = columnNameLookup(hiddenColumns);
+  const visible = visibleOrder.slice();
+  let visibleIndex = 0;
+  return fullOrder.map(column => {
+    if (hidden[column]) {
+      return column;
+    }
+    const next = visible[visibleIndex];
+    visibleIndex += 1;
+    return next || column;
+  });
+}
+
 function nextSortState(current: KdbPanelSortState | undefined, columnName: string): KdbPanelSortState | undefined {
   if (!current || current.columnName !== columnName) {
     return { columnName, direction: 'asc' };
@@ -3295,6 +3440,7 @@ function textExportFormat(value: any): TextExportFormat {
     case 'json':
     case 'ndjson':
     case 'html':
+    case 'markdown':
     case 'tsv':
       return value;
   }
@@ -3308,6 +3454,7 @@ function exportFormat(value: any): ExportFormat {
     case 'json':
     case 'ndjson':
     case 'html':
+    case 'markdown':
     case 'tsv':
       return value;
   }
@@ -3326,6 +3473,8 @@ function saveFilters(format: ExportFormat): { [name: string]: string[] } {
       return { NDJSON: ['ndjson'] };
     case 'html':
       return { HTML: ['html', 'htm'] };
+    case 'markdown':
+      return { Markdown: ['md', 'markdown'] };
     case 'tsv':
       return { TSV: ['tsv'] };
   }
@@ -3335,7 +3484,8 @@ function defaultExportUri(format: ExportFormat): vscode.Uri {
   const folder = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0
     ? vscode.workspace.workspaceFolders[0].uri.fsPath
     : os.homedir();
-  return vscode.Uri.file(path.join(folder, `kdb-results.${format}`));
+  const extension = format === 'markdown' ? 'md' : format;
+  return vscode.Uri.file(path.join(folder, `kdb-results.${extension}`));
 }
 
 function formatBytes(bytes: number): string {
@@ -3466,6 +3616,8 @@ function formatCellOverhead(format: ExportFormat): number {
     case 'json':
     case 'ndjson':
       return 10;
+    case 'markdown':
+      return 4;
     case 'xlsx':
       return 64;
     case 'csv':
@@ -3478,6 +3630,8 @@ function formatRowOverhead(format: ExportFormat): number {
   switch (format) {
     case 'html':
       return 12;
+    case 'markdown':
+      return 4;
     case 'json':
       return 4;
     case 'xlsx':
@@ -3493,6 +3647,8 @@ function formatDocumentOverhead(format: ExportFormat): number {
   switch (format) {
     case 'html':
       return 64;
+    case 'markdown':
+      return 32;
     case 'xlsx':
       return 2048;
     case 'json':

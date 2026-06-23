@@ -106,13 +106,15 @@ Selection supports individual ranges, whole rows, whole columns, and all cells. 
 
 Columns can be hidden from the panel settings menu for the current panel session. Select all and Deselect all controls are available; deselecting all data columns leaves the row-number column and a clear empty state. Hidden columns stay hidden for later results in that panel only when the full column list matches, and reset restores all columns. Hidden-column choices are not saved globally.
 
-Column widths can be dragged per session. Auto-fit visible columns sizes the currently rendered slice only, including headers, so it does not scan very large results. Reset column widths clears session width overrides.
+The top toolbar Auto-fit checkbox sizes visible columns from headers plus the currently rendered cells as you scroll. Column widths can still be dragged per session, and Reset column widths clears manual overrides.
 
-Header clicks default to column selection. Change the toolbar mode from Select to Sort to sort visible columns in the extension; repeated clicks cycle ascending, descending, and original order. Sorting uses the panel's visible cell text, warns before sorting very large row counts, and resets on the third click.
+Header mode defaults to Drag. Drag column headers to reorder visible columns for the current panel session; copy, export, search, and sort use that visible order. Change the toolbar mode to Select for whole-column selection or Sort to sort visible columns in the extension; repeated sort clicks cycle ascending, descending, and original order. Sorting uses the panel's visible cell text, warns before sorting very large row counts, and resets on the third click.
 
 Toolbar search runs in the extension against visible columns only. It returns capped row-match metadata to the webview instead of transferring all result cells, and the status marks capped or partial scans.
 
-Copy formats: CSV, TSV, JSON, NDJSON, HTML. Right-click Copy in the table viewport uses the same selected range and copy settings as `Ctrl+C` / `Cmd+C`. Export formats: CSV, XLSX, TSV, JSON, NDJSON, HTML. XLSX export writes a real `.xlsx` workbook and rejects output beyond Excel's sheet limits. Large copy/export actions prompt before materializing output. The row-number/header copy and export options are enabled by default and persist globally from the panel settings menu.
+Normal successful result messages stay hidden because the top summary already shows row count and elapsed time; errors remain visible in the message area.
+
+Copy formats: CSV, TSV, JSON, NDJSON, HTML, Markdown. Right-click Copy in the table viewport uses the same selected range and copy settings as `Ctrl+C` / `Cmd+C`. Export formats: CSV, XLSX, TSV, JSON, NDJSON, HTML, Markdown. XLSX export writes a real `.xlsx` workbook and rejects output beyond Excel's sheet limits; XLSX remains export-only and cannot be copied. Large copy/export actions prompt before materializing output. The row-number/header copy and export options are enabled by default and persist globally from the panel settings menu.
 
 kdb panel settings:
 
