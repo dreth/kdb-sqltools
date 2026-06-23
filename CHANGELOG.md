@@ -1,5 +1,13 @@
 # Change Log
 
+## 0.2.8
+
+- Moved Auto-fit to the top toolbar as a checkbox and made it update widths from headers plus the currently rendered visible slice only.
+- Hid redundant normal success/fetched-row messages while keeping errors visible.
+- Added Drag/Select/Sort header interaction modes, with Drag first/default and session-only column reordering.
+- Added Markdown copy/export format with `.md` exports.
+- Disabled Copy for XLSX while keeping XLSX Export enabled.
+
 ## 0.2.7
 
 - Kept focus in the q editor while kdb result panels update after running queries.
