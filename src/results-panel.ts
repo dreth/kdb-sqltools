@@ -1483,6 +1483,7 @@ export class KdbResultsPanel {
       const empty = document.getElementById('empty');
       let data = emptyData();
       let slice = emptySlice();
+      let lastRenderedColumns = emptyColumnRange();
       let dragging = false;
       let dragMode = '';
       let selection = null;
@@ -1698,6 +1699,7 @@ export class KdbResultsPanel {
 
       function resetWindowState() {
         slice = emptySlice();
+        lastRenderedColumns = emptyColumnRange();
         selection = null;
         dragging = false;
         dragMode = '';
@@ -2005,7 +2007,7 @@ export class KdbResultsPanel {
           : 'All visible';
         selectAllColumns.disabled = data.allColumns.length === 0 || data.hiddenColumnCount === 0;
         deselectAllColumns.disabled = data.allColumns.length === 0 || data.hiddenColumnCount >= data.allColumns.length;
-        autoFitColumns.disabled = !hasVisibleSliceColumns();
+        updateAutoFitButtonState();
         resetColumns.disabled = data.hiddenColumnCount <= 0;
         resetColumnWidths.disabled = !hasColumnWidthOverrides();
         columnList.textContent = '';
@@ -2032,6 +2034,14 @@ export class KdbResultsPanel {
 
       function hasVisibleSliceColumns() {
         return slice.endColumn >= slice.startColumn && data.columns.length > 0;
+      }
+
+      function hasVisibleColumnsForAutoFit() {
+        return data.columns.length > 0 && lastRenderedColumns.end >= lastRenderedColumns.start;
+      }
+
+      function updateAutoFitButtonState() {
+        autoFitColumns.disabled = !hasVisibleColumnsForAutoFit();
       }
 
       function updateAutoColumnWidthsFromSlice() {
@@ -2090,29 +2100,49 @@ export class KdbResultsPanel {
       }
 
       function autoFitVisibleColumnWidths() {
-        if (!hasVisibleSliceColumns()) {
-          status.textContent = data.columns.length === 0 ? 'No visible data columns' : 'No visible slice to fit';
+        const columns = autoFitColumnRange();
+        if (columns.end < columns.start || data.columns.length === 0) {
+          status.textContent = data.columns.length === 0 ? 'No visible data columns' : 'No visible columns to fit';
           renderColumnSettings();
           return;
         }
 
+        const includeSlice = hasVisibleSliceColumns() && columnRangesOverlap(columns, slice);
         let fitted = 0;
-        for (let column = slice.startColumn; column <= slice.endColumn; column++) {
+        for (let column = columns.start; column <= columns.end; column++) {
           if (column < 0 || column >= data.columns.length) {
             continue;
           }
           let desired = measuredColumnTextWidth(data.columns[column]);
-          for (let rowOffset = 0; rowOffset < slice.cells.length; rowOffset++) {
-            const row = slice.cells[rowOffset] || [];
-            desired = Math.max(desired, measuredColumnTextWidth(row[column - slice.startColumn]));
+          if (includeSlice && column >= slice.startColumn && column <= slice.endColumn) {
+            for (let rowOffset = 0; rowOffset < slice.cells.length; rowOffset++) {
+              const row = slice.cells[rowOffset] || [];
+              desired = Math.max(desired, measuredColumnTextWidth(row[column - slice.startColumn]));
+            }
           }
           columnWidthOverrides[columnWidthKey(column)] = clampInteger(desired, MIN_COLUMN_WIDTH, AUTO_COLUMN_WIDTH_CAP);
           fitted += 1;
         }
 
-        status.textContent = fitted > 0 ? 'Auto-fit ' + fitted + ' visible columns' : 'No visible slice to fit';
+        status.textContent = fitted > 0
+          ? 'Auto-fit ' + fitted + ' visible columns' + (includeSlice ? '' : ' from headers')
+          : 'No visible columns to fit';
         renderColumnSettings();
         requestRender();
+      }
+
+      function autoFitColumnRange() {
+        if (!hasVisibleColumnsForAutoFit()) {
+          return emptyColumnRange();
+        }
+
+        return lastRenderedColumns;
+      }
+
+      function columnRangesOverlap(left, right) {
+        return left.end >= left.start &&
+          right.endColumn >= right.startColumn &&
+          Math.max(left.start, right.startColumn) <= Math.min(left.end, right.endColumn);
       }
 
       function hasColumnWidthOverrides() {
@@ -2253,7 +2283,7 @@ export class KdbResultsPanel {
         if (viewport.scrollLeft !== horizontalState.physicalLeft) {
           viewport.scrollLeft = horizontalState.physicalLeft;
         }
-        const noVisibleColumns = rowCount > 0 && columnCount === 0;
+        const noVisibleColumns = columnCount === 0 && (rowCount > 0 || data.allColumns.length > 0);
         empty.hidden = rowCount !== 0 && !noVisibleColumns;
         empty.textContent = noVisibleColumns ? 'No visible data columns' : '0 rows';
         empty.style.top = layout.headerHeight + 'px';
@@ -2261,6 +2291,8 @@ export class KdbResultsPanel {
 
         const rows = visibleRange(verticalState.rowOffset, viewport.clientHeight, layout.rowHeight, rowCount, OVERSCAN_ROWS);
         const columns = visibleColumns(horizontalState, metrics);
+        lastRenderedColumns = columns;
+        updateAutoFitButtonState();
         renderHeader(columns, horizontalState, metrics);
         requestSlice(rows, columns);
         renderRows(rows, columns, verticalState, horizontalState, metrics);
@@ -2899,6 +2931,13 @@ export class KdbResultsPanel {
           startColumn: 0,
           endColumn: -1,
           cells: []
+        };
+      }
+
+      function emptyColumnRange() {
+        return {
+          start: 0,
+          end: -1
         };
       }
 

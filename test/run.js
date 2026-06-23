@@ -667,6 +667,10 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultSettings['kdb-sqltools.performance.trace'].default, false);
   assert.strictEqual(/extension host console/i.test(resultSettings['kdb-sqltools.performance.trace'].description), true);
   assert.deepStrictEqual(resultSettings['kdb-sqltools.results.density'].enum, ['compact', 'standard', 'comfortable']);
+  assert.ok(/Switching density loads that density's saved cell width, row height, and font size/.test(
+    resultSettings['kdb-sqltools.results.density'].description
+  ));
+  assert.ok(/Legacy fallback cell width/.test(resultSettings['kdb-sqltools.results.cellWidth'].description));
   assert.deepStrictEqual(
     ['compact', 'standard', 'comfortable'].map(density => [
       resultSettings[`kdb-sqltools.results.${density}.cellWidth`].default,
@@ -826,6 +830,15 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes("message.type === 'resetHiddenColumns'"), true);
   assert.strictEqual(resultsPanelSource.includes('id="autoFitColumns"'), true);
   assert.strictEqual(resultsPanelSource.includes('function autoFitVisibleColumnWidths()'), true);
+  assert.strictEqual(resultsPanelSource.includes('let lastRenderedColumns = emptyColumnRange();'), true);
+  assert.strictEqual(resultsPanelSource.includes('function autoFitColumnRange()'), true);
+  assert.strictEqual(resultsPanelSource.includes('function columnRangesOverlap(left, right)'), true);
+  assert.strictEqual(resultsPanelSource.includes("lastRenderedColumns = columns;"), true);
+  assert.strictEqual(resultsPanelSource.includes("' visible columns' + (includeSlice ? '' : ' from headers')"), true);
+  assert.strictEqual(
+    resultsPanelSource.includes('const noVisibleColumns = columnCount === 0 && (rowCount > 0 || data.allColumns.length > 0);'),
+    true
+  );
   assert.strictEqual(resultsPanelSource.includes('measuredColumnTextWidth(data.columns[column])'), true);
   assert.strictEqual(resultsPanelSource.includes('AUTO_COLUMN_WIDTH_CAP'), true);
   assert.strictEqual(packageSource.includes('hiddenColumn'), false, 'hidden columns must not be globally persisted');
