@@ -12,7 +12,7 @@ tables `.analytics
 
 ## Requirements
 
-- VS Code with the `mtxr.sqltools` extension installed.
+- VS Code with the `mtxr.sqltools` extension installed ([SQLTools website](https://vscode-sqltools.mteixeira.dev/) / [GitHub](https://github.com/mtxr/vscode-sqltools)).
 - A kdb+/q process listening on a TCP port, for example:
 
 ```sh
