@@ -1,5 +1,10 @@
 # Change Log
 
+## 0.2.6
+
+- Changed new kdb result tabs to open in the same editor group as an existing kdb result panel when one is available, so `Ctrl/Cmd+Shift+Enter` keeps bottom/result layouts intact instead of opening beside the active script editor.
+- Kept first-result placement controlled by `kdb-sqltools.results.kdbPanel.initialViewColumn` when no existing kdb result panel is available.
+
 ## 0.2.5
 
 - Added replace-vs-new kdb result panel commands and default q keybindings for running selections/scripts without disrupting an existing result layout.
