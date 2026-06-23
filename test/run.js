@@ -966,6 +966,32 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('private reorderColumn(message: any): void'), true);
   assert.strictEqual(resultsPanelSource.includes('mergeVisibleColumnOrder'), true);
   assert.strictEqual(kdbResultsSource.includes('visibleColumns.map(column => String(column)).forEach'), true);
+  assert.strictEqual(resultsPanelSource.includes('.header.drag-active'), true);
+  assert.strictEqual(resultsPanelSource.includes('transform: translateY(-2px);'), true);
+  assert.strictEqual(resultsPanelSource.includes('.header .cell.drag-target-before::before'), true);
+  assert.strictEqual(resultsPanelSource.includes('.header .cell.drag-target-after::after'), true);
+  assert.strictEqual(resultsPanelSource.includes("className += ' drag-target-' + position;"), true);
+  assert.strictEqual(resultsPanelSource.includes("header.className = columnDragState && dragMode === 'reorder' ? 'header drag-active' : 'header';"), true);
+  assert.strictEqual(resultsPanelSource.includes("cell.title = String(options.title || options.text || '');"), true);
+  assert.strictEqual(resultsPanelSource.includes("return sourceColumn < targetColumn ? 'after' : 'before';"), true);
+  assert.strictEqual(resultsPanelSource.includes("status.textContent = columnDragStatusText();"), true);
+  const columnDragCleanupSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function clearColumnDragState'),
+    resultsPanelSource.indexOf('function columnDragDropPosition')
+  );
+  assert.strictEqual(columnDragCleanupSource.includes('columnDragState = null;'), true);
+  assert.strictEqual(columnDragCleanupSource.includes("document.body.style.cursor = '';"), true);
+  const resetWindowStateSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function resetWindowState'),
+    resultsPanelSource.indexOf('function queueSearchRows')
+  );
+  assert.strictEqual(resetWindowStateSource.includes('clearColumnDragState();'), true);
+  const mouseupSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf("window.addEventListener('mouseup'"),
+    resultsPanelSource.indexOf("window.addEventListener('resize'")
+  );
+  assert.strictEqual(mouseupSource.includes('finishColumnReorder();'), true);
+  assert.strictEqual(mouseupSource.includes('clearColumnDragState();'), true);
   const sortColumnSource = resultsPanelSource.slice(
     resultsPanelSource.indexOf('private async sortColumn'),
     resultsPanelSource.indexOf('private async copyRange')
