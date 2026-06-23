@@ -75,8 +75,8 @@ async function runLiveAssertions(port) {
     assert.deepStrictEqual(edge[0].results, [{
       sym: 'AAPL',
       chars: 'alpha',
-      nums: '1 , 2 , 3',
-      nested: 'left , right',
+      nums: '1, 2, 3',
+      nested: 'left, right',
       dict: '{"a": 10, "b": 20}',
       nullSym: null,
       longid: '9007199254740993',

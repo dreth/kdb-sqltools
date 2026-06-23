@@ -292,10 +292,10 @@ function panelFormatElapsedMs(milliseconds, display) {
   );
   assert.strictEqual(
     rowsToCsv(exportRows, exportColumns, exportRange, { includeHeaders: true, includeRowIndex: true }),
-    '#,note,size,meta\n1,"line\nbreak",100,"{""venue"": lit}"\n2,,200,"1 , 2"'
+    '#,note,size,meta\n1,"line\nbreak",100,"{""venue"": lit}"\n2,,200,"1, 2"'
   );
-  assert.strictEqual(cellValueToText([1, 2, 3]), '1 , 2 , 3');
-  assert.strictEqual(cellValueToText({ path: ['a', 'b'], count: 2 }), '{"path": [a , b], "count": 2}');
+  assert.strictEqual(cellValueToText([1, 2, 3]), '1, 2, 3');
+  assert.strictEqual(cellValueToText({ path: ['a', 'b'], count: 2 }), '{"path": [a, b], "count": 2}');
   assert.strictEqual(
     rowsToTsv(exportRows, exportColumns, { startRow: 0, endRow: 1, startColumn: 1, endColumn: 2 }, {
       includeHeaders: true,
@@ -329,7 +329,7 @@ function panelFormatElapsedMs(milliseconds, display) {
       ['sym', 'note', 'nums'],
       { startRow: 0, endRow: 0, startColumn: 0, endColumn: 2 }
     ),
-    '<table><thead><tr><th>sym</th><th>note</th><th>nums</th></tr></thead><tbody><tr><td>A&amp;B</td><td>&lt;tag &quot;x&quot; &#39;</td><td>1 , 2 , 3</td></tr></tbody></table>'
+    '<table><thead><tr><th>sym</th><th>note</th><th>nums</th></tr></thead><tbody><tr><td>A&amp;B</td><td>&lt;tag &quot;x&quot; &#39;</td><td>1, 2, 3</td></tr></tbody></table>'
   );
   assert.strictEqual(
     rowsToHtml(
@@ -439,6 +439,47 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.deepStrictEqual(
     rowBackedColumnar.cellWindow({ start: 1, end: 0 }, { start: 0, end: 1 }),
     { startRow: 0, endRow: -1, startColumn: 0, endColumn: -1, cells: [] }
+  );
+  const arrayColumnar = rowsToColumnarPanelResult(
+    [{ nums: [4000, 4001, 4002], nested: [[1, 2], [3, 4]] }],
+    ['nums', 'nested']
+  );
+  assert.strictEqual(cellValueToText([4000, 4001, 4002]), '4000, 4001, 4002');
+  assert.strictEqual(/,\s{2,}/.test(cellValueToText([4000, 4001, 4002])), false);
+  assert.strictEqual(cellValueToText([4000, 4001, 4002]).includes(' ,'), false);
+  assert.deepStrictEqual(
+    arrayColumnar.cellWindow({ start: 0, end: 0 }, { start: 0, end: 1 }).cells,
+    [['4000, 4001, 4002', '[1, 2], [3, 4]']]
+  );
+  assert.deepStrictEqual(
+    arrayColumnar.cellWindow({ start: 0, end: 0 }, { start: 0, end: 1 }, { arrayDisplayFormat: 'space' }).cells,
+    [['4000 4001 4002', '[1 2] [3 4]']]
+  );
+  assert.deepStrictEqual(
+    arrayColumnar.cellWindow({ start: 0, end: 0 }, { start: 0, end: 1 }, { arrayDisplayFormat: 'raw' }).cells,
+    [['[4000 4001 4002]', '[[1 2] [3 4]]']]
+  );
+  assert.strictEqual(
+    arrayColumnar.toText('csv', { startRow: 0, endRow: 0, startColumn: 0, endColumn: 0 }, { includeHeaders: true }),
+    'nums\n"4000, 4001, 4002"'
+  );
+  assert.strictEqual(
+    arrayColumnar.toText('tsv', { startRow: 0, endRow: 0, startColumn: 0, endColumn: 0 }, {
+      includeHeaders: true,
+      arrayDisplayFormat: 'space',
+    }),
+    'nums\n4000 4001 4002'
+  );
+  assert.strictEqual(
+    arrayColumnar.toText('markdown', { startRow: 0, endRow: 0, startColumn: 0, endColumn: 0 }, {
+      includeHeaders: true,
+      arrayDisplayFormat: 'raw',
+    }),
+    '| nums |\n| --- |\n| [4000 4001 4002] |'
+  );
+  assert.strictEqual(
+    arrayColumnar.toText('json', { startRow: 0, endRow: 0, startColumn: 0, endColumn: 0 }, { arrayDisplayFormat: 'raw' }),
+    '[{"nums":[4000,4001,4002]}]'
   );
   const escapingColumnar = rowsToColumnarPanelResult(
     [{ '#': 'user', note: '<&>"\'' }],
@@ -721,7 +762,7 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(kdbResultsSource.includes('export function rowsToMarkdown'), true);
   assert.strictEqual(kdbResultsSource.includes('function columnarToMarkdown'), true);
   assert.strictEqual(kdbResultsSource.includes('escapeMarkdownTableCell'), true);
-  assert.strictEqual(resultsPanelSource.includes('sheetXml(result, range, includeHeaders, includeRowIndex)'), true);
+  assert.strictEqual(resultsPanelSource.includes('sheetXml(result, range, includeHeaders, includeRowIndex, cellTextOptions)'), true);
   assert.strictEqual(resultsPanelSource.includes('headers.push(cellValueToText(rowIndexColumnName(result.columns, range)))'), true);
   assert.strictEqual(resultsPanelSource.includes('LARGE_RESULT_WARNING_CELL_THRESHOLD'), true);
   assert.strictEqual(resultsPanelSource.includes('resultSizeGuardrailMessage(result.table.rowCount, result.table.columns.length)'), true);
@@ -754,6 +795,9 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.deepStrictEqual(resultSettings['kdb-sqltools.results.kdbPanel.defaultRunMode'].enum, ['replace', 'new']);
   assert.strictEqual(resultSettings['kdb-sqltools.results.kdbPanel.initialViewColumn'].default, 'active');
   assert.deepStrictEqual(resultSettings['kdb-sqltools.results.kdbPanel.initialViewColumn'].enum, ['active', 'beside', 'one', 'two', 'three']);
+  assert.strictEqual(resultSettings['kdb-sqltools.results.kdbPanel.arrayDisplayFormat'].type, 'string');
+  assert.strictEqual(resultSettings['kdb-sqltools.results.kdbPanel.arrayDisplayFormat'].default, 'commaSpace');
+  assert.deepStrictEqual(resultSettings['kdb-sqltools.results.kdbPanel.arrayDisplayFormat'].enum, ['commaSpace', 'space', 'raw']);
   assert.strictEqual(resultSettings['kdb-sqltools.performance.trace'].type, 'boolean');
   assert.strictEqual(resultSettings['kdb-sqltools.performance.trace'].default, false);
   assert.strictEqual(/extension host console/i.test(resultSettings['kdb-sqltools.performance.trace'].description), true);
@@ -786,6 +830,8 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('settingsHideLargeResultWarnings'), true);
   assert.strictEqual(resultsPanelSource.includes('settingsHideLargeSortWarnings'), true);
   assert.strictEqual(resultsPanelSource.includes('settingsElapsedTimeDisplay'), true);
+  assert.strictEqual(resultsPanelSource.includes('settingsArrayDisplayFormat'), true);
+  assert.deepStrictEqual(htmlSelectOptions(resultsPanelSource, 'settingsArrayDisplayFormat'), ['commaSpace', 'space', 'raw']);
   assert.strictEqual(resultsPanelSource.includes('Hide forever'), true);
   assert.deepStrictEqual(
     [
@@ -827,11 +873,15 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('hideLargeSortWarnings', true), { key: 'hideLargeSortWarnings', value: true });
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('elapsedTimeDisplay', 'milliseconds'), { key: 'elapsedTimeDisplay', value: 'milliseconds' });
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('elapsedTimeDisplay', 'seconds'), null);
+  assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('arrayDisplayFormat', 'space'), { key: 'arrayDisplayFormat', value: 'space' });
+  assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('arrayDisplayFormat', 'raw'), { key: 'arrayDisplayFormat', value: 'raw' });
+  assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('arrayDisplayFormat', 'comma'), null);
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('constructor', 1), null);
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('__proto__', true), null);
   assert.strictEqual(resultsPanelInternals.panelSettingConfigKey('cellWidth', 'compact'), 'compact.cellWidth');
   assert.strictEqual(resultsPanelInternals.panelSettingConfigKey('rowHeight', 'comfortable'), 'comfortable.rowHeight');
   assert.strictEqual(resultsPanelInternals.panelSettingConfigKey('includeHeaders', 'compact'), 'includeHeaders');
+  assert.strictEqual(resultsPanelInternals.panelSettingConfigKey('arrayDisplayFormat', 'compact'), 'kdbPanel.arrayDisplayFormat');
   assert.strictEqual(
     resultsPanelInternals.panelSizeSettingValue(140, { defaultValue: 140 }, 500, { globalValue: 500 }, 140, 160, 80, 600),
     500
@@ -998,14 +1048,14 @@ function panelFormatElapsedMs(milliseconds, display) {
   );
   assert.strictEqual(sortColumnSource.includes('const table = this.baseVisibleTable();'), true);
   assert.strictEqual(sortColumnSource.includes('this.rowOrder = sortedRowOrder;'), true);
-  assert.strictEqual(sortColumnSource.includes('sortedColumnarRowOrder(table, columnIndex, nextSort.direction)'), true);
+  assert.strictEqual(sortColumnSource.includes('sortedColumnarRowOrder(table, columnIndex, nextSort.direction, panelCellTextOptions())'), true);
   assert.strictEqual(sortColumnSource.includes('perfSpan(\'results-panel.sort\''), true);
   assert.strictEqual(sortColumnSource.includes('SORT_CONFIRM_ROW_THRESHOLD'), true);
   const sortHelperSource = kdbResultsSource.slice(
     kdbResultsSource.indexOf('export function sortedColumnarRowOrder'),
     kdbResultsSource.indexOf('export function compareColumnarCellText')
   );
-  assert.strictEqual(sortHelperSource.includes('result.cellText(rowIndex, columnIndex)'), true);
+  assert.strictEqual(sortHelperSource.includes('result.cellText(rowIndex, columnIndex, options)'), true);
   assert.strictEqual(sortHelperSource.includes('RowValue'), false, 'sort must not materialize row objects');
   const columnMouseSource = resultsPanelSource.slice(
     resultsPanelSource.indexOf('function onColumnMouseDown'),
@@ -1024,7 +1074,7 @@ function panelFormatElapsedMs(milliseconds, display) {
     resultsPanelSource.indexOf('private async copyRange')
   );
   assert.strictEqual(postSliceSource.includes('const table = this.visibleTable();'), true);
-  assert.strictEqual(postSliceSource.includes('table.cellWindow(rowRange, columnRange)'), true);
+  assert.strictEqual(postSliceSource.includes('table.cellWindow(rowRange, columnRange, cellTextOptions)'), true);
   assert.strictEqual(postSliceSource.includes('this.result.table.cellWindow'), false);
   const searchRowsSource = resultsPanelSource.slice(
     resultsPanelSource.indexOf('private async searchRows'),
@@ -1036,7 +1086,7 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes("msg.type === 'searchResults'"), true);
   assert.strictEqual(resultsPanelSource.includes("search.partial ? 'No matches (partial)' : 'No matches'"), true);
   assert.strictEqual(searchRowsSource.includes('const table = this.visibleTable();'), true);
-  assert.strictEqual(searchRowsSource.includes('table.cellText(rowIndex, columnIndex)'), true);
+  assert.strictEqual(searchRowsSource.includes('table.cellText(rowIndex, columnIndex, cellTextOptions)'), true);
   assert.strictEqual(searchRowsSource.includes('matchedRows'), true);
   assert.strictEqual(searchRowsSource.includes('totalScanned'), true);
   assert.strictEqual(searchRowsSource.includes('capped'), true);
@@ -1238,13 +1288,21 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.deepStrictEqual(nestedTableResult.rows, [{
     sym: 'AAPL',
     chars: 'alpha',
-    nums: '1 , 2 , 3',
+    nums: '1, 2, 3',
     dict: '{"a": 10, "b": 20}',
   }]);
   const nestedColumnarResult = qValueToColumnarPanel(deserializeQPayload(nestedTablePayload));
   assert.deepStrictEqual(
     nestedColumnarResult.result.cellWindow({ start: 0, end: 0 }, { start: 0, end: 3 }).cells,
-    [['AAPL', 'alpha', '1 , 2 , 3', '{"a": 10, "b": 20}']]
+    [['AAPL', 'alpha', '1, 2, 3', '{"a": 10, "b": 20}']]
+  );
+  assert.deepStrictEqual(
+    nestedColumnarResult.result.cellWindow({ start: 0, end: 0 }, { start: 2, end: 2 }, { arrayDisplayFormat: 'space' }).cells,
+    [['1 2 3']]
+  );
+  assert.deepStrictEqual(
+    nestedColumnarResult.result.cellWindow({ start: 0, end: 0 }, { start: 2, end: 2 }, { arrayDisplayFormat: 'raw' }).cells,
+    [['[1 2 3]']]
   );
   assert.strictEqual(
     nestedColumnarResult.result.toText('json', { startRow: 0, endRow: 0, startColumn: 0, endColumn: 3 }),
