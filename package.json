@@ -338,6 +338,21 @@
           ],
           "description": "Initial editor group for the first kdb results panel. Later new result tabs open in the same editor group as an existing kdb results panel when one is present. VS Code does not expose an API for extensions to create a bottom split automatically."
         },
+        "kdb-sqltools.results.kdbPanel.arrayDisplayFormat": {
+          "type": "string",
+          "default": "commaSpace",
+          "enum": [
+            "commaSpace",
+            "space",
+            "raw"
+          ],
+          "enumDescriptions": [
+            "Display array/list cells as 1, 2, 3.",
+            "Display array/list cells as 1 2 3.",
+            "Display array/list cells in a q-ish bracketed form such as [1 2 3]."
+          ],
+          "description": "Array/list cell display format for the kdb results panel. Text copy/export formats use this display text; JSON and NDJSON keep structured values."
+        },
         "kdb-sqltools.performance.trace": {
           "type": "boolean",
           "default": false,

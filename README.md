@@ -126,6 +126,7 @@ kdb panel settings:
   "kdb-sqltools.results.density": "standard",
   "kdb-sqltools.results.kdbPanel.defaultRunMode": "new",
   "kdb-sqltools.results.kdbPanel.initialViewColumn": "active",
+  "kdb-sqltools.results.kdbPanel.arrayDisplayFormat": "commaSpace",
   "kdb-sqltools.results.compact.cellWidth": 140,
   "kdb-sqltools.results.compact.rowHeight": 24,
   "kdb-sqltools.results.compact.fontSize": 0,
@@ -144,7 +145,7 @@ kdb panel settings:
 }
 ```
 
-`fontSize: 0` uses the VS Code default. Density can be `compact`, `standard`, or `comfortable`; each density has its own saved `cellWidth`, `rowHeight`, and `fontSize`. The legacy top-level size settings remain as fallbacks for existing user configuration. `elapsedTimeDisplay` can be `auto` or `milliseconds`. `showRowIndex` controls the visible left row-number column; `includeHeaders` and `includeRowIndex` control default copy/export output. Large-result and large-sort warnings can be suppressed from the panel or these settings.
+`fontSize: 0` uses the VS Code default. Density can be `compact`, `standard`, or `comfortable`; each density has its own saved `cellWidth`, `rowHeight`, and `fontSize`. The legacy top-level size settings remain as fallbacks for existing user configuration. `elapsedTimeDisplay` can be `auto` or `milliseconds`. `arrayDisplayFormat` can be `commaSpace` (`1, 2, 3`), `space` (`1 2 3`), or `raw` (`[1 2 3]` where q-ish bracketed display is supported). `showRowIndex` controls the visible left row-number column; `includeHeaders` and `includeRowIndex` control default copy/export output. Text copy/export formats use display text; JSON and NDJSON keep structured values. Large-result and large-sort warnings can be suppressed from the panel or these settings.
 
 ## Performance Trace
 
