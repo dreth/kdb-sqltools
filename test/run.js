@@ -617,6 +617,14 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(extensionSource.includes("workbench.action.openGlobalKeybindings"), true);
   assert.strictEqual(resultsPanelSource.includes('private static panels: KdbResultsPanel[] = [];'), true);
   assert.strictEqual(resultsPanelSource.includes('private static lastActivePanel'), true);
+  assert.strictEqual(resultsPanelSource.includes('private readonly disposables: vscode.Disposable[] = [];'), true);
+  assert.strictEqual(resultsPanelSource.includes('this.panel.onDidDispose(() => this.disposePanel(), undefined, this.disposables)'), true);
+  assert.strictEqual(resultsPanelSource.includes('this.context.subscriptions'), false);
+  assert.strictEqual(resultsPanelSource.includes("return KdbResultsPanel.showResult(this.context, result, 'replace');"), false);
+  assert.strictEqual(resultsPanelSource.includes('private disposePanel(): void'), true);
+  assert.strictEqual(resultsPanelSource.includes('this.result = undefined;'), true);
+  assert.strictEqual(resultsPanelSource.includes('this.loading = undefined;'), true);
+  assert.strictEqual(resultsPanelSource.includes('this.disposables.splice(0).forEach(disposable => disposable.dispose())'), true);
   assert.strictEqual(resultsPanelSource.includes('this.panel.reveal();'), true);
   assert.strictEqual(resultsPanelSource.includes('this.panel.reveal(vscode.ViewColumn.Beside)'), false);
   assert.strictEqual(resultsPanelSource.includes('initialResultViewColumn()'), true);
