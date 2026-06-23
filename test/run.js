@@ -22,6 +22,7 @@ const {
   cellValueToText,
   columnarToCellWindow,
   compareColumnarCellText,
+  createColumnarPanelResult,
   exportShape,
   filterColumnarPanelResult,
   isCellInRange,
@@ -31,6 +32,7 @@ const {
   rowsToCsv,
   rowsToHtml,
   rowsToJson,
+  rowsToMarkdown,
   rowsToNdjson,
   rowsToTextFormat,
   rowsToTsv,
@@ -338,7 +340,20 @@ function panelFormatElapsedMs(milliseconds, display) {
     ),
     '<table><thead><tr><th>#</th><th>sym</th><th>note</th></tr></thead><tbody><tr><td>1</td><td>A&amp;B</td><td>&lt;tag &quot;x&quot; &#39;</td></tr></tbody></table>'
   );
+  assert.strictEqual(
+    rowsToMarkdown(
+      [{ sym: 'A|B', note: 'line\nbreak', path: 'c:\\tmp' }],
+      ['sym', 'note', 'path'],
+      { startRow: 0, endRow: 0, startColumn: 0, endColumn: 2 },
+      { includeHeaders: true, includeRowIndex: true }
+    ),
+    '| # | sym | note | path |\n| --- | --- | --- | --- |\n| 1 | A\\|B | line<br>break | c:\\\\tmp |'
+  );
   assert.strictEqual(rowsToTextFormat(exportRows, exportColumns, exportRange, 'ndjson'), rowsToNdjson(exportRows, exportColumns, exportRange));
+  assert.strictEqual(
+    rowsToTextFormat(exportRows, exportColumns, exportRange, 'markdown', { includeHeaders: true, includeRowIndex: true }),
+    rowsToMarkdown(exportRows, exportColumns, exportRange, { includeHeaders: true, includeRowIndex: true })
+  );
   assert.strictEqual(
     rowsToTextFormat(exportRows, exportColumns, exportRange, 'csv', { includeHeaders: true, includeRowIndex: true }),
     rowsToCsv(exportRows, exportColumns, exportRange, { includeHeaders: true, includeRowIndex: true })
@@ -394,6 +409,20 @@ function panelFormatElapsedMs(milliseconds, display) {
     }),
     '#,note,size\n1,"line\nbreak",100\n2,,200'
   );
+  const directColumnar = createColumnarPanelResult(['sym', 'note'], 2, (rowIndex, columnIndex) => {
+    const values = [
+      ['A|B', 'line\nbreak'],
+      ['MSFT', 'plain'],
+    ];
+    return values[rowIndex][columnIndex];
+  });
+  assert.strictEqual(
+    directColumnar.toText('markdown', { startRow: 0, endRow: 1, startColumn: 0, endColumn: 1 }, {
+      includeHeaders: true,
+      includeRowIndex: true,
+    }),
+    '| # | sym | note |\n| --- | --- | --- |\n| 1 | A\\|B | line<br>break |\n| 2 | MSFT | plain |'
+  );
   assert.deepStrictEqual(
     rowBackedColumnar.cellWindow({ start: -10, end: 50 }, { start: -10, end: 50 }),
     {
@@ -431,6 +460,12 @@ function panelFormatElapsedMs(milliseconds, display) {
   );
   const visibleColumnar = filterColumnarPanelResult(rowBackedColumnar, ['sym', 'size']);
   assert.deepStrictEqual(visibleColumnar.columns, ['sym', 'size']);
+  const reorderedVisibleColumnar = filterColumnarPanelResult(rowBackedColumnar, ['size', 'sym']);
+  assert.deepStrictEqual(reorderedVisibleColumnar.columns, ['size', 'sym']);
+  assert.deepStrictEqual(
+    reorderedVisibleColumnar.cellWindow({ start: 0, end: 0 }, { start: 0, end: 1 }).cells,
+    [['100', 'AAPL']]
+  );
   assert.deepStrictEqual(
     visibleColumnar.cellWindow({ start: 0, end: 1 }, { start: 0, end: 1 }),
     {
@@ -586,7 +621,7 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('column * layout.cellWidth'), false);
   assert.strictEqual(resultsPanelSource.includes('rowElement.style.top = renderedRowTop(row, verticalState, layout)'), true);
   assert.strictEqual(resultsPanelSource.includes('rowElement.style.top = (layout.headerHeight + row * layout.rowHeight)'), false);
-  assert.deepStrictEqual(htmlSelectOptions(resultsPanelSource, 'actionFormat'), ['csv', 'xlsx', 'tsv', 'json', 'ndjson', 'html']);
+  assert.deepStrictEqual(htmlSelectOptions(resultsPanelSource, 'actionFormat'), ['csv', 'xlsx', 'tsv', 'json', 'ndjson', 'html', 'markdown']);
   assert.strictEqual(resultsPanelSource.includes('id="copyFormat"'), false);
   assert.strictEqual(resultsPanelSource.includes('id="exportFormat"'), false);
   assert.strictEqual(resultsPanelSource.includes("format === 'xlsx'"), true);
@@ -680,6 +715,12 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelConstructorSource.includes('panelTitle(panelNumber),\n      { viewColumn, preserveFocus: true },'), true);
   assert.strictEqual(/function textExportFormat[\s\S]*return 'csv';/.test(resultsPanelSource), true);
   assert.strictEqual(/function exportFormat[\s\S]*return 'csv';/.test(resultsPanelSource), true);
+  assert.strictEqual(resultsPanelSource.includes("case 'markdown':"), true);
+  assert.strictEqual(resultsPanelSource.includes("return { Markdown: ['md', 'markdown'] };"), true);
+  assert.strictEqual(resultsPanelSource.includes("const extension = format === 'markdown' ? 'md' : format;"), true);
+  assert.strictEqual(kdbResultsSource.includes('export function rowsToMarkdown'), true);
+  assert.strictEqual(kdbResultsSource.includes('function columnarToMarkdown'), true);
+  assert.strictEqual(kdbResultsSource.includes('escapeMarkdownTableCell'), true);
   assert.strictEqual(resultsPanelSource.includes('sheetXml(result, range, includeHeaders, includeRowIndex)'), true);
   assert.strictEqual(resultsPanelSource.includes('headers.push(cellValueToText(rowIndexColumnName(result.columns, range)))'), true);
   assert.strictEqual(resultsPanelSource.includes('LARGE_RESULT_WARNING_CELL_THRESHOLD'), true);
@@ -695,6 +736,7 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('private hideLargeResultWarningOnce = false;'), true);
   assert.strictEqual(resultsPanelSource.includes('parts.push(value.guardrailMessage)'), false);
   assert.strictEqual(resultsPanelSource.includes("className = 'message-actions'"), false);
+  assert.strictEqual(resultsPanelSource.includes("return value.error ? value.messages.slice().join('\\\\n') : '';"), true);
   assert.strictEqual(resultsPanelSource.includes('function formatElapsedMs(milliseconds, display)'), true);
   assert.strictEqual(resultsPanelSource.includes("display === 'milliseconds'"), true);
   assert.strictEqual(resultsPanelSource.includes("formatElapsedMs(data.elapsedMs, settings.elapsedTimeDisplay)"), true);
@@ -858,6 +900,14 @@ function panelFormatElapsedMs(milliseconds, display) {
   );
   assert.strictEqual(copySelectionSource.includes('version: data.version'), true);
   assert.strictEqual(exportSelectionSource.includes('version: data.version'), true);
+  assert.strictEqual(copySelectionSource.includes("if (format === 'xlsx')"), true);
+  assert.strictEqual(copySelectionSource.includes('XLSX is export-only'), true);
+  const setActionsDisabledSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function setActionsDisabled'),
+    resultsPanelSource.indexOf('function updateActionState')
+  );
+  assert.strictEqual(setActionsDisabledSource.includes("copyButton.disabled = disabled || String(actionFormat.value || '') === 'xlsx';"), true);
+  assert.strictEqual(setActionsDisabledSource.includes('exportButton.disabled = disabled;'), true);
   assert.strictEqual(
     resultsPanelSource.includes("value.replace(/[\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F&<>\"']/g"),
     true
@@ -883,13 +933,16 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes("message.type === 'hideColumn'"), true);
   assert.strictEqual(resultsPanelSource.includes("message.type === 'showColumn'"), true);
   assert.strictEqual(resultsPanelSource.includes("message.type === 'resetHiddenColumns'"), true);
-  assert.strictEqual(resultsPanelSource.includes('id="autoFitColumns"'), true);
-  assert.strictEqual(resultsPanelSource.includes('function autoFitVisibleColumnWidths()'), true);
+  assert.strictEqual(resultsPanelSource.includes('id="autoFit"'), true);
+  assert.strictEqual(resultsPanelSource.includes('id="autoFitColumns"'), false);
+  assert.strictEqual(resultsPanelSource.includes('function setAutoFitEnabled(enabled)'), true);
+  assert.strictEqual(resultsPanelSource.includes("autoFit.addEventListener('change'"), true);
+  assert.strictEqual(resultsPanelSource.includes('function autoFitVisibleColumnWidths()'), false);
   assert.strictEqual(resultsPanelSource.includes('let lastRenderedColumns = emptyColumnRange();'), true);
-  assert.strictEqual(resultsPanelSource.includes('function autoFitColumnRange()'), true);
-  assert.strictEqual(resultsPanelSource.includes('function columnRangesOverlap(left, right)'), true);
+  assert.strictEqual(resultsPanelSource.includes('function updateAutoColumnWidthsFromSlice()'), true);
+  assert.strictEqual(resultsPanelSource.includes('if (!autoFitEnabled || !hasVisibleSliceColumns())'), true);
   assert.strictEqual(resultsPanelSource.includes("lastRenderedColumns = columns;"), true);
-  assert.strictEqual(resultsPanelSource.includes("' visible columns' + (includeSlice ? '' : ' from headers')"), true);
+  assert.strictEqual(resultsPanelSource.includes("' visible columns' + (includeSlice ? '' : ' from headers')"), false);
   assert.strictEqual(
     resultsPanelSource.includes('const noVisibleColumns = columnCount === 0 && (rowCount > 0 || data.allColumns.length > 0);'),
     true
@@ -897,16 +950,22 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('measuredColumnTextWidth(data.columns[column])'), true);
   assert.strictEqual(resultsPanelSource.includes('AUTO_COLUMN_WIDTH_CAP'), true);
   assert.strictEqual(packageSource.includes('hiddenColumn'), false, 'hidden columns must not be globally persisted');
-  assert.deepStrictEqual(htmlSelectOptions(resultsPanelSource, 'interactionMode'), ['select', 'sort']);
+  assert.deepStrictEqual(htmlSelectOptions(resultsPanelSource, 'interactionMode'), ['drag', 'select', 'sort']);
   assert.ok(
-    resultsPanelSource.indexOf('<option value="select">Select</option>') < resultsPanelSource.indexOf('<option value="sort">Sort</option>'),
-    'header mode must default to Select'
+    resultsPanelSource.indexOf('<option value="drag">Drag</option>') < resultsPanelSource.indexOf('<option value="select">Select</option>'),
+    'header mode must default to Drag'
   );
   const visibleTableSource = resultsPanelSource.slice(
     resultsPanelSource.indexOf('private visibleTable'),
     resultsPanelSource.indexOf('private visibleSortState')
   );
   assert.strictEqual(visibleTableSource.includes('applyColumnarRowOrder(table, this.rowOrder)'), true);
+  assert.strictEqual(resultsPanelSource.includes('private columnOrder'), true);
+  assert.strictEqual(resultsPanelSource.includes('columnOrderForNewResult(result.table.columns)'), true);
+  assert.strictEqual(resultsPanelSource.includes('message.type === \'reorderColumn\''), true);
+  assert.strictEqual(resultsPanelSource.includes('private reorderColumn(message: any): void'), true);
+  assert.strictEqual(resultsPanelSource.includes('mergeVisibleColumnOrder'), true);
+  assert.strictEqual(kdbResultsSource.includes('visibleColumns.map(column => String(column)).forEach'), true);
   const sortColumnSource = resultsPanelSource.slice(
     resultsPanelSource.indexOf('private async sortColumn'),
     resultsPanelSource.indexOf('private async copyRange')
@@ -927,7 +986,9 @@ function panelFormatElapsedMs(milliseconds, display) {
     resultsPanelSource.indexOf('function onColumnMouseEnter')
   );
   assert.strictEqual(columnMouseSource.includes("if (headerMode() === 'sort')"), true);
+  assert.strictEqual(columnMouseSource.includes("if (headerMode() === 'drag')"), true);
   assert.strictEqual(columnMouseSource.includes("type: 'sortColumn'"), true);
+  assert.strictEqual(resultsPanelSource.includes("type: 'reorderColumn'"), true);
   assert.ok(
     columnMouseSource.indexOf("type: 'sortColumn'") < columnMouseSource.indexOf("dragging = true"),
     'header click sorting must require Sort mode before column selection starts'

@@ -47,7 +47,7 @@ export interface ColumnarPanelResult {
   toText(format: TextExportFormat, range: CellRange, optionsOrIncludeHeaders?: boolean | ExportOptions): string;
 }
 
-export type TextExportFormat = 'tsv' | 'csv' | 'json' | 'ndjson' | 'html';
+export type TextExportFormat = 'tsv' | 'csv' | 'json' | 'ndjson' | 'html' | 'markdown';
 export type ExportFormat = TextExportFormat | 'xlsx';
 export type ColumnarSortDirection = 'asc' | 'desc';
 
@@ -280,6 +280,45 @@ export function rowsToHtml(
   return parts.join('');
 }
 
+export function rowsToMarkdown(
+  rows: RowValue[],
+  columns: string[],
+  range: CellRange,
+  optionsOrIncludeHeaders: boolean | ExportOptions = true
+): string {
+  const clamped = clampCellRange(range, rows.length, columns.length);
+  if (!clamped) {
+    return '';
+  }
+
+  const options = normalizeExportOptions(optionsOrIncludeHeaders, true);
+  const lines: string[] = [];
+  if (options.includeHeaders) {
+    const headers: string[] = [];
+    if (options.includeRowIndex) {
+      headers.push(escapeMarkdownTableCell(rowIndexColumnName(columns, clamped)));
+    }
+    for (let columnIndex = clamped.startColumn; columnIndex <= clamped.endColumn; columnIndex++) {
+      headers.push(escapeMarkdownTableCell(columns[columnIndex]));
+    }
+    lines.push(markdownTableRow(headers));
+    lines.push(markdownTableSeparator(headers.length));
+  }
+
+  for (let rowIndex = clamped.startRow; rowIndex <= clamped.endRow; rowIndex++) {
+    const row = rows[rowIndex] || {};
+    const values: string[] = [];
+    if (options.includeRowIndex) {
+      values.push(String(rowIndex + 1));
+    }
+    for (let columnIndex = clamped.startColumn; columnIndex <= clamped.endColumn; columnIndex++) {
+      values.push(escapeMarkdownTableCell(row[columns[columnIndex]]));
+    }
+    lines.push(markdownTableRow(values));
+  }
+  return lines.join('\n');
+}
+
 export function rowsToTextFormat(
   rows: RowValue[],
   columns: string[],
@@ -299,6 +338,8 @@ export function rowsToTextFormat(
       return rowsToNdjson(rows, columns, range, options);
     case 'html':
       return rowsToHtml(rows, columns, range, options);
+    case 'markdown':
+      return rowsToMarkdown(rows, columns, range, options);
   }
 
   throw new Error(`Unsupported text export format: ${format}`);
@@ -345,16 +386,21 @@ export function emptyColumnarPanelResult(): ColumnarPanelResult {
 }
 
 export function filterColumnarPanelResult(result: ColumnarPanelResult, visibleColumns: string[]): ColumnarPanelResult {
-  const visibleColumnNames = new Set(visibleColumns.map(column => String(column)));
+  const sourceColumnIndexesByName: { [column: string]: number } = Object.create(null);
+  result.columns.forEach((column, columnIndex) => {
+    if (!Object.prototype.hasOwnProperty.call(sourceColumnIndexesByName, column)) {
+      sourceColumnIndexesByName[column] = columnIndex;
+    }
+  });
+
   const sourceColumnIndexes: number[] = [];
   const filteredColumns: string[] = [];
-  for (let columnIndex = 0; columnIndex < result.columns.length; columnIndex++) {
-    const column = result.columns[columnIndex];
-    if (visibleColumnNames.has(column)) {
-      sourceColumnIndexes.push(columnIndex);
+  visibleColumns.map(column => String(column)).forEach(column => {
+    if (Object.prototype.hasOwnProperty.call(sourceColumnIndexesByName, column)) {
+      sourceColumnIndexes.push(sourceColumnIndexesByName[column]);
       filteredColumns.push(column);
     }
-  }
+  });
 
   return createColumnarPanelResult(filteredColumns, result.rowCount, (rowIndex, columnIndex) => {
     return result.cellValue(rowIndex, sourceColumnIndexes[columnIndex]);
@@ -473,6 +519,8 @@ export function columnarToTextFormat(
       return columnarToNdjson(result, range, options);
     case 'html':
       return columnarToHtml(result, range, options);
+    case 'markdown':
+      return columnarToMarkdown(result, range, options);
   }
 
   throw new Error(`Unsupported text export format: ${format}`);
@@ -589,6 +637,38 @@ function columnarToHtml(result: ColumnarPanelResult, range: CellRange, options: 
   }
   parts.push('</tbody></table>');
   return parts.join('');
+}
+
+function columnarToMarkdown(result: ColumnarPanelResult, range: CellRange, options: NormalizedExportOptions): string {
+  const clamped = clampCellRange(range, result.rowCount, result.columns.length);
+  if (!clamped) {
+    return '';
+  }
+
+  const lines: string[] = [];
+  if (options.includeHeaders) {
+    const headers: string[] = [];
+    if (options.includeRowIndex) {
+      headers.push(escapeMarkdownTableCell(rowIndexColumnName(result.columns, clamped)));
+    }
+    for (let columnIndex = clamped.startColumn; columnIndex <= clamped.endColumn; columnIndex++) {
+      headers.push(escapeMarkdownTableCell(result.columns[columnIndex]));
+    }
+    lines.push(markdownTableRow(headers));
+    lines.push(markdownTableSeparator(headers.length));
+  }
+
+  for (let rowIndex = clamped.startRow; rowIndex <= clamped.endRow; rowIndex++) {
+    const values: string[] = [];
+    if (options.includeRowIndex) {
+      values.push(String(rowIndex + 1));
+    }
+    for (let columnIndex = clamped.startColumn; columnIndex <= clamped.endColumn; columnIndex++) {
+      values.push(escapeMarkdownTableCell(result.cellValue(rowIndex, columnIndex)));
+    }
+    lines.push(markdownTableRow(values));
+  }
+  return lines.join('\n');
 }
 
 export function rowsToCellWindow(
@@ -872,6 +952,25 @@ function escapeHtml(value: string): string {
     }
     return char;
   });
+}
+
+function escapeMarkdownTableCell(value: unknown): string {
+  return cellValueToReadableText(value)
+    .replace(/\\/g, '\\\\')
+    .replace(/\|/g, '\\|')
+    .replace(/\r\n|\r|\n/g, '<br>');
+}
+
+function markdownTableRow(values: string[]): string {
+  return `| ${values.join(' | ')} |`;
+}
+
+function markdownTableSeparator(columnCount: number): string {
+  const separators: string[] = [];
+  for (let index = 0; index < columnCount; index++) {
+    separators.push('---');
+  }
+  return markdownTableRow(separators);
 }
 
 function sanitizeTsvCell(value: string): string {
