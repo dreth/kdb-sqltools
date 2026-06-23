@@ -1,5 +1,14 @@
 # Change Log
 
+## 0.2.5
+
+- Added replace-vs-new kdb result panel commands and default q keybindings for running selections/scripts without disrupting an existing result layout.
+- Added configurable kdb panel default run mode and initial view column, while preserving existing panel editor groups when replacing results.
+- Added select-all/deselect-all column visibility controls, clearer zero-visible-column empty states, and visible-slice auto-fit column widths.
+- Added per-density persisted sizing presets for compact, standard, and comfortable table densities.
+- Added keyboard shortcut documentation and a command to open VS Code keyboard shortcuts for kdb commands.
+- Hardened panel lifecycle, stale-result handling, auto-fit edge cases, and release/package artifact checks across three review passes.
+
 ## 0.2.4
 
 - Hardened kdb panel virtual scrolling so bottom rows remain reachable on very large result sets, with regression coverage for 1.8M and 10M rows across row heights.
