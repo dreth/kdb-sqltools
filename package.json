@@ -300,21 +300,21 @@
           "default": 160,
           "minimum": 80,
           "maximum": 600,
-          "description": "Cell width in pixels for the kdb results panel."
+          "description": "Legacy fallback cell width in pixels for the kdb results panel. Density-specific cell width settings are used first."
         },
         "kdb-sqltools.results.rowHeight": {
           "type": "number",
           "default": 28,
           "minimum": 20,
           "maximum": 80,
-          "description": "Base row height in pixels for the kdb results panel."
+          "description": "Legacy fallback row height in pixels for the kdb results panel. Density-specific row height settings are used first."
         },
         "kdb-sqltools.results.fontSize": {
           "type": "number",
           "default": 0,
           "minimum": 0,
           "maximum": 32,
-          "description": "Font size in pixels for the kdb results panel. Use 0 for the VS Code default."
+          "description": "Legacy fallback font size in pixels for the kdb results panel. Density-specific font size settings are used first. Use 0 for the VS Code default."
         },
         "kdb-sqltools.results.density": {
           "type": "string",
@@ -329,70 +329,70 @@
             "Use standard row height and padding.",
             "Use roomier row height and padding."
           ],
-          "description": "Visual density for the kdb results panel."
+          "description": "Visual density preset for the kdb results panel. Switching density loads that density's saved cell width, row height, and font size; editing those sizes saves the current density preset."
         },
         "kdb-sqltools.results.compact.cellWidth": {
           "type": "number",
           "default": 140,
           "minimum": 80,
           "maximum": 600,
-          "description": "Compact density cell width in pixels for the kdb results panel."
+          "description": "Compact density cell width in pixels for the kdb results panel. Editing Cell width in the panel while Compact is selected saves this preset."
         },
         "kdb-sqltools.results.compact.rowHeight": {
           "type": "number",
           "default": 24,
           "minimum": 20,
           "maximum": 80,
-          "description": "Compact density row height in pixels for the kdb results panel."
+          "description": "Compact density row height in pixels for the kdb results panel. Editing Row height in the panel while Compact is selected saves this preset."
         },
         "kdb-sqltools.results.compact.fontSize": {
           "type": "number",
           "default": 0,
           "minimum": 0,
           "maximum": 32,
-          "description": "Compact density font size in pixels for the kdb results panel. Use 0 for the VS Code default."
+          "description": "Compact density font size in pixels for the kdb results panel. Editing Font size in the panel while Compact is selected saves this preset. Use 0 for the VS Code default."
         },
         "kdb-sqltools.results.standard.cellWidth": {
           "type": "number",
           "default": 160,
           "minimum": 80,
           "maximum": 600,
-          "description": "Standard density cell width in pixels for the kdb results panel."
+          "description": "Standard density cell width in pixels for the kdb results panel. Editing Cell width in the panel while Standard is selected saves this preset."
         },
         "kdb-sqltools.results.standard.rowHeight": {
           "type": "number",
           "default": 28,
           "minimum": 20,
           "maximum": 80,
-          "description": "Standard density row height in pixels for the kdb results panel."
+          "description": "Standard density row height in pixels for the kdb results panel. Editing Row height in the panel while Standard is selected saves this preset."
         },
         "kdb-sqltools.results.standard.fontSize": {
           "type": "number",
           "default": 0,
           "minimum": 0,
           "maximum": 32,
-          "description": "Standard density font size in pixels for the kdb results panel. Use 0 for the VS Code default."
+          "description": "Standard density font size in pixels for the kdb results panel. Editing Font size in the panel while Standard is selected saves this preset. Use 0 for the VS Code default."
         },
         "kdb-sqltools.results.comfortable.cellWidth": {
           "type": "number",
           "default": 180,
           "minimum": 80,
           "maximum": 600,
-          "description": "Comfortable density cell width in pixels for the kdb results panel."
+          "description": "Comfortable density cell width in pixels for the kdb results panel. Editing Cell width in the panel while Comfortable is selected saves this preset."
         },
         "kdb-sqltools.results.comfortable.rowHeight": {
           "type": "number",
           "default": 32,
           "minimum": 20,
           "maximum": 80,
-          "description": "Comfortable density row height in pixels for the kdb results panel."
+          "description": "Comfortable density row height in pixels for the kdb results panel. Editing Row height in the panel while Comfortable is selected saves this preset."
         },
         "kdb-sqltools.results.comfortable.fontSize": {
           "type": "number",
           "default": 0,
           "minimum": 0,
           "maximum": 32,
-          "description": "Comfortable density font size in pixels for the kdb results panel. Use 0 for the VS Code default."
+          "description": "Comfortable density font size in pixels for the kdb results panel. Editing Font size in the panel while Comfortable is selected saves this preset. Use 0 for the VS Code default."
         },
         "kdb-sqltools.results.showRowIndex": {
           "type": "boolean",
