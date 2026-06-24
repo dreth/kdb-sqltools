@@ -4,6 +4,7 @@
 
 Install SQLTools first. This extension depends on it and activates it at runtime.
 
+- SQLTools Marketplace: <https://marketplace.visualstudio.com/items?itemName=mtxr.sqltools>
 - SQLTools GitHub repository: <https://github.com/mtxr/vscode-sqltools>
 - SQLTools documentation: <https://vscode-sqltools.mteixeira.dev/>
 
@@ -12,6 +13,9 @@ If SQLTools is missing, `kdb-sqltools` cannot register the `KDB` driver.
 ## Install kdb-sqltools
 
 Install the SQLTools kdb Driver extension in VS Code. After installation, reload VS Code if the SQLTools connection assistant does not list the `KDB` driver immediately.
+
+- kdb-sqltools Marketplace: <https://marketplace.visualstudio.com/items?itemName=DanielAlonso.kdb-sqltools>
+- kdb-sqltools GitHub repository: <https://github.com/dreth/kdb-sqltools>
 
 The extension contributes:
 
