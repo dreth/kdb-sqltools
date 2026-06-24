@@ -4,8 +4,9 @@
 
 `kdb-sqltools` depends on SQLTools. Install SQLTools first:
 
-- <https://github.com/mtxr/vscode-sqltools>
+- <https://marketplace.visualstudio.com/items?itemName=mtxr.sqltools>
 - <https://vscode-sqltools.mteixeira.dev/>
+- <https://github.com/mtxr/vscode-sqltools>
 
 If SQLTools is missing, the kdb driver cannot register.
 
@@ -76,3 +77,7 @@ npm run test:live-kdb
 - The driver sends q text as written; it does not translate ANSI SQL.
 - kdb has namespaces rather than SQL catalogs and schemas. SQLTools `database` and `schema` fields map to q namespaces.
 - Root q views are listed with protected `views[]`; non-root view listing depends on what the target process returns for protected `system "b <namespace>"`.
+
+## Public docs show raw Markdown
+
+If the public docs render as raw Markdown with no left sidebar, GitHub Pages is serving the `docs/` branch source instead of the MkDocs build. In the repository, set Settings -> Pages -> Build and deployment -> Source to `GitHub Actions`.

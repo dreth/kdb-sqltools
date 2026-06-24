@@ -2,6 +2,11 @@
 
 `kdb-sqltools` is a VS Code driver for [SQLTools](https://vscode-sqltools.mteixeira.dev/) that connects to kdb+/q over q IPC.
 
+## Important links
+
+- kdb-sqltools: [Marketplace](https://marketplace.visualstudio.com/items?itemName=DanielAlonso.kdb-sqltools) / [GitHub](https://github.com/dreth/kdb-sqltools)
+- SQLTools: [Marketplace](https://marketplace.visualstudio.com/items?itemName=mtxr.sqltools) / [Documentation](https://vscode-sqltools.mteixeira.dev/) / [GitHub](https://github.com/mtxr/vscode-sqltools)
+
 It sends q text to the remote process. It does not translate ANSI SQL to q. Use q, qSQL, and normal q expressions:
 
 ```q
@@ -13,7 +18,7 @@ tables `.analytics
 ## Requirements
 
 - VS Code.
-- [SQLTools](https://github.com/mtxr/vscode-sqltools), the required base extension. The SQLTools documentation is at <https://vscode-sqltools.mteixeira.dev/>.
+- [SQLTools](https://marketplace.visualstudio.com/items?itemName=mtxr.sqltools), the required base extension.
 - A kdb+/q process listening on a TCP port, for example:
 
 ```sh
