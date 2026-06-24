@@ -679,14 +679,41 @@ function panelFormatElapsedMs(milliseconds, display) {
     resultsPanelSource.indexOf('<div class="tools-panel">'),
     resultsPanelSource.indexOf('<span id="spinner"')
   );
+  const outputControlsSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('<div id="outputControls"'),
+    resultsPanelSource.indexOf('<details id="toolsMenu"')
+  );
+  const inlineOutputOptionsSource = outputControlsSource.slice(
+    outputControlsSource.indexOf('<span id="inlineOutputOptions"'),
+    outputControlsSource.indexOf('<button id="copy"')
+  );
+  const toolsOutputOptionsSource = toolsPanelSource.slice(
+    toolsPanelSource.indexOf('<section id="toolsOutputOptions"'),
+    toolsPanelSource.indexOf('<section id="viewToolsSection"')
+  );
   assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="actionFormat"'), 1);
+  assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="includeHeaders"'), 1);
+  assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="includeRowIndex"'), 1);
   assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="searchInput"'), 1);
   assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="interactionMode"'), 1);
+  assert.strictEqual(outputControlsSource.includes('id="outputControlsLabel" class="toolbar-group-label">Output:</span>'), true);
+  assert.strictEqual(outputControlsSource.includes('role="group" aria-labelledby="outputControlsLabel"'), true);
+  assert.ok(outputControlsSource.indexOf('id="actionFormat"') < outputControlsSource.indexOf('id="includeHeaders"'));
+  assert.ok(outputControlsSource.indexOf('id="includeHeaders"') < outputControlsSource.indexOf('id="includeRowIndex"'));
+  assert.ok(outputControlsSource.indexOf('id="includeRowIndex"') < outputControlsSource.indexOf('id="copy"'));
+  assert.ok(outputControlsSource.indexOf('id="copy"') < outputControlsSource.indexOf('id="export"'));
+  assert.strictEqual(inlineOutputOptionsSource.includes('id="includeHeaders"'), true);
+  assert.strictEqual(inlineOutputOptionsSource.includes('id="includeRowIndex"'), true);
+  assert.strictEqual(inlineOutputOptionsSource.includes('title="Include column headers in copied/exported output"'), true);
+  assert.strictEqual(inlineOutputOptionsSource.includes('title="Include row numbers in copied/exported output"'), true);
+  assert.strictEqual(toolsPanelSource.includes('id="outputOptionsLabel" class="tools-section-label">Output options</div>'), true);
+  assert.strictEqual(toolsPanelSource.includes('id="viewToolsLabel" class="tools-section-label">View tools</div>'), true);
+  assert.strictEqual(toolsOutputOptionsSource.includes('id="overflowOutputOptions"'), true);
+  assert.strictEqual(resultsPanelSource.includes('function placeOutputOptions(inToolsMenu)'), true);
+  assert.strictEqual(resultsPanelSource.includes('placeOutputOptions(shouldOverflow);'), true);
   assert.strictEqual(toolsPanelSource.includes('id="searchInput"'), true);
   assert.strictEqual(toolsPanelSource.includes('id="interactionMode"'), true);
   assert.strictEqual(toolsPanelSource.includes('id="settingsMenu"'), true);
-  assert.strictEqual(toolsPanelSource.includes('id="includeHeaders"'), true);
-  assert.strictEqual(toolsPanelSource.includes('id="includeRowIndex"'), true);
   assert.strictEqual(toolsPanelSource.includes('id="autoFit"'), true);
   assert.ok(resultsPanelSource.indexOf('id="actionFormat"') < resultsPanelSource.indexOf('id="toolsMenu"'));
   assert.ok(resultsPanelSource.indexOf('id="copy"') < resultsPanelSource.indexOf('id="toolsMenu"'));
