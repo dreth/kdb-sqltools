@@ -1133,11 +1133,43 @@ export class KdbResultsPanel {
       white-space: nowrap;
       overflow: visible;
     }
+    .toolbar-group {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      margin: 0;
+    }
+    .output-group {
+      flex: 0 0 auto;
+      padding: 3px 8px;
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 2px;
+      background: var(--vscode-editor-background);
+    }
+    .toolbar-group-label,
+    .tools-section-label {
+      color: var(--vscode-descriptionForeground);
+      font-weight: 600;
+    }
+    .output-options-slot {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+    .output-options-slot:empty {
+      display: none;
+    }
     .tools-menu,
-    .tools-panel {
+    .tools-panel,
+    .tools-section {
       display: contents;
     }
     .tools-menu > summary {
+      display: none;
+    }
+    .tools-section-label {
       display: none;
     }
     button, select, input[type="number"], input[type="search"] {
@@ -1292,6 +1324,15 @@ export class KdbResultsPanel {
       gap: 6px;
       overflow: visible;
     }
+    .toolbar.toolbar-overflow .output-group {
+      gap: 4px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+    }
+    .toolbar.toolbar-overflow .output-group .toolbar-group-label {
+      display: none;
+    }
     .toolbar.toolbar-overflow .tools-menu {
       display: block;
       position: relative;
@@ -1337,9 +1378,34 @@ export class KdbResultsPanel {
       box-shadow: 0 4px 12px var(--vscode-widget-shadow);
       box-sizing: border-box;
     }
-    .toolbar.toolbar-overflow .tools-panel > select,
-    .toolbar.toolbar-overflow .tools-panel > button,
-    .toolbar.toolbar-overflow .tools-panel > .settings {
+    .toolbar.toolbar-overflow .tools-section {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 8px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--vscode-panel-border);
+    }
+    .toolbar.toolbar-overflow .tools-section:last-child {
+      padding-bottom: 0;
+      border-bottom: 0;
+    }
+    .toolbar.toolbar-overflow .tools-section-label {
+      display: block;
+    }
+    .toolbar.toolbar-overflow .output-options-slot {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 8px;
+      width: 100%;
+    }
+    .toolbar.toolbar-overflow .output-options-slot:empty {
+      display: none;
+    }
+    .toolbar.toolbar-overflow .tools-section > select,
+    .toolbar.toolbar-overflow .tools-section > button,
+    .toolbar.toolbar-overflow .tools-section > .settings,
+    .toolbar.toolbar-overflow .tools-section > .checkbox,
+    .toolbar.toolbar-overflow .output-options-slot > .checkbox {
       width: 100%;
       min-width: 0;
     }
@@ -1567,72 +1633,84 @@ export class KdbResultsPanel {
 </head>
 <body>
   <div id="resultsToolbar" class="toolbar">
-    <select id="actionFormat" aria-label="Copy/export format" disabled>
-      <option value="csv">CSV</option>
-      <option value="xlsx">XLSX</option>
-      <option value="tsv">TSV</option>
-      <option value="json">JSON</option>
-      <option value="ndjson">NDJSON</option>
-      <option value="html">HTML</option>
-      <option value="markdown">Markdown</option>
-    </select>
-    <button id="copy" disabled>Copy</button>
-    <button id="export" disabled>Export</button>
+    <div id="outputControls" class="toolbar-group output-group" role="group" aria-labelledby="outputControlsLabel">
+      <span id="outputControlsLabel" class="toolbar-group-label">Output:</span>
+      <select id="actionFormat" aria-label="Copy/export format" disabled>
+        <option value="csv">CSV</option>
+        <option value="xlsx">XLSX</option>
+        <option value="tsv">TSV</option>
+        <option value="json">JSON</option>
+        <option value="ndjson">NDJSON</option>
+        <option value="html">HTML</option>
+        <option value="markdown">Markdown</option>
+      </select>
+      <span id="inlineOutputOptions" class="output-options-slot">
+        <label id="includeHeadersLabel" class="checkbox" title="Include column headers in copied/exported output"><input id="includeHeaders" type="checkbox" checked>Headers</label>
+        <label id="includeRowIndexLabel" class="checkbox" title="Include row numbers in copied/exported output"><input id="includeRowIndex" type="checkbox" checked>Row #</label>
+      </span>
+      <button id="copy" disabled>Copy</button>
+      <button id="export" disabled>Export</button>
+    </div>
     <details id="toolsMenu" class="tools-menu" open>
       <summary id="toolsSummary">Tools</summary>
       <div class="tools-panel">
-        <label class="checkbox"><input id="includeRowIndex" type="checkbox" checked>Row #</label>
-        <label class="checkbox"><input id="includeHeaders" type="checkbox" checked>Headers</label>
-        <label class="checkbox"><input id="autoFit" type="checkbox" disabled>Auto-fit</label>
-        <select id="interactionMode" aria-label="Header mode">
-          <option value="drag">Drag</option>
-          <option value="select">Select</option>
-          <option value="sort">Sort</option>
-        </select>
-        <span id="sortStatus" class="status">Sort: none</span>
-        <span class="search">
-          <input id="searchInput" type="search" placeholder="Search" aria-label="Search visible cells" disabled>
-          <button id="searchPrev" disabled>Prev</button>
-          <button id="searchNext" disabled>Next</button>
-          <span id="searchStatus" class="search-status"></span>
-        </span>
-        <details id="settingsMenu" class="settings">
-          <summary>Settings</summary>
-          <div class="settings-panel">
-            <label class="checkbox"><input id="settingsShowRowIndex" type="checkbox">Show row #</label>
-            <label class="checkbox"><input id="settingsIncludeHeaders" type="checkbox">Include headers</label>
-            <label class="checkbox"><input id="settingsIncludeRowIndex" type="checkbox">Include row #</label>
-            <label class="checkbox"><input id="settingsHideLargeResultWarnings" type="checkbox">Hide large-result warnings</label>
-            <label class="checkbox"><input id="settingsHideLargeSortWarnings" type="checkbox">Hide large-sort warnings</label>
-            <label class="settings-row"><span>Elapsed time</span><select id="settingsElapsedTimeDisplay">
-              <option value="auto">Auto</option>
-              <option value="milliseconds">Milliseconds</option>
-            </select></label>
-            <label class="settings-row"><span>Arrays</span><select id="settingsArrayDisplayFormat">
-              <option value="commaSpace">Comma + space</option>
-              <option value="space">Spaces</option>
-              <option value="raw">Raw brackets</option>
-            </select></label>
-            <label class="settings-row"><span>Density</span><select id="settingsDensity">
-              <option value="compact">Compact</option>
-              <option value="standard">Standard</option>
-              <option value="comfortable">Comfortable</option>
-            </select></label>
-            <label class="settings-row"><span>Cell width</span><input id="settingsCellWidth" type="number" min="80" max="600" step="1"></label>
-            <label class="settings-row"><span>Row height</span><input id="settingsRowHeight" type="number" min="20" max="80" step="1"></label>
-            <label class="settings-row"><span>Font size</span><input id="settingsFontSize" type="number" min="0" max="32" step="1"></label>
-            <div class="settings-section">
-              <div class="settings-heading"><span>Columns</span><span id="hiddenColumns">All visible</span></div>
-              <div class="settings-actions">
-                <button id="selectAllColumns" type="button">Select all</button>
-                <button id="deselectAllColumns" type="button">Deselect all</button>
+        <section id="toolsOutputOptions" class="tools-section output-tools-section" role="group" aria-labelledby="outputOptionsLabel">
+          <div id="outputOptionsLabel" class="tools-section-label">Output options</div>
+          <span id="overflowOutputOptions" class="output-options-slot"></span>
+        </section>
+        <section id="viewToolsSection" class="tools-section view-tools-section" role="group" aria-labelledby="viewToolsLabel">
+          <div id="viewToolsLabel" class="tools-section-label">View tools</div>
+          <label class="checkbox"><input id="autoFit" type="checkbox" disabled>Auto-fit</label>
+          <select id="interactionMode" aria-label="Header mode">
+            <option value="drag">Drag</option>
+            <option value="select">Select</option>
+            <option value="sort">Sort</option>
+          </select>
+          <span id="sortStatus" class="status">Sort: none</span>
+          <span class="search">
+            <input id="searchInput" type="search" placeholder="Search" aria-label="Search visible cells" disabled>
+            <button id="searchPrev" disabled>Prev</button>
+            <button id="searchNext" disabled>Next</button>
+            <span id="searchStatus" class="search-status"></span>
+          </span>
+          <details id="settingsMenu" class="settings">
+            <summary>Settings</summary>
+            <div class="settings-panel">
+              <label class="checkbox"><input id="settingsShowRowIndex" type="checkbox">Show row #</label>
+              <label class="checkbox"><input id="settingsIncludeHeaders" type="checkbox">Include headers</label>
+              <label class="checkbox"><input id="settingsIncludeRowIndex" type="checkbox">Include row #</label>
+              <label class="checkbox"><input id="settingsHideLargeResultWarnings" type="checkbox">Hide large-result warnings</label>
+              <label class="checkbox"><input id="settingsHideLargeSortWarnings" type="checkbox">Hide large-sort warnings</label>
+              <label class="settings-row"><span>Elapsed time</span><select id="settingsElapsedTimeDisplay">
+                <option value="auto">Auto</option>
+                <option value="milliseconds">Milliseconds</option>
+              </select></label>
+              <label class="settings-row"><span>Arrays</span><select id="settingsArrayDisplayFormat">
+                <option value="commaSpace">Comma + space</option>
+                <option value="space">Spaces</option>
+                <option value="raw">Raw brackets</option>
+              </select></label>
+              <label class="settings-row"><span>Density</span><select id="settingsDensity">
+                <option value="compact">Compact</option>
+                <option value="standard">Standard</option>
+                <option value="comfortable">Comfortable</option>
+              </select></label>
+              <label class="settings-row"><span>Cell width</span><input id="settingsCellWidth" type="number" min="80" max="600" step="1"></label>
+              <label class="settings-row"><span>Row height</span><input id="settingsRowHeight" type="number" min="20" max="80" step="1"></label>
+              <label class="settings-row"><span>Font size</span><input id="settingsFontSize" type="number" min="0" max="32" step="1"></label>
+              <div class="settings-section">
+                <div class="settings-heading"><span>Columns</span><span id="hiddenColumns">All visible</span></div>
+                <div class="settings-actions">
+                  <button id="selectAllColumns" type="button">Select all</button>
+                  <button id="deselectAllColumns" type="button">Deselect all</button>
+                </div>
+                <div id="columnList" class="column-list" role="list"></div>
+                <button id="resetColumns" class="reset-columns" disabled>Reset hidden columns</button>
+                <button id="resetColumnWidths" class="reset-columns" disabled>Reset column widths</button>
               </div>
-              <div id="columnList" class="column-list" role="list"></div>
-              <button id="resetColumns" class="reset-columns" disabled>Reset hidden columns</button>
-              <button id="resetColumnWidths" class="reset-columns" disabled>Reset column widths</button>
             </div>
-          </div>
-        </details>
+          </details>
+        </section>
       </div>
     </details>
     <span id="spinner" class="spinner" hidden></span>
@@ -1693,6 +1771,10 @@ export class KdbResultsPanel {
       const actionFormat = document.getElementById('actionFormat');
       const copyButton = document.getElementById('copy');
       const exportButton = document.getElementById('export');
+      const inlineOutputOptions = document.getElementById('inlineOutputOptions');
+      const overflowOutputOptions = document.getElementById('overflowOutputOptions');
+      const includeHeadersLabel = document.getElementById('includeHeadersLabel');
+      const includeRowIndexLabel = document.getElementById('includeRowIndexLabel');
       const includeRowIndex = document.getElementById('includeRowIndex');
       const includeHeaders = document.getElementById('includeHeaders');
       const autoFit = document.getElementById('autoFit');
@@ -1961,7 +2043,20 @@ export class KdbResultsPanel {
         const shouldOverflow = mediaOverflow || toolbar.scrollWidth > toolbar.clientWidth + 1;
         toolbarOverflowActive = shouldOverflow;
         toolbar.classList.toggle('toolbar-overflow', shouldOverflow);
+        placeOutputOptions(shouldOverflow);
         toolsMenu.open = shouldOverflow ? wasOverflow && wasOpen : true;
+      }
+
+      function placeOutputOptions(inToolsMenu) {
+        const target = inToolsMenu ? overflowOutputOptions : inlineOutputOptions;
+        if (!target || !includeHeadersLabel || !includeRowIndexLabel) {
+          return;
+        }
+        if (includeHeadersLabel.parentElement === target && includeHeadersLabel.nextElementSibling === includeRowIndexLabel) {
+          return;
+        }
+        target.appendChild(includeHeadersLabel);
+        target.appendChild(includeRowIndexLabel);
       }
 
       function closeToolbarMenus(restoreFocus) {
