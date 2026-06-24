@@ -63,6 +63,10 @@ function htmlSelectOptions(source, selectId) {
   return matches.map(match => match.replace(/^<option value="([^"]+)">.*$/, '$1'));
 }
 
+function sourceOccurrences(source, needle) {
+  return source.split(needle).length - 1;
+}
+
 function panelScrollState(physicalScrollTop, viewportHeight, rowCount, currentLayout, maxScrollPixels, scrollEndEpsilon) {
   const virtualContentHeight = currentLayout.headerHeight + rowCount * currentLayout.rowHeight;
   const physicalContentHeight = Math.min(virtualContentHeight, maxScrollPixels);
@@ -663,6 +667,30 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('rowElement.style.top = renderedRowTop(row, verticalState, layout)'), true);
   assert.strictEqual(resultsPanelSource.includes('rowElement.style.top = (layout.headerHeight + row * layout.rowHeight)'), false);
   assert.deepStrictEqual(htmlSelectOptions(resultsPanelSource, 'actionFormat'), ['csv', 'xlsx', 'tsv', 'json', 'ndjson', 'html', 'markdown']);
+  assert.strictEqual(resultsPanelSource.includes('id="toolsMenu"'), true);
+  assert.strictEqual(resultsPanelSource.includes('<summary id="toolsSummary">Tools</summary>'), true);
+  assert.strictEqual(resultsPanelSource.includes('class="tools-panel"'), true);
+  assert.strictEqual(resultsPanelSource.includes('function updateToolbarOverflow()'), true);
+  assert.strictEqual(resultsPanelSource.includes('ResizeObserver'), true);
+  assert.strictEqual(resultsPanelSource.includes("toolbar.classList.toggle('toolbar-overflow', shouldOverflow);"), true);
+  assert.strictEqual(resultsPanelSource.includes("document.addEventListener('click', event => {"), true);
+  assert.strictEqual(resultsPanelSource.includes("event.key === 'Escape' && closeToolbarMenus(true)"), true);
+  const toolsPanelSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('<div class="tools-panel">'),
+    resultsPanelSource.indexOf('<span id="spinner"')
+  );
+  assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="actionFormat"'), 1);
+  assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="searchInput"'), 1);
+  assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="interactionMode"'), 1);
+  assert.strictEqual(toolsPanelSource.includes('id="searchInput"'), true);
+  assert.strictEqual(toolsPanelSource.includes('id="interactionMode"'), true);
+  assert.strictEqual(toolsPanelSource.includes('id="settingsMenu"'), true);
+  assert.strictEqual(toolsPanelSource.includes('id="includeHeaders"'), true);
+  assert.strictEqual(toolsPanelSource.includes('id="includeRowIndex"'), true);
+  assert.strictEqual(toolsPanelSource.includes('id="autoFit"'), true);
+  assert.ok(resultsPanelSource.indexOf('id="actionFormat"') < resultsPanelSource.indexOf('id="toolsMenu"'));
+  assert.ok(resultsPanelSource.indexOf('id="copy"') < resultsPanelSource.indexOf('id="toolsMenu"'));
+  assert.ok(resultsPanelSource.indexOf('id="export"') < resultsPanelSource.indexOf('id="toolsMenu"'));
   assert.strictEqual(resultsPanelSource.includes('id="copyFormat"'), false);
   assert.strictEqual(resultsPanelSource.includes('id="exportFormat"'), false);
   assert.strictEqual(resultsPanelSource.includes("format === 'xlsx'"), true);

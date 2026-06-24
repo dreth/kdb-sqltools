@@ -1133,6 +1133,13 @@ export class KdbResultsPanel {
       white-space: nowrap;
       overflow: visible;
     }
+    .tools-menu,
+    .tools-panel {
+      display: contents;
+    }
+    .tools-menu > summary {
+      display: none;
+    }
     button, select, input[type="number"], input[type="search"] {
       height: 26px;
       font: inherit;
@@ -1280,6 +1287,85 @@ export class KdbResultsPanel {
       text-overflow: ellipsis;
       min-width: 0;
       max-width: 160px;
+    }
+    .toolbar.toolbar-overflow {
+      gap: 6px;
+      overflow: visible;
+    }
+    .toolbar.toolbar-overflow .tools-menu {
+      display: block;
+      position: relative;
+      flex: 0 0 auto;
+      color: var(--vscode-editor-foreground);
+    }
+    .toolbar.toolbar-overflow .tools-menu > summary {
+      display: inline-flex;
+      align-items: center;
+      height: 26px;
+      padding: 0 10px;
+      color: var(--vscode-button-foreground);
+      background: var(--vscode-button-secondaryBackground, var(--vscode-button-background));
+      border: 1px solid var(--vscode-button-border, transparent);
+      border-radius: 2px;
+      cursor: pointer;
+      list-style: none;
+      box-sizing: border-box;
+    }
+    .toolbar.toolbar-overflow .tools-menu > summary::-webkit-details-marker {
+      display: none;
+    }
+    .toolbar.toolbar-overflow .tools-menu > summary:hover {
+      background: var(--vscode-button-secondaryHoverBackground, var(--vscode-button-hoverBackground));
+    }
+    .toolbar.toolbar-overflow .tools-menu:not([open]) > .tools-panel {
+      display: none;
+    }
+    .toolbar.toolbar-overflow .tools-menu[open] > .tools-panel {
+      position: absolute;
+      top: 30px;
+      right: 0;
+      z-index: 30;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 8px;
+      width: min(360px, calc(100vw - 20px));
+      max-height: calc(100vh - 60px);
+      overflow: auto;
+      padding: 10px;
+      border: 1px solid var(--vscode-panel-border);
+      background: var(--vscode-sideBar-background);
+      box-shadow: 0 4px 12px var(--vscode-widget-shadow);
+      box-sizing: border-box;
+    }
+    .toolbar.toolbar-overflow .tools-panel > select,
+    .toolbar.toolbar-overflow .tools-panel > button,
+    .toolbar.toolbar-overflow .tools-panel > .settings {
+      width: 100%;
+      min-width: 0;
+    }
+    .toolbar.toolbar-overflow .tools-panel .search {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      gap: 6px;
+      width: 100%;
+    }
+    .toolbar.toolbar-overflow .tools-panel .search input[type="search"] {
+      width: 100%;
+      min-width: 0;
+    }
+    .toolbar.toolbar-overflow .tools-panel .search-status {
+      grid-column: 1 / -1;
+      max-width: none;
+    }
+    .toolbar.toolbar-overflow .tools-panel .settings summary {
+      width: 100%;
+    }
+    .toolbar.toolbar-overflow .tools-panel .settings-panel {
+      position: static;
+      width: 100%;
+      max-height: none;
+      margin-top: 6px;
+      box-shadow: none;
     }
     .summary, .selection, .status {
       overflow: hidden;
@@ -1480,7 +1566,7 @@ export class KdbResultsPanel {
   </style>
 </head>
 <body>
-  <div class="toolbar">
+  <div id="resultsToolbar" class="toolbar">
     <select id="actionFormat" aria-label="Copy/export format" disabled>
       <option value="csv">CSV</option>
       <option value="xlsx">XLSX</option>
@@ -1492,56 +1578,61 @@ export class KdbResultsPanel {
     </select>
     <button id="copy" disabled>Copy</button>
     <button id="export" disabled>Export</button>
-    <label class="checkbox"><input id="includeRowIndex" type="checkbox" checked>Row #</label>
-    <label class="checkbox"><input id="includeHeaders" type="checkbox" checked>Headers</label>
-    <label class="checkbox"><input id="autoFit" type="checkbox" disabled>Auto-fit</label>
-    <select id="interactionMode" aria-label="Header mode">
-      <option value="drag">Drag</option>
-      <option value="select">Select</option>
-      <option value="sort">Sort</option>
-    </select>
-    <span id="sortStatus" class="status">Sort: none</span>
-    <span class="search">
-      <input id="searchInput" type="search" placeholder="Search" aria-label="Search visible cells" disabled>
-      <button id="searchPrev" disabled>Prev</button>
-      <button id="searchNext" disabled>Next</button>
-      <span id="searchStatus" class="search-status"></span>
-    </span>
-    <details id="settingsMenu" class="settings">
-      <summary>Settings</summary>
-      <div class="settings-panel">
-        <label class="checkbox"><input id="settingsShowRowIndex" type="checkbox">Show row #</label>
-        <label class="checkbox"><input id="settingsIncludeHeaders" type="checkbox">Include headers</label>
-        <label class="checkbox"><input id="settingsIncludeRowIndex" type="checkbox">Include row #</label>
-        <label class="checkbox"><input id="settingsHideLargeResultWarnings" type="checkbox">Hide large-result warnings</label>
-        <label class="checkbox"><input id="settingsHideLargeSortWarnings" type="checkbox">Hide large-sort warnings</label>
-        <label class="settings-row"><span>Elapsed time</span><select id="settingsElapsedTimeDisplay">
-          <option value="auto">Auto</option>
-          <option value="milliseconds">Milliseconds</option>
-        </select></label>
-        <label class="settings-row"><span>Arrays</span><select id="settingsArrayDisplayFormat">
-          <option value="commaSpace">Comma + space</option>
-          <option value="space">Spaces</option>
-          <option value="raw">Raw brackets</option>
-        </select></label>
-        <label class="settings-row"><span>Density</span><select id="settingsDensity">
-          <option value="compact">Compact</option>
-          <option value="standard">Standard</option>
-          <option value="comfortable">Comfortable</option>
-        </select></label>
-        <label class="settings-row"><span>Cell width</span><input id="settingsCellWidth" type="number" min="80" max="600" step="1"></label>
-        <label class="settings-row"><span>Row height</span><input id="settingsRowHeight" type="number" min="20" max="80" step="1"></label>
-        <label class="settings-row"><span>Font size</span><input id="settingsFontSize" type="number" min="0" max="32" step="1"></label>
-        <div class="settings-section">
-          <div class="settings-heading"><span>Columns</span><span id="hiddenColumns">All visible</span></div>
-          <div class="settings-actions">
-            <button id="selectAllColumns" type="button">Select all</button>
-            <button id="deselectAllColumns" type="button">Deselect all</button>
+    <details id="toolsMenu" class="tools-menu" open>
+      <summary id="toolsSummary">Tools</summary>
+      <div class="tools-panel">
+        <label class="checkbox"><input id="includeRowIndex" type="checkbox" checked>Row #</label>
+        <label class="checkbox"><input id="includeHeaders" type="checkbox" checked>Headers</label>
+        <label class="checkbox"><input id="autoFit" type="checkbox" disabled>Auto-fit</label>
+        <select id="interactionMode" aria-label="Header mode">
+          <option value="drag">Drag</option>
+          <option value="select">Select</option>
+          <option value="sort">Sort</option>
+        </select>
+        <span id="sortStatus" class="status">Sort: none</span>
+        <span class="search">
+          <input id="searchInput" type="search" placeholder="Search" aria-label="Search visible cells" disabled>
+          <button id="searchPrev" disabled>Prev</button>
+          <button id="searchNext" disabled>Next</button>
+          <span id="searchStatus" class="search-status"></span>
+        </span>
+        <details id="settingsMenu" class="settings">
+          <summary>Settings</summary>
+          <div class="settings-panel">
+            <label class="checkbox"><input id="settingsShowRowIndex" type="checkbox">Show row #</label>
+            <label class="checkbox"><input id="settingsIncludeHeaders" type="checkbox">Include headers</label>
+            <label class="checkbox"><input id="settingsIncludeRowIndex" type="checkbox">Include row #</label>
+            <label class="checkbox"><input id="settingsHideLargeResultWarnings" type="checkbox">Hide large-result warnings</label>
+            <label class="checkbox"><input id="settingsHideLargeSortWarnings" type="checkbox">Hide large-sort warnings</label>
+            <label class="settings-row"><span>Elapsed time</span><select id="settingsElapsedTimeDisplay">
+              <option value="auto">Auto</option>
+              <option value="milliseconds">Milliseconds</option>
+            </select></label>
+            <label class="settings-row"><span>Arrays</span><select id="settingsArrayDisplayFormat">
+              <option value="commaSpace">Comma + space</option>
+              <option value="space">Spaces</option>
+              <option value="raw">Raw brackets</option>
+            </select></label>
+            <label class="settings-row"><span>Density</span><select id="settingsDensity">
+              <option value="compact">Compact</option>
+              <option value="standard">Standard</option>
+              <option value="comfortable">Comfortable</option>
+            </select></label>
+            <label class="settings-row"><span>Cell width</span><input id="settingsCellWidth" type="number" min="80" max="600" step="1"></label>
+            <label class="settings-row"><span>Row height</span><input id="settingsRowHeight" type="number" min="20" max="80" step="1"></label>
+            <label class="settings-row"><span>Font size</span><input id="settingsFontSize" type="number" min="0" max="32" step="1"></label>
+            <div class="settings-section">
+              <div class="settings-heading"><span>Columns</span><span id="hiddenColumns">All visible</span></div>
+              <div class="settings-actions">
+                <button id="selectAllColumns" type="button">Select all</button>
+                <button id="deselectAllColumns" type="button">Deselect all</button>
+              </div>
+              <div id="columnList" class="column-list" role="list"></div>
+              <button id="resetColumns" class="reset-columns" disabled>Reset hidden columns</button>
+              <button id="resetColumnWidths" class="reset-columns" disabled>Reset column widths</button>
+            </div>
           </div>
-          <div id="columnList" class="column-list" role="list"></div>
-          <button id="resetColumns" class="reset-columns" disabled>Reset hidden columns</button>
-          <button id="resetColumnWidths" class="reset-columns" disabled>Reset column widths</button>
-        </div>
+        </details>
       </div>
     </details>
     <span id="spinner" class="spinner" hidden></span>
@@ -1591,6 +1682,10 @@ export class KdbResultsPanel {
         elapsedTimeDisplay: 'auto',
         arrayDisplayFormat: 'commaSpace'
       };
+      const TOOLBAR_OVERFLOW_MEDIA_QUERY = '(max-width: 720px)';
+      const toolbar = document.getElementById('resultsToolbar');
+      const toolsMenu = document.getElementById('toolsMenu');
+      const toolsSummary = document.getElementById('toolsSummary');
       const viewport = document.getElementById('viewport');
       const canvas = document.getElementById('canvas');
       const header = document.getElementById('header');
@@ -1654,6 +1749,11 @@ export class KdbResultsPanel {
       let resizeState = null;
       let autoFitEnabled = false;
       let columnDragState = null;
+      let toolbarOverflowQueued = false;
+      let toolbarOverflowActive = false;
+      const toolbarOverflowMedia = typeof window.matchMedia === 'function'
+        ? window.matchMedia(TOOLBAR_OVERFLOW_MEDIA_QUERY)
+        : null;
 
       window.addEventListener('message', event => {
         const msg = event.data || {};
@@ -1760,7 +1860,24 @@ export class KdbResultsPanel {
       viewport.addEventListener('contextmenu', () => {
         vscode.postMessage({ type: 'tableContextMenu' });
       });
+      document.addEventListener('click', event => {
+        const target = event.target;
+        if (toolbarOverflowActive && toolsMenu.open && !toolsMenu.contains(target)) {
+          toolsMenu.open = false;
+          settingsMenu.open = false;
+        }
+        if (settingsMenu.open && !settingsMenu.contains(target)) {
+          settingsMenu.open = false;
+        }
+        if (largeResultWarning.open && !largeResultWarning.contains(target)) {
+          largeResultWarning.open = false;
+        }
+      });
       window.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && closeToolbarMenus(true)) {
+          event.preventDefault();
+          return;
+        }
         if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c' && hasTableCells()) {
           event.preventDefault();
           copySelection();
@@ -1787,7 +1904,86 @@ export class KdbResultsPanel {
         dragMode = '';
         requestRender();
       });
-      window.addEventListener('resize', requestRender);
+      window.addEventListener('resize', () => {
+        requestRender();
+        queueToolbarOverflowUpdate();
+      });
+      if (typeof ResizeObserver === 'function') {
+        new ResizeObserver(queueToolbarOverflowUpdate).observe(toolbar);
+      } else {
+        window.addEventListener('resize', queueToolbarOverflowUpdate);
+      }
+      if (typeof MutationObserver === 'function') {
+        new MutationObserver(queueToolbarOverflowUpdate).observe(toolbar, {
+          childList: true,
+          subtree: true,
+          characterData: true,
+          attributes: true,
+          attributeFilter: ['disabled', 'hidden']
+        });
+      }
+      if (toolbarOverflowMedia) {
+        if (typeof toolbarOverflowMedia.addEventListener === 'function') {
+          toolbarOverflowMedia.addEventListener('change', queueToolbarOverflowUpdate);
+        } else if (typeof toolbarOverflowMedia.addListener === 'function') {
+          toolbarOverflowMedia.addListener(queueToolbarOverflowUpdate);
+        }
+      }
+      toolsMenu.addEventListener('toggle', () => {
+        if (!toolsMenu.open) {
+          settingsMenu.open = false;
+        }
+      });
+      queueToolbarOverflowUpdate();
+
+      function queueToolbarOverflowUpdate() {
+        if (toolbarOverflowQueued) {
+          return;
+        }
+        toolbarOverflowQueued = true;
+        requestAnimationFrame(() => {
+          toolbarOverflowQueued = false;
+          updateToolbarOverflow();
+        });
+      }
+
+      function updateToolbarOverflow() {
+        if (!toolbar || !toolsMenu || toolbar.clientWidth <= 0) {
+          return;
+        }
+        const wasOverflow = toolbarOverflowActive;
+        const wasOpen = toolsMenu.open;
+        toolbar.classList.remove('toolbar-overflow');
+        toolsMenu.open = true;
+        const mediaOverflow = toolbarOverflowMedia
+          ? toolbarOverflowMedia.matches
+          : window.innerWidth <= 720;
+        const shouldOverflow = mediaOverflow || toolbar.scrollWidth > toolbar.clientWidth + 1;
+        toolbarOverflowActive = shouldOverflow;
+        toolbar.classList.toggle('toolbar-overflow', shouldOverflow);
+        toolsMenu.open = shouldOverflow ? wasOverflow && wasOpen : true;
+      }
+
+      function closeToolbarMenus(restoreFocus) {
+        let closed = false;
+        if (toolbarOverflowActive && toolsMenu.open) {
+          toolsMenu.open = false;
+          settingsMenu.open = false;
+          closed = true;
+        }
+        if (settingsMenu.open) {
+          settingsMenu.open = false;
+          closed = true;
+        }
+        if (largeResultWarning.open) {
+          largeResultWarning.open = false;
+          closed = true;
+        }
+        if (closed && restoreFocus && toolbarOverflowActive) {
+          toolsSummary.focus();
+        }
+        return closed;
+      }
 
       function setLoading(state) {
         applySettings(state.settings);
