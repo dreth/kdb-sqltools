@@ -1,5 +1,13 @@
 # Change Log
 
+## 0.2.9
+
+- Added visual cues for kdb panel column drag/reorder mode, including source header lift/fade and before/after drop indicators.
+- Added `kdb-sqltools.results.kdbPanel.arrayDisplayFormat` with `commaSpace` default, `space`, and `raw` display options for nested arrays/lists.
+- Updated text copy/export and XLSX output to use the selected array display format while keeping JSON/NDJSON structured.
+- Replaced the static docs landing page with a MkDocs Material documentation site, GitHub Pages deployment, and dark/light theme toggle.
+- Added GitHub Actions workflows for Pages, Marketplace identity lookup, and Microsoft Entra credential Marketplace publishing.
+
 ## 0.2.8
 
 - Moved Auto-fit to the top toolbar as a checkbox and made it update widths from headers plus the currently rendered visible slice only.
