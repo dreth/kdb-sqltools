@@ -1,5 +1,13 @@
 # Change Log
 
+## 0.3.2
+
+- Added a uPlot-powered built-in line chart renderer for eligible time-series-style result data.
+- Added cursor/crosshair tooltips, drag-select zoom, reset zoom, and live legend values with series toggling.
+- Preserved PNG export from the rendered uPlot canvas.
+- Packaged uPlot assets locally for offline use with no CDN dependency.
+- Current chart limitations: line/time-series rendering only, no pan or full dashboard experience, and zoom uses the already sampled webview data rather than viewport-aware resampling.
+
 ## 0.3.1
 
 - Added PNG export for the rendered built-in line chart, with a save dialog and default `.png` filename.
