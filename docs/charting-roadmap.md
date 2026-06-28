@@ -6,7 +6,7 @@
 
 ## Current status
 
-The extension currently supports q execution, the kdb results panel, copy/export, an opt-in local data server, and a first built-in line/time-series chart.
+The extension currently supports q execution, the kdb results panel, copy/export, an opt-in local data server, and a first built-in line/time-series chart with PNG export.
 
 Future charting work should stay focused on large kdb time-series results rather than small demo datasets. The design should continue to avoid sending millions of raw points to a VS Code webview.
 
@@ -105,11 +105,12 @@ Large resampling jobs should use cancellation and versioning:
    - User selects one x column and one or more y columns.
    - Auto downsampling based on plot width and visible x range.
    - Basic tooltip, legend, and sampled/full row-count metadata.
+   - PNG export for the rendered canvas.
 4. Docs and tests.
    - Update user docs for any shipped charting behavior.
    - Add fixtures for sorted and unsorted x values, nulls, infinities, duplicate timestamps, and dense ranges.
    - Add performance checks for large result downsampling.
-   - Keep copy/export semantics separate from chart export semantics.
+   - Keep table copy/export semantics separate from chart export semantics.
 
 ## Non-goals for the first built-in chart
 

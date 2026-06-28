@@ -11,8 +11,9 @@ SQLTools remains required for connections and q execution. Charting uses the cur
 3. Select `Line chart`.
 4. Pick one x column and one or more y columns.
 5. Press `Render`.
+6. After the chart renders, press `Export PNG` to save the canvas chart as `kdb-chart.png` or another PNG file.
 
-Only line charts are supported. Bar, pie, heatmap, dashboard, streaming, and chart export features are not implemented.
+Only line charts are supported. PNG export is supported. Bar, pie, heatmap, dashboard, streaming, zoom, and pan features are not implemented.
 
 ## Eligible columns
 
@@ -45,6 +46,6 @@ Null and non-finite y values render as line gaps where sampled. Rows with null, 
 
 ## Implementation note
 
-The first shipped chart uses a small built-in canvas renderer to avoid adding a bundled charting library to the current VS Code webview/CSP setup. uPlot remains the planned first external charting library if the extension later needs richer zooming, panning, and tooltip behavior.
+The chart uses a small built-in canvas renderer to avoid adding a bundled charting library to the current VS Code webview/CSP setup. PNG export saves the rendered canvas through the extension host, not browser download APIs inside the webview. uPlot remains the planned first external charting library if the extension later needs richer zooming, panning, and tooltip behavior.
 
 For richer Plotly workflows, use the [local data server](local-data-server.md) from Python or pandas. `plotly-resampler` fits that external workflow better than the built-in webview chart.

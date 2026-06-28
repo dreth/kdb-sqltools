@@ -111,6 +111,9 @@ const SEARCH_MATCH_CAP = 1000;
 const SEARCH_YIELD_CELL_INTERVAL = 10000;
 const SEARCH_SCAN_CELL_LIMIT = 2000000;
 const SEARCH_SCAN_MS_LIMIT = 1500;
+const CHART_PNG_DATA_URL_PREFIX = 'data:image/png;base64,';
+const CHART_EXPORT_MAX_BYTES = 50 * 1024 * 1024;
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const DEFAULT_PANEL_SETTINGS: KdbPanelSettings = {
   cellWidth: 160,
   rowHeight: 28,
@@ -410,6 +413,11 @@ export class KdbResultsPanel {
       return;
     }
 
+    if (message.type === 'exportChartPng') {
+      await this.exportChartPng(message);
+      return;
+    }
+
     if (message.type === 'requestSlice') {
       this.postSlice(message);
       return;
@@ -680,6 +688,59 @@ export class KdbResultsPanel {
         message: error instanceof ChartDataError ? err.message : `Chart failed: ${err.message}`,
       });
     }
+  }
+
+  private async exportChartPng(message: any): Promise<void> {
+    const requestVersion = integerOrNull(message.version);
+    const requestId = integerOrNull(message.requestId);
+    if (requestVersion === null || requestId === null ||
+      requestVersion !== this.version || requestId !== this.activeChartRequestId) {
+      return;
+    }
+
+    let content: Uint8Array;
+    try {
+      content = chartPngBytesFromDataUrl(message.dataUrl);
+    } catch (error) {
+      const errorMessage = toError(error).message;
+      await vscode.window.showErrorMessage(errorMessage);
+      if (this.version === requestVersion && this.activeChartRequestId === requestId) {
+        this.post({ type: 'chartExportError', version: requestVersion, requestId, message: errorMessage });
+      }
+      return;
+    }
+
+    if (this.version !== requestVersion || this.activeChartRequestId !== requestId) {
+      return;
+    }
+
+    const uri = await vscode.window.showSaveDialog({
+      defaultUri: defaultChartExportUri(),
+      filters: { PNG: ['png'] },
+      saveLabel: 'Export',
+    });
+    if (this.version !== requestVersion || this.activeChartRequestId !== requestId) {
+      return;
+    }
+    if (!uri) {
+      this.post({ type: 'chartExportSkipped', version: requestVersion, requestId, message: 'Chart export canceled.' });
+      return;
+    }
+
+    try {
+      await vscode.workspace.fs.writeFile(uri, content);
+    } catch (error) {
+      const errorMessage = `Chart export failed: ${toError(error).message}`;
+      await vscode.window.showErrorMessage(errorMessage);
+      if (this.version === requestVersion && this.activeChartRequestId === requestId) {
+        this.post({ type: 'chartExportError', version: requestVersion, requestId, message: errorMessage });
+      }
+      return;
+    }
+    if (this.version !== requestVersion || this.activeChartRequestId !== requestId) {
+      return;
+    }
+    this.post({ type: 'chartExported', version: requestVersion, requestId, message: 'Chart exported / saved.' });
   }
 
   private baseVisibleTable(): ColumnarPanelResult | null {
@@ -2094,6 +2155,7 @@ export class KdbResultsPanel {
       <label class="chart-field"><span>X</span><select id="chartXColumn" disabled></select></label>
       <div id="chartYColumns" class="chart-y-list" role="group" aria-label="Y columns"></div>
       <button id="renderChart" disabled>Render</button>
+      <button id="exportChart" hidden disabled>Export PNG</button>
       <button id="closeChart">Close</button>
       <span id="chartStatus" class="status"></span>
     </div>
@@ -2195,6 +2257,7 @@ export class KdbResultsPanel {
       const chartXColumn = document.getElementById('chartXColumn');
       const chartYColumns = document.getElementById('chartYColumns');
       const renderChart = document.getElementById('renderChart');
+      const exportChart = document.getElementById('exportChart');
       const closeChart = document.getElementById('closeChart');
       const chartStatus = document.getElementById('chartStatus');
       const chartCanvasWrap = document.getElementById('chartCanvasWrap');
@@ -2228,6 +2291,8 @@ export class KdbResultsPanel {
       let chartOptionsRequestId = 0;
       let chartOptions = { xColumns: [], yColumns: [], warnings: [] };
       let chartData = null;
+      let chartRendered = null;
+      const CHART_PNG_DATA_URL_PREFIX = 'data:image/png;base64,';
       const toolbarOverflowMedia = typeof window.matchMedia === 'function'
         ? window.matchMedia(TOOLBAR_OVERFLOW_MEDIA_QUERY)
         : null;
@@ -2274,6 +2339,13 @@ export class KdbResultsPanel {
           setChartData(msg.data);
         } else if (msg.type === 'chartError' && isCurrentVersionMessage(msg)) {
           setChartError(msg);
+        } else if (msg.type === 'chartExported' && isCurrentChartMessage(msg)) {
+          chartStatus.textContent = String(msg.message || 'Chart exported / saved.');
+          status.textContent = 'Chart exported / saved.';
+        } else if (msg.type === 'chartExportSkipped' && isCurrentChartMessage(msg)) {
+          chartStatus.textContent = String(msg.message || 'Chart export canceled.');
+        } else if (msg.type === 'chartExportError' && isCurrentChartMessage(msg)) {
+          chartStatus.textContent = String(msg.message || 'Chart export failed.');
         }
       });
 
@@ -2348,8 +2420,9 @@ export class KdbResultsPanel {
       copyCurrentCsvUrl.addEventListener('click', () => vscode.postMessage({ type: 'copyLocalDataServerUrl', endpoint: 'current.csv' }));
       copyMetadataUrl.addEventListener('click', () => vscode.postMessage({ type: 'copyLocalDataServerUrl', endpoint: 'metadata.json' }));
       openChart.addEventListener('click', openChartPanel);
-      chartXColumn.addEventListener('change', updateChartControls);
+      chartXColumn.addEventListener('change', onChartControlChanged);
       renderChart.addEventListener('click', requestChartData);
+      exportChart.addEventListener('click', exportChartPng);
       closeChart.addEventListener('click', closeChartPanel);
       chartCanvasWrap.addEventListener('mousemove', showChartTooltip);
       chartCanvasWrap.addEventListener('mouseleave', hideChartTooltip);
@@ -2667,6 +2740,10 @@ export class KdbResultsPanel {
         return toNonNegativeInteger(msg.version, -1) === data.version;
       }
 
+      function isCurrentChartMessage(msg) {
+        return isCurrentVersionMessage(msg) && toNonNegativeInteger(msg.requestId, -1) === latestChartRequestId;
+      }
+
       function resetSearch(clearInput) {
         if (searchTimer) {
           clearTimeout(searchTimer);
@@ -2821,6 +2898,9 @@ export class KdbResultsPanel {
       function updateChartControls() {
         openChart.disabled = !hasTableCells() || !!data.error;
         renderChart.disabled = !chartCanRender();
+        const canExport = chartCanExport();
+        exportChart.hidden = !canExport;
+        exportChart.disabled = !canExport;
       }
 
       function openChartPanel() {
@@ -2830,6 +2910,7 @@ export class KdbResultsPanel {
         chartPanel.hidden = false;
         chartStatus.textContent = 'Detecting chart columns...';
         chartData = null;
+        chartRendered = null;
         chartLegend.textContent = '';
         hideChartTooltip();
         requestChartOptions();
@@ -2841,6 +2922,7 @@ export class KdbResultsPanel {
         chartPanel.hidden = true;
         latestChartRequestId += 1;
         chartData = null;
+        chartRendered = null;
         hideChartTooltip();
         chartStatus.textContent = '';
         chartLegend.textContent = '';
@@ -2852,6 +2934,7 @@ export class KdbResultsPanel {
         chartOptionsRequestId += 1;
         chartOptions = { xColumns: [], yColumns: [], warnings: [] };
         chartData = null;
+        chartRendered = null;
         chartPanel.hidden = true;
         chartXColumn.textContent = '';
         chartYColumns.textContent = '';
@@ -2929,7 +3012,7 @@ export class KdbResultsPanel {
           checkbox.type = 'checkbox';
           checkbox.value = option.columnName;
           checkbox.checked = defaultY.indexOf(option.columnName) !== -1;
-          checkbox.addEventListener('change', updateChartControls);
+          checkbox.addEventListener('change', onChartControlChanged);
           const text = document.createElement('span');
           text.textContent = option.columnName;
           label.appendChild(checkbox);
@@ -2962,6 +3045,30 @@ export class KdbResultsPanel {
           String(chartXColumn.value || '').length > 0;
       }
 
+      function chartCanExport() {
+        return !chartPanel.hidden &&
+          !!chartRendered &&
+          chartRendered.version === data.version &&
+          chartRendered.requestId === latestChartRequestId;
+      }
+
+      function onChartControlChanged() {
+        chartData = null;
+        chartRendered = null;
+        chartLegend.textContent = '';
+        hideChartTooltip();
+        chartStatus.textContent = chartCanRender()
+          ? 'Press Render to update chart.'
+          : 'Select one x column and at least one numeric y column.';
+        updateChartControls();
+        drawChart();
+      }
+
+      function clearChartRendered() {
+        chartRendered = null;
+        updateChartControls();
+      }
+
       function selectedChartYColumns() {
         const values = [];
         chartYColumns.querySelectorAll('input[type="checkbox"]').forEach(input => {
@@ -2978,6 +3085,8 @@ export class KdbResultsPanel {
           return;
         }
         latestChartRequestId += 1;
+        chartRendered = null;
+        updateChartControls();
         chartStatus.textContent = 'Sampling chart data...';
         vscode.postMessage({
           type: 'requestChart',
@@ -2989,12 +3098,52 @@ export class KdbResultsPanel {
         });
       }
 
+      function exportChartPng() {
+        if (!chartCanExport()) {
+          chartStatus.textContent = 'Render a chart before exporting.';
+          updateChartControls();
+          return;
+        }
+        if (!chartCanvas || typeof chartCanvas.toDataURL !== 'function') {
+          chartStatus.textContent = 'Chart canvas is unavailable.';
+          return;
+        }
+
+        const rendered = chartRendered;
+        let dataUrl = '';
+        try {
+          dataUrl = chartCanvas.toDataURL('image/png');
+        } catch (error) {
+          chartStatus.textContent = 'Chart export failed: canvas unavailable or blocked.';
+          return;
+        }
+
+        if (typeof dataUrl !== 'string' || dataUrl.indexOf(CHART_PNG_DATA_URL_PREFIX) !== 0) {
+          chartStatus.textContent = 'Chart export failed: invalid PNG data.';
+          return;
+        }
+        if (!rendered || rendered.version !== data.version || rendered.requestId !== latestChartRequestId) {
+          chartStatus.textContent = 'Render a chart before exporting.';
+          updateChartControls();
+          return;
+        }
+
+        chartStatus.textContent = 'Saving chart PNG...';
+        vscode.postMessage({
+          type: 'exportChartPng',
+          version: rendered.version,
+          requestId: rendered.requestId,
+          dataUrl
+        });
+      }
+
       function setChartData(value) {
         if (toNonNegativeInteger(value.version, -1) !== data.version ||
           toNonNegativeInteger(value.requestId, -1) !== latestChartRequestId) {
           return;
         }
         chartData = normalizeChartData(value);
+        chartRendered = null;
         const warnings = chartData.warnings.length > 0 ? ' ' + chartData.warnings.join(' ') : '';
         chartStatus.textContent = 'Showing ' + formatUiCount(chartData.sampledPointCount) +
           ' of ' + formatUiCount(chartData.sourceRowCount) +
@@ -3033,16 +3182,19 @@ export class KdbResultsPanel {
         }
         chartStatus.textContent = String(msg.message || 'Chart failed.');
         chartData = null;
+        chartRendered = null;
         chartLegend.textContent = '';
         drawChart();
       }
 
       function drawChart() {
         if (!chartCanvas || chartPanel.hidden) {
+          clearChartRendered();
           return;
         }
         const context = chartCanvas.getContext('2d');
         if (!context) {
+          clearChartRendered();
           return;
         }
         const rect = chartCanvasWrap.getBoundingClientRect();
@@ -3060,6 +3212,7 @@ export class KdbResultsPanel {
 
         if (!chartData || chartData.x.length === 0 || chartData.series.length === 0) {
           chartLegend.textContent = '';
+          clearChartRendered();
           return;
         }
 
@@ -3067,6 +3220,7 @@ export class KdbResultsPanel {
         const geometry = chartGeometry(width, height, chartData);
         if (!geometry) {
           chartLegend.textContent = '';
+          clearChartRendered();
           return;
         }
         drawChartAxes(context, geometry);
@@ -3074,6 +3228,8 @@ export class KdbResultsPanel {
           drawChartSeries(context, geometry, series, colors[seriesIndex % colors.length]);
         });
         renderChartLegend(colors);
+        chartRendered = { version: chartData.version, requestId: chartData.requestId };
+        updateChartControls();
       }
 
       function chartGeometry(width, height, value) {
@@ -4843,6 +4999,41 @@ function defaultExportUri(format: ExportFormat): vscode.Uri {
     : os.homedir();
   const extension = format === 'markdown' ? 'md' : format;
   return vscode.Uri.file(path.join(folder, `kdb-results.${extension}`));
+}
+
+function defaultChartExportUri(): vscode.Uri {
+  const folder = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0
+    ? vscode.workspace.workspaceFolders[0].uri.fsPath
+    : os.homedir();
+  return vscode.Uri.file(path.join(folder, 'kdb-chart.png'));
+}
+
+function chartPngBytesFromDataUrl(value: any): Uint8Array {
+  if (typeof value !== 'string' || !value.startsWith(CHART_PNG_DATA_URL_PREFIX)) {
+    throw new Error('Chart export requires a PNG data URL.');
+  }
+
+  const base64 = value.slice(CHART_PNG_DATA_URL_PREFIX.length);
+  if (base64.length === 0 || base64.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(base64)) {
+    throw new Error('Invalid chart PNG data URL.');
+  }
+
+  const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0;
+  const decodedBytes = base64.length / 4 * 3 - padding;
+  if (decodedBytes > CHART_EXPORT_MAX_BYTES) {
+    throw new Error(`Chart PNG export is too large: ${formatBytes(decodedBytes)}.`);
+  }
+
+  const content = Buffer.from(base64, 'base64');
+  if (content.length < PNG_SIGNATURE.length) {
+    throw new Error('Invalid chart PNG data.');
+  }
+  for (let index = 0; index < PNG_SIGNATURE.length; index++) {
+    if (content[index] !== PNG_SIGNATURE[index]) {
+      throw new Error('Invalid chart PNG data.');
+    }
+  }
+  return content;
 }
 
 function formatBytes(bytes: number): string {
