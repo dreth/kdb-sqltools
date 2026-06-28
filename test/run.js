@@ -17,6 +17,7 @@ const {
 const perfModule = require('../out/perf');
 const queriesModule = require('../out/ls/queries');
 const {
+  CHART_MAX_SOURCE_ROWS,
   ChartDataError,
   buildLineChartData,
   chartColumnOptions,
@@ -708,6 +709,16 @@ function panelFormatElapsedMs(milliseconds, display) {
     }),
     error => error instanceof ChartDataError && /limit/.test(error.message)
   );
+  const highCapChart = buildLineChartData(spikeTable, {
+    version: 1,
+    requestId: 2,
+    xColumn: 'x',
+    yColumns: ['y'],
+    width: 800,
+    maxSourceRows: 1000000000000,
+  });
+  assert.strictEqual(highCapChart.sourceRowCount, 100);
+  assert.strictEqual(highCapChart.requestId, 2);
   assert.throws(
     () => buildLineChartData(chartTable, {
       version: 1,
@@ -829,9 +840,11 @@ function panelFormatElapsedMs(milliseconds, display) {
   const resultsPanelSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'results-panel.ts'), 'utf8');
   const extensionSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'extension.ts'), 'utf8');
   const kdbResultsSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'kdb-results.ts'), 'utf8');
+  const chartingSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'charting.ts'), 'utf8');
   const perfSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'perf.ts'), 'utf8');
   const readmeSource = fs.readFileSync(path.join(__dirname, '..', 'README.md'), 'utf8');
   const chartingDocsSource = fs.readFileSync(path.join(__dirname, '..', 'docs', 'charting.md'), 'utf8');
+  const settingsDocsSource = fs.readFileSync(path.join(__dirname, '..', 'docs', 'settings.md'), 'utf8');
   const packageSource = fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8');
   const commandTitle = commandId => packageJson.contributes.commands.find(command => command.command === commandId).title;
   const keybinding = commandId => packageJson.contributes.keybindings.find(binding => binding.command === commandId);
@@ -920,6 +933,10 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes("vscode.postMessage({ type: 'startLocalDataServer' })"), true);
   assert.strictEqual(resultsPanelSource.includes("type: 'requestChart'"), true);
   assert.strictEqual(resultsPanelSource.includes('buildLineChartData(table'), true);
+  assert.strictEqual(resultsPanelSource.includes('function chartMaxSourceRowsSetting()'), true);
+  assert.strictEqual(resultsPanelSource.includes('function chartMaxSourceRowsSettingValue'), true);
+  assert.strictEqual(resultsPanelSource.includes('maxSourceRows: chartMaxSourceRowsSetting()'), true);
+  assert.strictEqual(/temporarily block the extension host, especially with multiple y columns/.test(chartingSource), true);
   assert.ok(resultsPanelSource.indexOf('id="actionFormat"') < resultsPanelSource.indexOf('id="toolsMenu"'));
   assert.ok(resultsPanelSource.indexOf('id="copy"') < resultsPanelSource.indexOf('id="toolsMenu"'));
   assert.ok(resultsPanelSource.indexOf('id="export"') < resultsPanelSource.indexOf('id="toolsMenu"'));
@@ -1068,6 +1085,13 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultSettings['kdb-sqltools.results.kdbPanel.arrayDisplayFormat'].type, 'string');
   assert.strictEqual(resultSettings['kdb-sqltools.results.kdbPanel.arrayDisplayFormat'].default, 'commaSpace');
   assert.deepStrictEqual(resultSettings['kdb-sqltools.results.kdbPanel.arrayDisplayFormat'].enum, ['commaSpace', 'space', 'raw']);
+  const chartMaxSourceRowsSetting = resultSettings['kdb-sqltools.results.kdbPanel.chartMaxSourceRows'];
+  assert.strictEqual(chartMaxSourceRowsSetting.type, 'integer');
+  assert.strictEqual(chartMaxSourceRowsSetting.default, CHART_MAX_SOURCE_ROWS);
+  assert.strictEqual(chartMaxSourceRowsSetting.minimum, 1);
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(chartMaxSourceRowsSetting, 'maximum'), false);
+  assert.strictEqual(/no hard upper bound/i.test(chartMaxSourceRowsSetting.description), true);
+  assert.strictEqual(/temporarily block the extension host/i.test(chartMaxSourceRowsSetting.description), true);
   assert.strictEqual(resultSettings['kdb-sqltools.performance.trace'].type, 'boolean');
   assert.strictEqual(resultSettings['kdb-sqltools.performance.trace'].default, false);
   assert.strictEqual(/extension host console/i.test(resultSettings['kdb-sqltools.performance.trace'].description), true);
@@ -1132,6 +1156,12 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(numberSettingUpdateSource.includes('integer >= min && integer <= max'), false);
   assert.strictEqual(resultsPanelSource.includes('Object.prototype.hasOwnProperty.call(RESULT_SETTING_UPDATE_ALLOWLIST, key)'), true);
   const resultsPanelInternals = loadResultsPanelInternals();
+  assert.strictEqual(resultsPanelInternals.chartMaxSourceRowsSettingValue(undefined), CHART_MAX_SOURCE_ROWS);
+  assert.strictEqual(resultsPanelInternals.chartMaxSourceRowsSettingValue('abc'), CHART_MAX_SOURCE_ROWS);
+  assert.strictEqual(resultsPanelInternals.chartMaxSourceRowsSettingValue(Infinity), CHART_MAX_SOURCE_ROWS);
+  assert.strictEqual(resultsPanelInternals.chartMaxSourceRowsSettingValue(0), CHART_MAX_SOURCE_ROWS);
+  assert.strictEqual(resultsPanelInternals.chartMaxSourceRowsSettingValue(1.9), 1);
+  assert.strictEqual(resultsPanelInternals.chartMaxSourceRowsSettingValue(1000000000000), 1000000000000);
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('cellWidth', '1000.9'), { key: 'cellWidth', value: 600 });
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('rowHeight', 19), { key: 'rowHeight', value: 20 });
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('fontSize', 'abc'), null);
@@ -1230,6 +1260,12 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes("type: 'chartExportError', version: requestVersion, requestId"), true);
   assert.strictEqual(chartingDocsSource.includes('Export PNG'), true);
   assert.strictEqual(chartingDocsSource.includes('PNG export is supported'), true);
+  assert.strictEqual(chartingDocsSource.includes('kdb-sqltools.results.kdbPanel.chartMaxSourceRows'), true);
+  assert.strictEqual(settingsDocsSource.includes('kdb-sqltools.results.kdbPanel.chartMaxSourceRows'), true);
+  assert.strictEqual(chartingDocsSource.includes('no hard upper bound'), true);
+  assert.strictEqual(settingsDocsSource.includes('no hard upper bound'), true);
+  assert.strictEqual(/temporarily block the extension host/.test(chartingDocsSource), true);
+  assert.strictEqual(/temporarily block the extension host/.test(settingsDocsSource), true);
   const unsupportedChartExportPhrase = [
     'chart export features are',
     'not implemented',
@@ -1909,7 +1945,7 @@ function panelFormatElapsedMs(milliseconds, display) {
 function loadResultsPanelInternals() {
   const filename = path.join(__dirname, '..', 'out', 'results-panel.js');
   const source = fs.readFileSync(filename, 'utf8') +
-    '\nmodule.exports.__test = { chartPngBytesFromDataUrl, columnarToXlsx, normalizePanelSettingUpdate, panelSettingConfigKey, panelSizeSettingValue };';
+    '\nmodule.exports.__test = { chartMaxSourceRowsSettingValue, chartPngBytesFromDataUrl, columnarToXlsx, normalizePanelSettingUpdate, panelSettingConfigKey, panelSizeSettingValue };';
   const testModule = new Module(filename, module);
   testModule.filename = filename;
   testModule.paths = Module._nodeModulePaths(path.dirname(filename));

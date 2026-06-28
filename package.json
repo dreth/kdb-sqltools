@@ -383,6 +383,12 @@
           ],
           "description": "Array/list cell display format for the kdb results panel. Text copy/export formats use this display text; JSON and NDJSON keep structured values."
         },
+        "kdb-sqltools.results.kdbPanel.chartMaxSourceRows": {
+          "type": "integer",
+          "default": 2000000,
+          "minimum": 1,
+          "description": "Maximum source rows scanned for built-in charting before rejecting a chart request. There is no hard upper bound; higher values can slow or temporarily block the extension host, especially with multiple y columns. Raise it for large kdb workflows; use the local data server or slices for very large data."
+        },
         "kdb-sqltools.performance.trace": {
           "type": "boolean",
           "default": false,

@@ -22,6 +22,14 @@ Array display examples:
 | `space` | `1 2 3` |
 | `raw` | `[1 2 3]` where q-like bracketed display is available |
 
+## Charting
+
+| Setting | Default | Use |
+| --- | --- | --- |
+| `kdb-sqltools.results.kdbPanel.chartMaxSourceRows` | `2000000` | Maximum source rows scanned for built-in charting before rejecting a chart request. The minimum is `1`; there is no hard upper bound. |
+
+Very large values can make chart rendering slow or temporarily block the extension host, especially with multiple y columns. For very large data, prefer the local data server or sliced results.
+
 ## Panel size and density
 
 | Setting | Default | Use |
