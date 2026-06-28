@@ -1,12 +1,15 @@
 # Change Log
 
+## 0.3.1
+
+- Added PNG export for the rendered built-in line chart, with a save dialog and default `.png` filename.
+
 ## 0.3.0
 
 - Added an opt-in local data server for kdb result panels, exposing current result, selected range, sliced rows, and metadata as CSV, JSON, and NDJSON endpoints.
 - Bound the local server to `127.0.0.1`, protected it with a random per-session token, and added stop-server and copy-URL controls in the result panel UI.
 - Added the first built-in line chart for eligible numeric/time-oriented columns, backed by extension-side min/max downsampling for large series.
-- Added PNG export for the rendered built-in line chart.
-- Updated docs for the local data server and charting workflow, including current limitations: canvas rendering, no zoom controls, and no full BI-dashboard experience.
+- Updated docs for the local data server and first chart workflow, including current limitations: canvas rendering, no zoom controls, and no full BI-dashboard experience.
 
 ## 0.2.9
 
