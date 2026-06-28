@@ -1,6 +1,6 @@
 # Charting
 
-The kdb results panel includes a first built-in chart tool: a bounded line/time-series chart for the current visible result.
+The kdb results panel includes a first built-in chart tool: a line/time-series chart for the current visible result.
 
 SQLTools remains required for connections and q execution. Charting uses the current kdb results panel data, not SQLTools' result-grid row objects.
 
@@ -31,6 +31,10 @@ If x values are unsorted, the extension sorts a chart-local copy. The table orde
 ## Downsampling
 
 Downsampling happens in the extension host before data is sent to the webview.
+
+Before downsampling, charting scans source rows in the extension host. `kdb-sqltools.results.kdbPanel.chartMaxSourceRows` controls the source-row guard. It defaults to `2000000`, has a minimum of `1`, and has no hard upper bound. Chart requests above the configured value are rejected before scanning.
+
+Very large values can make chart rendering slow or temporarily block the extension host, especially with multiple y columns. For very large data, prefer the local data server or sliced results.
 
 The target point count is based on chart width, roughly three points per horizontal pixel, capped at a safe maximum. Large inputs use min/max bucket sampling to preserve local spikes better than uniform stride.
 

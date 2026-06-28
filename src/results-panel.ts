@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import JSZip = require('jszip');
 import {
+  CHART_MAX_SOURCE_ROWS,
   ChartDataError,
   buildLineChartData,
   chartColumnOptions,
@@ -671,6 +672,7 @@ export class KdbResultsPanel {
         xColumn: typeof message.xColumn === 'string' ? message.xColumn : '',
         yColumns: Array.isArray(message.yColumns) ? message.yColumns.map(String) : [],
         width: Number(message.width) || 0,
+        maxSourceRows: chartMaxSourceRowsSetting(),
       });
       if (this.version !== requestVersion || this.activeChartRequestId !== requestId) {
         return;
@@ -4651,6 +4653,23 @@ function panelSettings(): KdbPanelSettings {
 
 function panelCellTextOptions(): CellTextOptions {
   return { arrayDisplayFormat: panelSettings().arrayDisplayFormat };
+}
+
+function chartMaxSourceRowsSetting(): number {
+  const value = vscode.workspace
+    .getConfiguration('kdb-sqltools.results.kdbPanel')
+    .get<number>('chartMaxSourceRows');
+  return chartMaxSourceRowsSettingValue(value);
+}
+
+function chartMaxSourceRowsSettingValue(value: any, fallback = CHART_MAX_SOURCE_ROWS): number {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return fallback;
+  }
+
+  const integer = Math.floor(number);
+  return integer >= 1 ? integer : fallback;
 }
 
 function panelSizeSettings(

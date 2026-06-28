@@ -112,6 +112,7 @@ export function buildLineChartData(table: ColumnarPanelResult, request: LineChar
   if (table.rowCount > maxSourceRows) {
     throw new ChartDataError(`Chart source has ${table.rowCount} rows; limit the q result or use the local data server for sources above ${maxSourceRows} rows.`);
   }
+  const raisedSourceRowLimit = maxSourceRows > CHART_MAX_SOURCE_ROWS && table.rowCount > CHART_MAX_SOURCE_ROWS;
 
   const xColumnIndex = table.columns.indexOf(request.xColumn);
   if (xColumnIndex === -1) {
@@ -140,6 +141,9 @@ export function buildLineChartData(table: ColumnarPanelResult, request: LineChar
   });
 
   const warnings = options.warnings.slice();
+  if (raisedSourceRowLimit) {
+    warnings.push('Chart source exceeds the default row guard. Very large chartMaxSourceRows values can make rendering slow or temporarily block the extension host, especially with multiple y columns.');
+  }
   const points: ChartPoint[] = [];
   let droppedX = 0;
   let yMissing = 0;
