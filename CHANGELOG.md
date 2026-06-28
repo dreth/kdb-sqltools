@@ -1,5 +1,12 @@
 # Change Log
 
+## 0.3.0
+
+- Added an opt-in local data server for kdb result panels, exposing current result, selected range, sliced rows, and metadata as CSV, JSON, and NDJSON endpoints.
+- Bound the local server to `127.0.0.1`, protected it with a random per-session token, and added stop-server and copy-URL controls in the result panel UI.
+- Added the first built-in line chart for eligible numeric/time-oriented columns, backed by extension-side min/max downsampling for large series.
+- Updated docs for the local data server and charting workflow, including current limitations: canvas rendering, no chart export, no zoom controls, and no full BI-dashboard experience.
+
 ## 0.2.9
 
 - Added visual cues for kdb panel column drag/reorder mode, including source header lift/fade and before/after drop indicators.
