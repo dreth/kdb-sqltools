@@ -831,6 +831,7 @@ function panelFormatElapsedMs(milliseconds, display) {
   const kdbResultsSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'kdb-results.ts'), 'utf8');
   const perfSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'perf.ts'), 'utf8');
   const readmeSource = fs.readFileSync(path.join(__dirname, '..', 'README.md'), 'utf8');
+  const chartingDocsSource = fs.readFileSync(path.join(__dirname, '..', 'docs', 'charting.md'), 'utf8');
   const packageSource = fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8');
   const commandTitle = commandId => packageJson.contributes.commands.find(command => command.command === commandId).title;
   const keybinding = commandId => packageJson.contributes.keybindings.find(binding => binding.command === commandId);
@@ -909,6 +910,13 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(toolsPanelSource.includes('id="copyCurrentCsvUrl"'), true);
   assert.strictEqual(toolsPanelSource.includes('id="openChart"'), true);
   assert.strictEqual(resultsPanelSource.includes('id="chartPanel"'), true);
+  assert.strictEqual(resultsPanelSource.includes('id="exportChart" hidden disabled'), true);
+  assert.strictEqual(resultsPanelSource.includes('function chartCanExport()'), true);
+  assert.strictEqual(resultsPanelSource.includes('exportChart.hidden = !canExport;'), true);
+  assert.strictEqual(resultsPanelSource.includes("chartCanvas.toDataURL('image/png')"), true);
+  assert.strictEqual(resultsPanelSource.includes("type: 'exportChartPng'"), true);
+  assert.strictEqual(resultsPanelSource.includes('dataUrl'), true);
+  assert.strictEqual(resultsPanelSource.includes('chartRendered = { version: chartData.version, requestId: chartData.requestId };'), true);
   assert.strictEqual(resultsPanelSource.includes("vscode.postMessage({ type: 'startLocalDataServer' })"), true);
   assert.strictEqual(resultsPanelSource.includes("type: 'requestChart'"), true);
   assert.strictEqual(resultsPanelSource.includes('buildLineChartData(table'), true);
@@ -1160,6 +1168,24 @@ function panelFormatElapsedMs(milliseconds, display) {
     resultsPanelInternals.panelSizeSettingValue(undefined, undefined, undefined, undefined, 24, 28, 20, 80),
     24
   );
+  const validPngDataUrl = 'data:image/png;base64,' + Buffer.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    0x00, 0x00, 0x00, 0x00,
+  ]).toString('base64');
+  const chartPngBytes = resultsPanelInternals.chartPngBytesFromDataUrl(validPngDataUrl);
+  assert.strictEqual(Buffer.from(chartPngBytes).slice(0, 8).toString('hex'), '89504e470d0a1a0a');
+  assert.throws(
+    () => resultsPanelInternals.chartPngBytesFromDataUrl('data:image/jpeg;base64,AAAA'),
+    /PNG data URL/
+  );
+  assert.throws(
+    () => resultsPanelInternals.chartPngBytesFromDataUrl('data:image/png;base64,not base64'),
+    /Invalid chart PNG data URL/
+  );
+  assert.throws(
+    () => resultsPanelInternals.chartPngBytesFromDataUrl('data:image/png;base64,AAAA'),
+    /Invalid chart PNG data/
+  );
   const xlsxColumnar = rowsToColumnarPanelResult([{ note: 'x\u0001<&>"\'' }], ['note']);
   const xlsxBytes = await resultsPanelInternals.columnarToXlsx(
     xlsxColumnar,
@@ -1186,6 +1212,7 @@ function panelFormatElapsedMs(milliseconds, display) {
   );
   assert.strictEqual(resultsPanelSource.includes('await this.copyRange(\n        message.version,'), true);
   assert.strictEqual(resultsPanelSource.includes('await this.exportRange(\n        message.version,'), true);
+  assert.strictEqual(resultsPanelSource.includes('await this.exportChartPng(message);'), true);
   assert.strictEqual(resultsPanelSource.includes('const requestVersion = integerOrNull(version);'), true);
   assert.strictEqual(resultsPanelSource.includes('await this.exportRange(requestVersion, clamped, format, includeHeaders, includeRowIndex)'), true);
   assert.strictEqual(resultsPanelSource.includes("type: 'sortSkipped', version: requestVersion"), true);
@@ -1193,6 +1220,21 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes("type: 'exportSkipped', version: requestVersion"), true);
   assert.strictEqual(resultsPanelSource.includes("type: 'copied', version: requestVersion"), true);
   assert.strictEqual(resultsPanelSource.includes("type: 'exported', version: requestVersion"), true);
+  assert.strictEqual(resultsPanelSource.includes('chartPngBytesFromDataUrl(message.dataUrl)'), true);
+  assert.strictEqual(resultsPanelSource.includes('requestId !== this.activeChartRequestId'), true);
+  assert.strictEqual(resultsPanelSource.includes('defaultUri: defaultChartExportUri()'), true);
+  assert.strictEqual(resultsPanelSource.includes("filters: { PNG: ['png'] }"), true);
+  assert.strictEqual(resultsPanelSource.includes('await vscode.workspace.fs.writeFile(uri, content);'), true);
+  assert.strictEqual(resultsPanelSource.includes("type: 'chartExported', version: requestVersion, requestId"), true);
+  assert.strictEqual(resultsPanelSource.includes("type: 'chartExportSkipped', version: requestVersion, requestId"), true);
+  assert.strictEqual(resultsPanelSource.includes("type: 'chartExportError', version: requestVersion, requestId"), true);
+  assert.strictEqual(chartingDocsSource.includes('Export PNG'), true);
+  assert.strictEqual(chartingDocsSource.includes('PNG export is supported'), true);
+  const unsupportedChartExportPhrase = [
+    'chart export features are',
+    'not implemented',
+  ].join(' ');
+  assert.strictEqual(chartingDocsSource.includes(unsupportedChartExportPhrase), false);
   assert.strictEqual(resultsPanelSource.includes('private isCurrentVersion(version: number): boolean'), true);
   assert.strictEqual(resultsPanelSource.includes('function isCurrentVersionMessage(msg)'), true);
   assert.strictEqual(resultsPanelSource.includes("msg.type === 'copied' && isCurrentVersionMessage(msg)"), true);
@@ -1867,7 +1909,7 @@ function panelFormatElapsedMs(milliseconds, display) {
 function loadResultsPanelInternals() {
   const filename = path.join(__dirname, '..', 'out', 'results-panel.js');
   const source = fs.readFileSync(filename, 'utf8') +
-    '\nmodule.exports.__test = { columnarToXlsx, normalizePanelSettingUpdate, panelSettingConfigKey, panelSizeSettingValue };';
+    '\nmodule.exports.__test = { chartPngBytesFromDataUrl, columnarToXlsx, normalizePanelSettingUpdate, panelSettingConfigKey, panelSizeSettingValue };';
   const testModule = new Module(filename, module);
   testModule.filename = filename;
   testModule.paths = Module._nodeModulePaths(path.dirname(filename));
