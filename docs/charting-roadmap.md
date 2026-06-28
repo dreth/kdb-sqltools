@@ -6,7 +6,7 @@
 
 ## Current status
 
-The extension currently supports q execution, the kdb results panel, copy/export, an opt-in local data server, and a first built-in line/time-series chart with PNG export.
+The extension currently supports q execution, the kdb results panel, copy/export, an opt-in local data server, and a uPlot-powered built-in line/time-series chart with cursor tooltip, drag zoom, reset zoom, legend labels, series toggling, and PNG export.
 
 Future charting work should stay focused on large kdb time-series results rather than small demo datasets. The design should continue to avoid sending millions of raw points to a VS Code webview.
 
@@ -14,11 +14,11 @@ Future charting work should stay focused on large kdb time-series results rather
 
 | Tool | Recommended role | Notes |
 | --- | --- | --- |
-| uPlot | Next built-in VS Code charting candidate. | Lightweight and fast for line and time-series charts. It keeps the webview dependency small, but the extension must own data shaping, downsampling, legends, and richer interactions. |
-| ECharts | Rich fallback or prototype candidate. | Larger than uPlot, but useful for comparing tooltips, zoom, legends, mixed chart types, and polished interactions before committing to custom uPlot work. |
-| Plotly and plotly-resampler | External Python/pandas workflow through a future local data server. | `plotly-resampler` is strongest in Python workflows where pandas/NumPy data and callback-driven viewport updates are natural. Pulling Plotly.js into the built-in webview first would add a heavier dependency before proving that the extension needs Plotly-specific chart features. |
+| uPlot | Shipped built-in VS Code chart renderer. | Lightweight and fast for line and time-series charts. It keeps the webview dependency small while the extension owns data shaping and downsampling. Future work should add viewport-aware resampling and any advanced interactions that prove necessary. |
+| ECharts | Rich fallback or prototype candidate. | Larger than uPlot, but still useful for comparing richer interactions if uPlot cannot support a future requirement cleanly. |
+| Plotly and plotly-resampler | External Python/pandas workflow through the local data server. | `plotly-resampler` is strongest in Python workflows where pandas/NumPy data and callback-driven viewport updates are natural. Pulling Plotly.js into the built-in webview first would add a heavier dependency before proving that the extension needs Plotly-specific chart features. |
 
-The default built-in path should be uPlot-first for fast time-series. ECharts is the practical fallback if the first-class UX needs richer built-in interactions. Plotly should stay available through external workflows rather than becoming the first webview dependency.
+The default built-in path is now uPlot-first for fast time-series. ECharts remains a practical fallback if the first-class UX needs richer built-in interactions that are not worth building around uPlot. Plotly should stay available through external workflows rather than becoming the default webview dependency.
 
 ## Local data server
 
@@ -26,9 +26,9 @@ The local data server is now the external-workflow path for pandas, Plotly, and 
 
 That path makes `plotly-resampler` useful where it fits best: Python analysis using pandas dataframes and dynamic Plotly figures.
 
-## uPlot resampling design
+## Future uPlot resampling design
 
-The extension should downsample before data reaches the webview. The webview should receive a viewport-sized series plus metadata, not a full multi-million point result.
+The extension already downsamples before data reaches the webview. Future work should make that resampling viewport-aware after uPlot zoom or pan-like interactions, so the webview receives a viewport-sized series plus metadata instead of reusing the initial sampled result for every zoom level.
 
 ### Data model
 
@@ -49,7 +49,7 @@ Sampling should be driven by the visible x range and panel width:
 4. Downsample each y series into that target.
 5. Send the sampled x/y arrays, source row counts, algorithm name, x range, and flags such as nulls or clipped infinities to the webview.
 
-Zooming and panning should request a new sampled window. The raw full result should stay extension-side.
+Zooming and any future panning should request a new sampled window. The raw full result should stay extension-side.
 
 ### Algorithms
 
@@ -96,21 +96,25 @@ Large resampling jobs should use cancellation and versioning:
    - Serve current result, selection, visible columns, row slices, and metadata from localhost.
    - Document Python/pandas usage, including Plotly and plotly-resampler workflows.
    - Keep the server opt-in and guarded by tokenized URLs.
-2. Charting spike.
+2. Charting spike. Shipped.
    - Compare uPlot, ECharts, and Plotly.js inside a VS Code webview.
    - Benchmark bundle size, first render, zoom/pan latency, tooltip behavior, memory, and extension-to-webview transfer cost.
    - Test small, medium, and large time-series results with and without downsampling.
-3. First built-in chart. Shipped in bounded form.
+3. First built-in chart. Shipped in bounded form with uPlot.
    - Line/time-series only.
    - User selects one x column and one or more y columns.
-   - Auto downsampling based on plot width and visible x range.
-   - Basic tooltip, legend, and sampled/full row-count metadata.
+   - Auto downsampling based on plot width.
+   - Cursor tooltip, drag zoom, reset zoom, legend, series toggling, and sampled/full row-count metadata.
    - PNG export for the rendered canvas.
 4. Docs and tests.
    - Update user docs for any shipped charting behavior.
    - Add fixtures for sorted and unsorted x values, nulls, infinities, duplicate timestamps, and dense ranges.
    - Add performance checks for large result downsampling.
    - Keep table copy/export semantics separate from chart export semantics.
+5. Future charting.
+   - Add viewport-aware resampling for zoomed ranges.
+   - Evaluate pan-like navigation only if it can request bounded extension-side samples.
+   - Keep advanced interactions scoped to line/time-series workflows.
 
 ## Non-goals for the first built-in chart
 
