@@ -303,8 +303,9 @@ export class KdbResultsPanel {
     });
   }
 
-  private constructor(_context: vscode.ExtensionContext, viewColumn: vscode.ViewColumn = initialResultViewColumn()) {
+  private constructor(context: vscode.ExtensionContext, viewColumn: vscode.ViewColumn = initialResultViewColumn()) {
     const panelNumber = KdbResultsPanel.nextPanelNumber++;
+    const uplotDistRoot = vscode.Uri.file(path.join(context.extensionPath, 'node_modules', 'uplot', 'dist'));
     this.panel = vscode.window.createWebviewPanel(
       'kdbSqltoolsResults',
       panelTitle(panelNumber),
@@ -312,12 +313,12 @@ export class KdbResultsPanel {
       {
         enableScripts: true,
         retainContextWhenHidden: true,
-        localResourceRoots: [],
+        localResourceRoots: [uplotDistRoot],
       }
     );
     KdbResultsPanel.panels.push(this);
     KdbResultsPanel.lastActivePanel = this;
-    this.panel.webview.html = this.html(this.panel.webview);
+    this.panel.webview.html = this.html(context, this.panel.webview);
     this.panel.onDidDispose(() => this.disposePanel(), undefined, this.disposables);
     this.panel.onDidChangeViewState(event => {
       if (event.webviewPanel.active) {
@@ -1410,16 +1411,31 @@ export class KdbResultsPanel {
     }
   }
 
-  private html(webview: vscode.Webview): string {
+  private html(context: vscode.ExtensionContext, webview: vscode.Webview): string {
     const nonce = nonceValue();
     const cspSource = webview.cspSource;
+    const uplotScriptUri = webview.asWebviewUri(vscode.Uri.file(path.join(
+      context.extensionPath,
+      'node_modules',
+      'uplot',
+      'dist',
+      'uPlot.iife.min.js'
+    )));
+    const uplotStyleUri = webview.asWebviewUri(vscode.Uri.file(path.join(
+      context.extensionPath,
+      'node_modules',
+      'uplot',
+      'dist',
+      'uPlot.min.css'
+    )));
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'nonce-${nonce}' 'unsafe-inline'; script-src 'nonce-${nonce}';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'nonce-${nonce}' 'unsafe-inline'; script-src ${cspSource} 'nonce-${nonce}';">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>kdb Results</title>
+  <link rel="stylesheet" href="${uplotStyleUri}">
   <style nonce="${nonce}">
     :root {
       --header-height: 32px;
@@ -1895,12 +1911,32 @@ export class KdbResultsPanel {
       min-height: 180px;
       border: 1px solid var(--vscode-panel-border);
       background: var(--vscode-editor-background);
+      overflow: hidden;
       box-sizing: border-box;
     }
-    #chartCanvas {
-      display: block;
+    .chart-plot,
+    .chart-plot .uplot {
       width: 100%;
       height: 100%;
+    }
+    .chart-plot .uplot {
+      color: var(--vscode-editor-foreground);
+      background: var(--vscode-editor-background);
+      font-family: var(--vscode-font-family);
+    }
+    .chart-plot .u-wrap {
+      background: var(--vscode-editor-background);
+    }
+    .chart-plot .u-axis,
+    .chart-plot .u-legend {
+      color: var(--vscode-descriptionForeground);
+    }
+    .chart-plot .u-select {
+      background: var(--vscode-list-activeSelectionBackground, rgba(80, 140, 220, 0.22));
+    }
+    .chart-plot .u-cursor-x,
+    .chart-plot .u-cursor-y {
+      border-color: var(--vscode-focusBorder, #607d8b);
     }
     .chart-tooltip {
       position: absolute;
@@ -1920,6 +1956,21 @@ export class KdbResultsPanel {
       flex-wrap: wrap;
       gap: 10px;
       color: var(--vscode-descriptionForeground);
+    }
+    .chart-legend:empty {
+      display: none;
+    }
+    .chart-legend .u-legend {
+      margin: 0;
+      color: var(--vscode-descriptionForeground);
+      font: inherit;
+      text-align: left;
+    }
+    .chart-legend .u-series > * {
+      padding: 2px 8px 2px 0;
+    }
+    .chart-legend .u-series th {
+      color: var(--vscode-editor-foreground);
     }
     .chart-legend-item {
       display: inline-flex;
@@ -2158,11 +2209,12 @@ export class KdbResultsPanel {
       <div id="chartYColumns" class="chart-y-list" role="group" aria-label="Y columns"></div>
       <button id="renderChart" disabled>Render</button>
       <button id="exportChart" hidden disabled>Export PNG</button>
+      <button id="resetChartZoom" disabled>Reset zoom</button>
       <button id="closeChart">Close</button>
       <span id="chartStatus" class="status"></span>
     </div>
     <div id="chartCanvasWrap" class="chart-canvas-wrap">
-      <canvas id="chartCanvas"></canvas>
+      <div id="chartPlot" class="chart-plot"></div>
       <div id="chartTooltip" class="chart-tooltip" hidden></div>
     </div>
     <div id="chartLegend" class="chart-legend"></div>
@@ -2174,6 +2226,7 @@ export class KdbResultsPanel {
       <div id="empty" class="empty" hidden>0 rows</div>
     </div>
   </div>
+  <script nonce="${nonce}" src="${uplotScriptUri}"></script>
   <script nonce="${nonce}">
     (function () {
       const vscode = acquireVsCodeApi();
@@ -2260,10 +2313,11 @@ export class KdbResultsPanel {
       const chartYColumns = document.getElementById('chartYColumns');
       const renderChart = document.getElementById('renderChart');
       const exportChart = document.getElementById('exportChart');
+      const resetChartZoomButton = document.getElementById('resetChartZoom');
       const closeChart = document.getElementById('closeChart');
       const chartStatus = document.getElementById('chartStatus');
       const chartCanvasWrap = document.getElementById('chartCanvasWrap');
-      const chartCanvas = document.getElementById('chartCanvas');
+      const chartPlot = document.getElementById('chartPlot');
       const chartTooltip = document.getElementById('chartTooltip');
       const chartLegend = document.getElementById('chartLegend');
       const empty = document.getElementById('empty');
@@ -2294,6 +2348,8 @@ export class KdbResultsPanel {
       let chartOptions = { xColumns: [], yColumns: [], warnings: [] };
       let chartData = null;
       let chartRendered = null;
+      let chartUPlot = null;
+      let chartZoomed = false;
       const CHART_PNG_DATA_URL_PREFIX = 'data:image/png;base64,';
       const toolbarOverflowMedia = typeof window.matchMedia === 'function'
         ? window.matchMedia(TOOLBAR_OVERFLOW_MEDIA_QUERY)
@@ -2425,8 +2481,8 @@ export class KdbResultsPanel {
       chartXColumn.addEventListener('change', onChartControlChanged);
       renderChart.addEventListener('click', requestChartData);
       exportChart.addEventListener('click', exportChartPng);
+      resetChartZoomButton.addEventListener('click', resetChartZoom);
       closeChart.addEventListener('click', closeChartPanel);
-      chartCanvasWrap.addEventListener('mousemove', showChartTooltip);
       chartCanvasWrap.addEventListener('mouseleave', hideChartTooltip);
       viewport.addEventListener('scroll', requestRender);
       viewport.addEventListener('contextmenu', () => {
@@ -2903,6 +2959,7 @@ export class KdbResultsPanel {
         const canExport = chartCanExport();
         exportChart.hidden = !canExport;
         exportChart.disabled = !canExport;
+        resetChartZoomButton.disabled = !canExport || !chartZoomed;
       }
 
       function openChartPanel() {
@@ -2913,6 +2970,7 @@ export class KdbResultsPanel {
         chartStatus.textContent = 'Detecting chart columns...';
         chartData = null;
         chartRendered = null;
+        destroyChartPlot();
         chartLegend.textContent = '';
         hideChartTooltip();
         requestChartOptions();
@@ -2925,6 +2983,7 @@ export class KdbResultsPanel {
         latestChartRequestId += 1;
         chartData = null;
         chartRendered = null;
+        destroyChartPlot();
         hideChartTooltip();
         chartStatus.textContent = '';
         chartLegend.textContent = '';
@@ -2937,6 +2996,7 @@ export class KdbResultsPanel {
         chartOptions = { xColumns: [], yColumns: [], warnings: [] };
         chartData = null;
         chartRendered = null;
+        destroyChartPlot();
         chartPanel.hidden = true;
         chartXColumn.textContent = '';
         chartYColumns.textContent = '';
@@ -3051,12 +3111,14 @@ export class KdbResultsPanel {
         return !chartPanel.hidden &&
           !!chartRendered &&
           chartRendered.version === data.version &&
-          chartRendered.requestId === latestChartRequestId;
+          chartRendered.requestId === latestChartRequestId &&
+          !!renderedChartCanvas();
       }
 
       function onChartControlChanged() {
         chartData = null;
         chartRendered = null;
+        destroyChartPlot();
         chartLegend.textContent = '';
         hideChartTooltip();
         chartStatus.textContent = chartCanRender()
@@ -3068,6 +3130,7 @@ export class KdbResultsPanel {
 
       function clearChartRendered() {
         chartRendered = null;
+        chartZoomed = false;
         updateChartControls();
       }
 
@@ -3106,7 +3169,8 @@ export class KdbResultsPanel {
           updateChartControls();
           return;
         }
-        if (!chartCanvas || typeof chartCanvas.toDataURL !== 'function') {
+        const canvas = renderedChartCanvas();
+        if (!canvas || typeof canvas.toDataURL !== 'function') {
           chartStatus.textContent = 'Chart canvas is unavailable.';
           return;
         }
@@ -3114,7 +3178,7 @@ export class KdbResultsPanel {
         const rendered = chartRendered;
         let dataUrl = '';
         try {
-          dataUrl = chartCanvas.toDataURL('image/png');
+          dataUrl = canvas.toDataURL('image/png');
         } catch (error) {
           chartStatus.textContent = 'Chart export failed: canvas unavailable or blocked.';
           return;
@@ -3190,185 +3254,261 @@ export class KdbResultsPanel {
       }
 
       function drawChart() {
-        if (!chartCanvas || chartPanel.hidden) {
+        if (!chartPlot || chartPanel.hidden) {
+          destroyChartPlot();
           clearChartRendered();
           return;
         }
-        const context = chartCanvas.getContext('2d');
-        if (!context) {
-          clearChartRendered();
-          return;
-        }
-        const rect = chartCanvasWrap.getBoundingClientRect();
-        const width = Math.max(320, Math.floor(rect.width || 0));
-        const height = Math.max(180, Math.floor(rect.height || 0));
-        const ratio = Math.max(1, window.devicePixelRatio || 1);
-        if (chartCanvas.width !== width * ratio || chartCanvas.height !== height * ratio) {
-          chartCanvas.width = width * ratio;
-          chartCanvas.height = height * ratio;
-        }
-        chartCanvas.style.width = width + 'px';
-        chartCanvas.style.height = height + 'px';
-        context.setTransform(ratio, 0, 0, ratio, 0, 0);
-        context.clearRect(0, 0, width, height);
-
         if (!chartData || chartData.x.length === 0 || chartData.series.length === 0) {
-          chartLegend.textContent = '';
+          destroyChartPlot();
+          clearChartRendered();
+          return;
+        }
+        if (typeof window.uPlot !== 'function') {
+          destroyChartPlot();
+          chartStatus.textContent = 'Chart library failed to load.';
           clearChartRendered();
           return;
         }
 
-        const colors = chartColors();
-        const geometry = chartGeometry(width, height, chartData);
-        if (!geometry) {
-          chartLegend.textContent = '';
-          clearChartRendered();
+        const dimensions = chartDimensions();
+        if (chartUPlot && chartRendered &&
+          chartRendered.version === chartData.version &&
+          chartRendered.requestId === chartData.requestId) {
+          chartUPlot.setSize(dimensions);
+          if (typeof chartUPlot.syncRect === 'function') {
+            chartUPlot.syncRect();
+          }
+          updateChartZoomState(chartUPlot);
           return;
         }
-        drawChartAxes(context, geometry);
-        chartData.series.forEach((series, seriesIndex) => {
-          drawChartSeries(context, geometry, series, colors[seriesIndex % colors.length]);
-        });
-        renderChartLegend(colors);
-        chartRendered = { version: chartData.version, requestId: chartData.requestId };
-        updateChartControls();
+
+        destroyChartPlot();
+        try {
+          chartUPlot = new window.uPlot(chartUPlotOptions(dimensions), chartAlignedData(), chartPlot);
+          chartRendered = { version: chartData.version, requestId: chartData.requestId };
+          chartZoomed = false;
+          updateChartZoomState(chartUPlot);
+          updateChartControls();
+        } catch (error) {
+          destroyChartPlot();
+          chartStatus.textContent = 'Chart render failed: ' + chartErrorMessage(error);
+          clearChartRendered();
+        }
       }
 
-      function chartGeometry(width, height, value) {
-        const xRange = finiteRange(value.x);
-        const yRange = chartYRange(value.series);
-        if (!xRange || !yRange) {
-          return null;
-        }
-        const margin = { left: 58, right: 16, top: 18, bottom: 34 };
-        const plotWidth = Math.max(1, width - margin.left - margin.right);
-        const plotHeight = Math.max(1, height - margin.top - margin.bottom);
-        const xMin = xRange.min;
-        const xMax = xRange.max === xRange.min ? xRange.min + 1 : xRange.max;
-        let yMin = yRange.min;
-        let yMax = yRange.max;
-        if (yMin === yMax) {
-          const pad = Math.abs(yMin || 1) * 0.05;
-          yMin -= pad;
-          yMax += pad;
-        }
+      function chartDimensions() {
+        const rect = chartCanvasWrap.getBoundingClientRect();
         return {
-          margin,
-          plotWidth,
-          plotHeight,
-          xMin,
-          xMax,
-          yMin,
-          yMax,
-          xToPixel: x => margin.left + (x - xMin) / (xMax - xMin) * plotWidth,
-          yToPixel: y => margin.top + (yMax - y) / (yMax - yMin) * plotHeight
+          width: Math.max(320, Math.floor(rect.width || 0)),
+          height: Math.max(180, Math.floor(rect.height || 0))
         };
       }
 
-      function drawChartAxes(context, geometry) {
-        const foreground = cssColor('--vscode-descriptionForeground', '#888');
-        const border = cssColor('--vscode-panel-border', '#555');
-        const left = geometry.margin.left;
-        const right = geometry.margin.left + geometry.plotWidth;
-        const top = geometry.margin.top;
-        const bottom = geometry.margin.top + geometry.plotHeight;
-        context.strokeStyle = border;
-        context.lineWidth = 1;
-        context.beginPath();
-        context.moveTo(left, top);
-        context.lineTo(left, bottom);
-        context.lineTo(right, bottom);
-        context.stroke();
-        context.fillStyle = foreground;
-        context.font = '11px ' + getComputedStyle(document.body).fontFamily;
-        context.textAlign = 'right';
-        context.textBaseline = 'middle';
-        context.fillText(formatChartNumber(geometry.yMax), left - 6, top);
-        context.fillText(formatChartNumber(geometry.yMin), left - 6, bottom);
-        context.textAlign = 'left';
-        context.textBaseline = 'top';
-        context.fillText(chartXLabel(0), left, bottom + 6);
-        context.textAlign = 'center';
-        context.fillText(chartXLabel(Math.floor(chartData.x.length / 2)), left + geometry.plotWidth / 2, bottom + 6);
-        context.textAlign = 'right';
-        context.fillText(chartXLabel(chartData.x.length - 1), right, bottom + 6);
-      }
-
-      function drawChartSeries(context, geometry, series, color) {
-        context.strokeStyle = color;
-        context.lineWidth = 1.5;
-        context.beginPath();
-        let open = false;
-        for (let index = 0; index < chartData.x.length; index++) {
-          const y = series.values[index];
-          if (!Number.isFinite(y)) {
-            open = false;
-            continue;
-          }
-          const xPixel = geometry.xToPixel(chartData.x[index]);
-          const yPixel = geometry.yToPixel(y);
-          if (!open) {
-            context.moveTo(xPixel, yPixel);
-            open = true;
-          } else {
-            context.lineTo(xPixel, yPixel);
-          }
-        }
-        context.stroke();
-      }
-
-      function renderChartLegend(colors) {
-        chartLegend.textContent = '';
-        const fragment = document.createDocumentFragment();
-        chartData.series.forEach((series, index) => {
-          const item = document.createElement('span');
-          item.className = 'chart-legend-item';
-          const swatch = document.createElement('span');
-          swatch.className = 'chart-swatch';
-          swatch.style.background = colors[index % colors.length];
-          const label = document.createElement('span');
-          label.textContent = series.columnName;
-          item.appendChild(swatch);
-          item.appendChild(label);
-          fragment.appendChild(item);
-        });
-        chartLegend.appendChild(fragment);
-      }
-
-      function showChartTooltip(event) {
-        if (!chartData || chartData.x.length === 0 || chartPanel.hidden) {
-          hideChartTooltip();
-          return;
-        }
-        const rect = chartCanvasWrap.getBoundingClientRect();
-        const geometry = chartGeometry(Math.max(320, Math.floor(rect.width || 0)), Math.max(180, Math.floor(rect.height || 0)), chartData);
-        if (!geometry) {
-          hideChartTooltip();
-          return;
-        }
-        const localX = event.clientX - rect.left;
-        let bestIndex = 0;
-        let bestDistance = Infinity;
-        for (let index = 0; index < chartData.x.length; index++) {
-          const distance = Math.abs(geometry.xToPixel(chartData.x[index]) - localX);
-          if (distance < bestDistance) {
-            bestDistance = distance;
-            bestIndex = index;
-          }
-        }
-        const lines = [chartData.xColumn + ': ' + chartXLabel(bestIndex)];
+      function chartAlignedData() {
+        const aligned = [chartData.x.slice()];
         chartData.series.forEach(series => {
-          const value = series.values[bestIndex];
+          const values = [];
+          for (let index = 0; index < chartData.x.length; index++) {
+            const value = series.values[index];
+            values.push(Number.isFinite(value) ? value : null);
+          }
+          aligned.push(values);
+        });
+        return aligned;
+      }
+
+      function chartUPlotOptions(dimensions) {
+        const colors = chartColors();
+        const axisColor = cssColor('--vscode-descriptionForeground', '#888');
+        const gridColor = cssColor('--vscode-panel-border', '#555');
+        const series = [{
+          label: chartData.xColumn,
+          value: (_self, _rawValue, _seriesIndex, index) => index === null || index === undefined ? '' : chartXLabel(index)
+        }];
+        chartData.series.forEach((item, index) => {
+          series.push({
+            label: item.columnName,
+            stroke: colors[index % colors.length],
+            width: 1.5,
+            spanGaps: false,
+            points: { show: false },
+            value: (_self, rawValue) => Number.isFinite(rawValue) ? formatChartNumber(rawValue) : 'null'
+          });
+        });
+
+        return {
+          width: dimensions.width,
+          height: dimensions.height,
+          ms: 1,
+          series,
+          scales: {
+            x: { time: chartData.xKind === 'temporal' },
+            y: { auto: true }
+          },
+          axes: [
+            {
+              scale: 'x',
+              stroke: axisColor,
+              grid: { stroke: gridColor, width: 1 },
+              ticks: { stroke: gridColor, width: 1 },
+              values: (_self, splits) => splits.map(value => chartXAxisLabel(value))
+            },
+            {
+              scale: 'y',
+              stroke: axisColor,
+              grid: { stroke: gridColor, width: 1 },
+              ticks: { stroke: gridColor, width: 1 },
+              values: (_self, splits) => splits.map(value => formatChartNumber(value))
+            }
+          ],
+          cursor: {
+            show: true,
+            x: true,
+            y: true,
+            points: { show: true, size: 6 },
+            drag: { setScale: true, x: true, y: false, dist: 5 },
+            hover: { skip: [null, undefined] },
+            focus: { prox: 24 }
+          },
+          legend: {
+            show: true,
+            live: true,
+            isolate: false,
+            mount: (_self, element) => {
+              chartLegend.textContent = '';
+              chartLegend.appendChild(element);
+            }
+          },
+          hooks: {
+            setCursor: [updateChartTooltipFromUPlot],
+            setScale: [updateChartZoomState],
+            setSeries: [() => updateChartControls()]
+          }
+        };
+      }
+
+      function updateChartTooltipFromUPlot(self) {
+        if (!self || !chartData || chartData.x.length === 0 || chartPanel.hidden) {
+          hideChartTooltip();
+          return;
+        }
+        const index = typeof self.cursor.idx === 'number' ? self.cursor.idx : -1;
+        if (index < 0 || index >= chartData.x.length) {
+          hideChartTooltip();
+          return;
+        }
+        const lines = [chartData.xColumn + ': ' + chartXLabel(index)];
+        chartData.series.forEach((series, seriesIndex) => {
+          const plotSeries = self.series[seriesIndex + 1];
+          if (plotSeries && plotSeries.show === false) {
+            return;
+          }
+          const value = series.values[index];
           lines.push(series.columnName + ': ' + (Number.isFinite(value) ? formatChartNumber(value) : 'null'));
         });
         chartTooltip.textContent = lines.join('\\n');
         chartTooltip.hidden = false;
-        chartTooltip.style.left = Math.min(Math.max(4, rect.width - 260), Math.max(4, event.clientX - rect.left + 12)) + 'px';
-        chartTooltip.style.top = Math.min(Math.max(4, rect.height - 80), Math.max(4, event.clientY - rect.top + 12)) + 'px';
+        const wrapRect = chartCanvasWrap.getBoundingClientRect();
+        const overRect = self.over.getBoundingClientRect();
+        const left = overRect.left - wrapRect.left + Number(self.cursor.left || 0) + 12;
+        const top = overRect.top - wrapRect.top + Number(self.cursor.top || 0) + 12;
+        chartTooltip.style.left = Math.min(Math.max(4, wrapRect.width - 260), Math.max(4, left)) + 'px';
+        chartTooltip.style.top = Math.min(Math.max(4, wrapRect.height - 80), Math.max(4, top)) + 'px';
       }
 
       function hideChartTooltip() {
         chartTooltip.hidden = true;
+      }
+
+      function resetChartZoom() {
+        if (!chartUPlot) {
+          return;
+        }
+        chartUPlot.batch(() => {
+          chartUPlot.setScale('x', { min: null, max: null });
+          chartUPlot.setScale('y', { min: null, max: null });
+        });
+        if (typeof chartUPlot.setSelect === 'function') {
+          chartUPlot.setSelect({ left: 0, top: 0, width: 0, height: 0 }, false);
+        }
+        chartZoomed = false;
+        hideChartTooltip();
+        updateChartControls();
+      }
+
+      function updateChartZoomState(self) {
+        const xRange = chartData ? finiteRange(chartData.x) : null;
+        const scale = self && self.scales && self.scales.x;
+        if (!xRange || !scale || !Number.isFinite(scale.min) || !Number.isFinite(scale.max)) {
+          chartZoomed = false;
+          updateChartControls();
+          return;
+        }
+        const tolerance = Math.max(1e-9, Math.abs(xRange.max - xRange.min) * 1e-9);
+        chartZoomed = Math.abs(scale.min - xRange.min) > tolerance || Math.abs(scale.max - xRange.max) > tolerance;
+        updateChartControls();
+      }
+
+      function renderedChartCanvas() {
+        if (chartUPlot && chartUPlot.root && typeof chartUPlot.root.querySelector === 'function') {
+          return chartUPlot.root.querySelector('canvas');
+        }
+        return chartCanvasWrap ? chartCanvasWrap.querySelector('.uplot canvas, canvas') : null;
+      }
+
+      function destroyChartPlot() {
+        if (chartUPlot && typeof chartUPlot.destroy === 'function') {
+          try {
+            chartUPlot.destroy();
+          } catch (error) {
+            // Ignore cleanup errors from a half-created chart.
+          }
+        }
+        chartUPlot = null;
+        chartZoomed = false;
+        if (chartPlot) {
+          chartPlot.textContent = '';
+        }
+        chartLegend.textContent = '';
+        hideChartTooltip();
+      }
+
+      function chartXAxisLabel(value) {
+        if (!chartData || chartData.x.length === 0) {
+          return '';
+        }
+        if (chartData.xKind !== 'temporal') {
+          return formatChartNumber(value);
+        }
+        const index = nearestChartXIndex(value);
+        return chartData.xText[index] || formatChartNumber(chartData.x[index]);
+      }
+
+      function nearestChartXIndex(value) {
+        const xValues = chartData.x;
+        if (xValues.length <= 1 || !Number.isFinite(value)) {
+          return 0;
+        }
+        let low = 0;
+        let high = xValues.length - 1;
+        while (low < high) {
+          const middle = Math.floor((low + high) / 2);
+          if (xValues[middle] < value) {
+            low = middle + 1;
+          } else {
+            high = middle;
+          }
+        }
+        if (low <= 0) {
+          return 0;
+        }
+        const left = low - 1;
+        return Math.abs(xValues[left] - value) <= Math.abs(xValues[low] - value) ? left : low;
+      }
+
+      function chartErrorMessage(error) {
+        return error && error.message ? String(error.message) : String(error || 'unknown error');
       }
 
       function chartXLabel(index) {
@@ -3388,21 +3528,6 @@ export class KdbResultsPanel {
           }
           min = Math.min(min, value);
           max = Math.max(max, value);
-        });
-        return min === Infinity ? null : { min, max };
-      }
-
-      function chartYRange(seriesValues) {
-        let min = Infinity;
-        let max = -Infinity;
-        seriesValues.forEach(series => {
-          series.values.forEach(value => {
-            if (!Number.isFinite(value)) {
-              return;
-            }
-            min = Math.min(min, value);
-            max = Math.max(max, value);
-          });
         });
         return min === Infinity ? null : { min, max };
       }

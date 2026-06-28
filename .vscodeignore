@@ -15,6 +15,11 @@ src/**
 **/.eslintrc.json
 **/*.map
 **/*.ts
+node_modules/uplot/README.md
+node_modules/uplot/dist/uPlot.cjs.js
+node_modules/uplot/dist/uPlot.d.ts
+node_modules/uplot/dist/uPlot.esm.js
+node_modules/uplot/dist/uPlot.iife.js
 test/**
 CODEX*.md
 PROMPT*.md

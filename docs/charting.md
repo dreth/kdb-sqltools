@@ -11,9 +11,12 @@ SQLTools remains required for connections and q execution. Charting uses the cur
 3. Select `Line chart`.
 4. Pick one x column and one or more y columns.
 5. Press `Render`.
-6. After the chart renders, press `Export PNG` to save the canvas chart as `kdb-chart.png` or another PNG file.
+6. Use the cursor tooltip/crosshair, drag across the plot to zoom, or press `Reset zoom`.
+7. After the chart renders, press `Export PNG` to save the chart as `kdb-chart.png` or another PNG file.
 
-Only line charts are supported. PNG export is supported. Bar, pie, heatmap, dashboard, streaming, zoom, and pan features are not implemented.
+uPlot powers the built-in chart. Supported interactions are cursor/crosshair tooltip values, drag-select zoom, reset zoom, legend labels with live values, legend series toggling, and PNG export.
+
+Only line charts are supported. Bar, pie, heatmap, dashboard, streaming, and pan features are not implemented. Zoom is applied to the sampled points already in the webview; it does not request a newly sampled viewport from the extension host yet.
 
 ## Eligible columns
 
@@ -50,6 +53,8 @@ Null and non-finite y values render as line gaps where sampled. Rows with null, 
 
 ## Implementation note
 
-The chart uses a small built-in canvas renderer to avoid adding a bundled charting library to the current VS Code webview/CSP setup. PNG export saves the rendered canvas through the extension host, not browser download APIs inside the webview. uPlot remains the planned first external charting library if the extension later needs richer zooming, panning, and tooltip behavior.
+The chart uses uPlot from local extension assets. The VS Code webview loads the minified uPlot JavaScript and CSS from the packaged extension so charting works offline and remains under the extension CSP.
+
+PNG export saves the rendered uPlot canvas through the extension host, not browser download APIs inside the webview.
 
 For richer Plotly workflows, use the [local data server](local-data-server.md) from Python or pandas. `plotly-resampler` fits that external workflow better than the built-in webview chart.
