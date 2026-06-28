@@ -57,6 +57,9 @@
     "onCommand:kdb-sqltools.openKeyboardShortcuts",
     "onCommand:kdb-sqltools.copyExampleConnectionSettings",
     "onCommand:kdb-sqltools.copyKdbPanelSelection",
+    "onCommand:kdb-sqltools.openLocalDataServer",
+    "onCommand:kdb-sqltools.stopLocalDataServer",
+    "onCommand:kdb-sqltools.copyLocalDataServerUrl",
     "onCommand:kdb-sqltools.reportBug",
     "onCommand:kdb-sqltools.requestFeature",
     "onCommand:kdb-sqltools.giveFeedback"
@@ -154,6 +157,24 @@
         "title": "Copy",
         "category": "kdb Results",
         "icon": "$(copy)"
+      },
+      {
+        "command": "kdb-sqltools.openLocalDataServer",
+        "title": "Start Local Data Server",
+        "category": "kdb Results",
+        "icon": "$(server-process)"
+      },
+      {
+        "command": "kdb-sqltools.stopLocalDataServer",
+        "title": "Stop Local Data Server",
+        "category": "kdb Results",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "kdb-sqltools.copyLocalDataServerUrl",
+        "title": "Copy Local Data Server current.csv URL",
+        "category": "kdb Results",
+        "icon": "$(link)"
       },
       {
         "command": "kdb-sqltools.reportBug",
@@ -271,6 +292,15 @@
         {
           "command": "kdb-sqltools.copyKdbPanelSelection",
           "when": "false"
+        },
+        {
+          "command": "kdb-sqltools.openLocalDataServer"
+        },
+        {
+          "command": "kdb-sqltools.stopLocalDataServer"
+        },
+        {
+          "command": "kdb-sqltools.copyLocalDataServerUrl"
         },
         {
           "command": "kdb-sqltools.reportBug"

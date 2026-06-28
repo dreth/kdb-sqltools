@@ -38,6 +38,9 @@ Use `kdb+: Open kdb Keyboard Shortcuts` to edit these bindings in VS Code. Exten
 | `kdb+: Run Selection in New kdb Panel` | kdb panel, new result tab. |
 | `kdb+: Run q Script in SQLTools Results` | SQLTools result grid. |
 | `kdb+: Run Selection in SQLTools Results` | SQLTools result grid. |
+| `kdb Results: Start Local Data Server` | Active kdb panel's current result, opt-in local server. |
+| `kdb Results: Stop Local Data Server` | Stops the active kdb panel's local server. |
+| `kdb Results: Copy Local Data Server current.csv URL` | Copies the active kdb panel server's CSV URL. |
 
 ## SQLTools result grid opt-in
 

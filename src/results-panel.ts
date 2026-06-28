@@ -3,6 +3,11 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import JSZip = require('jszip');
 import {
+  ChartDataError,
+  buildLineChartData,
+  chartColumnOptions,
+} from './charting';
+import {
   ArrayDisplayFormat,
   CellRange,
   CellTextOptions,
@@ -20,6 +25,12 @@ import {
   sortedColumnarRowOrder,
   validateXlsxSheetLimits,
 } from './kdb-results';
+import {
+  LocalDataServer,
+  LocalDataServerEndpoint,
+  LocalDataServerInfo,
+  LocalDataServerSnapshot,
+} from './local-data-server';
 import { endPerfSpan, isPerfTraceEnabled, perfSpan } from './perf';
 
 export interface KdbPanelResult {
@@ -153,6 +164,11 @@ export class KdbResultsPanel {
   private visibleTableCache: { version: number; source: ColumnarPanelResult; table: ColumnarPanelResult } | undefined;
   private activeSearchId = 0;
   private hideLargeResultWarningOnce = false;
+  private localDataServer: LocalDataServer | undefined;
+  private localDataServerInfo: LocalDataServerInfo | undefined;
+  private selectionRange: CellRange | undefined;
+  private selectionVersion = 0;
+  private activeChartRequestId = 0;
 
   public static showLoading(
     context: vscode.ExtensionContext,
@@ -167,10 +183,14 @@ export class KdbResultsPanel {
     panel.hideLargeResultWarningOnce = false;
     panel.baseVisibleTableCache = undefined;
     panel.visibleTableCache = undefined;
+    panel.selectionRange = undefined;
+    panel.selectionVersion = panel.version;
+    panel.activeChartRequestId += 1;
     panel.loading = state;
     panel.result = undefined;
     panel.revealExisting();
     panel.post({ type: 'loading', state: { ...state, version: panel.version, settings: panelSettings() } });
+    panel.postLocalDataServerStatus();
     return panel;
   }
 
@@ -195,6 +215,9 @@ export class KdbResultsPanel {
     this.hideLargeResultWarningOnce = false;
     this.baseVisibleTableCache = undefined;
     this.visibleTableCache = undefined;
+    this.selectionRange = undefined;
+    this.selectionVersion = this.version;
+    this.activeChartRequestId += 1;
     this.loading = undefined;
     this.hiddenColumnNames = this.hiddenColumnNamesForNewResult(result.table.columns);
     this.hiddenColumnSchema = result.table.columns.slice();
@@ -241,6 +264,41 @@ export class KdbResultsPanel {
     }
   }
 
+  public static async openLocalDataServerForActivePanel(): Promise<void> {
+    const panel = KdbResultsPanel.reusablePanel();
+    if (!panel) {
+      vscode.window.showWarningMessage('Open a kdb result panel before starting the local data server.');
+      return;
+    }
+    await panel.startLocalDataServer();
+  }
+
+  public static async stopLocalDataServerForActivePanel(): Promise<void> {
+    const panel = KdbResultsPanel.reusablePanel();
+    if (!panel) {
+      vscode.window.showWarningMessage('Open a kdb result panel before stopping the local data server.');
+      return;
+    }
+    await panel.stopLocalDataServer('Local data server stopped.');
+  }
+
+  public static async copyLocalDataServerUrlFromActivePanel(endpoint: LocalDataServerEndpoint = 'current.csv'): Promise<void> {
+    const panel = KdbResultsPanel.reusablePanel();
+    if (!panel) {
+      vscode.window.showWarningMessage('Open a kdb result panel before copying a local data server URL.');
+      return;
+    }
+    await panel.copyLocalDataServerUrl(endpoint);
+  }
+
+  public static stopAllLocalDataServers(): void {
+    KdbResultsPanel.panels.forEach(panel => {
+      panel.stopLocalDataServer('Local data server stopped.').catch(error => {
+        console.error(toError(error).message);
+      });
+    });
+  }
+
   private constructor(_context: vscode.ExtensionContext, viewColumn: vscode.ViewColumn = initialResultViewColumn()) {
     const panelNumber = KdbResultsPanel.nextPanelNumber++;
     this.panel = vscode.window.createWebviewPanel(
@@ -272,6 +330,9 @@ export class KdbResultsPanel {
 
     this.disposed = true;
     this.ready = false;
+    this.stopLocalDataServer('Local data server stopped.').catch(error => {
+      console.error(toError(error).message);
+    });
     KdbResultsPanel.panels = KdbResultsPanel.panels.filter(panel => panel !== this);
     if (KdbResultsPanel.lastActivePanel === this) {
       KdbResultsPanel.lastActivePanel = KdbResultsPanel.panels[0];
@@ -287,6 +348,9 @@ export class KdbResultsPanel {
     this.baseVisibleTableCache = undefined;
     this.visibleTableCache = undefined;
     this.activeSearchId += 1;
+    this.activeChartRequestId += 1;
+    this.selectionRange = undefined;
+    this.selectionVersion = 0;
     this.disposables.splice(0).forEach(disposable => disposable.dispose());
   }
 
@@ -306,12 +370,43 @@ export class KdbResultsPanel {
         this.postResultMetadata();
       } else if (this.loading) {
         this.post({ type: 'loading', state: { ...this.loading, version: this.version, settings: panelSettings() } });
+        this.postLocalDataServerStatus();
       }
       return;
     }
 
     if (message.type === 'tableContextMenu') {
       KdbResultsPanel.lastActivePanel = this;
+      return;
+    }
+
+    if (message.type === 'selectionChanged') {
+      this.updateSelectionFromWebview(message);
+      return;
+    }
+
+    if (message.type === 'startLocalDataServer') {
+      await this.startLocalDataServer();
+      return;
+    }
+
+    if (message.type === 'stopLocalDataServer') {
+      await this.stopLocalDataServer('Local data server stopped.');
+      return;
+    }
+
+    if (message.type === 'copyLocalDataServerUrl') {
+      await this.copyLocalDataServerUrl(localDataServerEndpoint(message.endpoint));
+      return;
+    }
+
+    if (message.type === 'requestChartOptions') {
+      this.postChartOptions(message);
+      return;
+    }
+
+    if (message.type === 'requestChart') {
+      await this.postChartData(message);
       return;
     }
 
@@ -395,6 +490,7 @@ export class KdbResultsPanel {
       }) : null;
     try {
       this.post({ type: 'resultMeta', result: this.metadataForResult(this.result) });
+      this.postLocalDataServerStatus();
     } finally {
       if (tracePerf) {
         endPerfSpan(span, { posted: this.ready });
@@ -424,6 +520,166 @@ export class KdbResultsPanel {
         ? undefined
         : resultSizeGuardrailMessage(result.table.rowCount, result.table.columns.length),
     };
+  }
+
+  private async startLocalDataServer(): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+    if (!this.result) {
+      const message = 'Run a q result in this panel before starting the local data server.';
+      vscode.window.showWarningMessage(message);
+      this.post({ type: 'localDataServerMessage', message });
+      return;
+    }
+
+    if (!this.localDataServer) {
+      this.localDataServer = new LocalDataServer({
+        provider: {
+          current: () => this.localDataServerSnapshot(),
+        },
+      });
+    }
+
+    try {
+      this.localDataServerInfo = await this.localDataServer.start();
+      this.postLocalDataServerStatus('Local data server started.');
+    } catch (error) {
+      const message = `Local data server failed: ${toError(error).message}`;
+      vscode.window.showErrorMessage(message);
+      this.post({ type: 'localDataServerMessage', message });
+    }
+  }
+
+  private async stopLocalDataServer(message?: string): Promise<void> {
+    const server = this.localDataServer;
+    this.localDataServer = undefined;
+    this.localDataServerInfo = undefined;
+    if (server) {
+      await server.stop();
+    }
+    this.postLocalDataServerStatus(message);
+  }
+
+  private async copyLocalDataServerUrl(endpoint: LocalDataServerEndpoint): Promise<void> {
+    if (!this.localDataServer || !this.localDataServerInfo) {
+      const message = 'Start the local data server before copying a URL.';
+      vscode.window.showWarningMessage(message);
+      this.post({ type: 'localDataServerMessage', message });
+      return;
+    }
+
+    const url = this.localDataServer.endpointUrl(endpoint);
+    if (!url) {
+      return;
+    }
+    await vscode.env.clipboard.writeText(url);
+    this.postLocalDataServerStatus(`Copied ${endpoint} URL.`);
+  }
+
+  private postLocalDataServerStatus(message?: string): void {
+    const info = this.localDataServerInfo;
+    this.post({
+      type: 'localDataServerStatus',
+      server: info ? {
+        host: info.host,
+        port: info.port,
+        baseUrl: info.baseUrl,
+        currentCsvUrl: this.localDataServer && this.localDataServer.endpointUrl('current.csv'),
+        metadataUrl: this.localDataServer && this.localDataServer.endpointUrl('metadata.json'),
+      } : null,
+      message,
+    });
+  }
+
+  private localDataServerSnapshot(): LocalDataServerSnapshot | null {
+    if (!this.result) {
+      return null;
+    }
+    const table = this.visibleTable();
+    if (!table) {
+      return null;
+    }
+    return {
+      metadata: this.metadataForResult(this.result),
+      table,
+      selectionRange: this.currentSelectionRange(table) || undefined,
+      cellTextOptions: panelCellTextOptions(),
+    };
+  }
+
+  private currentSelectionRange(table: ColumnarPanelResult): CellRange | null {
+    if (!this.selectionRange || this.selectionVersion !== this.version) {
+      return null;
+    }
+    return clampCellRange(this.selectionRange, table.rowCount, table.columns.length);
+  }
+
+  private updateSelectionFromWebview(message: any): void {
+    const requestVersion = integerOrNull(message.version);
+    if (requestVersion === null || requestVersion !== this.version) {
+      return;
+    }
+    this.selectionVersion = requestVersion;
+    this.selectionRange = messageCellRange(message.range) || undefined;
+  }
+
+  private postChartOptions(message: any): void {
+    const requestVersion = integerOrNull(message.version);
+    const requestId = integerOrNull(message.requestId) || 0;
+    if (requestVersion === null || requestVersion !== this.version) {
+      return;
+    }
+    const table = this.visibleTable();
+    if (!table) {
+      return;
+    }
+    const options = chartColumnOptions(table);
+    this.post({
+      type: 'chartOptions',
+      version: requestVersion,
+      requestId,
+      options,
+    });
+  }
+
+  private async postChartData(message: any): Promise<void> {
+    const requestVersion = integerOrNull(message.version);
+    const requestId = integerOrNull(message.requestId);
+    if (requestVersion === null || requestId === null || requestVersion !== this.version) {
+      return;
+    }
+    const table = this.visibleTable();
+    if (!table) {
+      return;
+    }
+
+    this.activeChartRequestId = requestId;
+    try {
+      await yieldToEventLoop();
+      const data = buildLineChartData(table, {
+        version: requestVersion,
+        requestId,
+        xColumn: typeof message.xColumn === 'string' ? message.xColumn : '',
+        yColumns: Array.isArray(message.yColumns) ? message.yColumns.map(String) : [],
+        width: Number(message.width) || 0,
+      });
+      if (this.version !== requestVersion || this.activeChartRequestId !== requestId) {
+        return;
+      }
+      this.post({ type: 'chartData', data });
+    } catch (error) {
+      if (this.version !== requestVersion || this.activeChartRequestId !== requestId) {
+        return;
+      }
+      const err = toError(error);
+      this.post({
+        type: 'chartError',
+        version: requestVersion,
+        requestId,
+        message: error instanceof ChartDataError ? err.message : `Chart failed: ${err.message}`,
+      });
+    }
   }
 
   private baseVisibleTable(): ColumnarPanelResult | null {
@@ -1060,6 +1316,9 @@ export class KdbResultsPanel {
     this.firstSliceVersion = 0;
     this.baseVisibleTableCache = undefined;
     this.visibleTableCache = undefined;
+    this.selectionRange = undefined;
+    this.selectionVersion = this.version;
+    this.activeChartRequestId += 1;
     this.postResultMetadata();
   }
 
@@ -1521,6 +1780,95 @@ export class KdbResultsPanel {
     .message-text {
       white-space: pre-wrap;
     }
+    .chart-panel {
+      flex: 0 0 auto;
+      display: grid;
+      grid-template-rows: auto minmax(180px, 280px) auto;
+      gap: 8px;
+      padding: 8px 10px 10px;
+      border-bottom: 1px solid var(--vscode-panel-border);
+      background: var(--vscode-editor-background);
+      box-sizing: border-box;
+    }
+    .chart-panel[hidden] {
+      display: none;
+    }
+    .chart-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+    .chart-field {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      min-width: 0;
+      color: var(--vscode-descriptionForeground);
+    }
+    .chart-field select {
+      max-width: 180px;
+      min-width: 120px;
+    }
+    .chart-y-list {
+      display: inline-flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      min-width: 0;
+      max-width: min(520px, 100%);
+    }
+    .chart-y-list .checkbox {
+      max-width: 180px;
+    }
+    .chart-y-list .checkbox span {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      min-width: 0;
+    }
+    .chart-canvas-wrap {
+      position: relative;
+      min-height: 180px;
+      border: 1px solid var(--vscode-panel-border);
+      background: var(--vscode-editor-background);
+      box-sizing: border-box;
+    }
+    #chartCanvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+    .chart-tooltip {
+      position: absolute;
+      z-index: 10;
+      max-width: 260px;
+      padding: 6px 8px;
+      border: 1px solid var(--vscode-panel-border);
+      background: var(--vscode-editorHoverWidget-background, var(--vscode-sideBar-background));
+      color: var(--vscode-editorHoverWidget-foreground, var(--vscode-editor-foreground));
+      box-shadow: 0 2px 8px var(--vscode-widget-shadow);
+      pointer-events: none;
+      white-space: pre;
+      box-sizing: border-box;
+    }
+    .chart-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      color: var(--vscode-descriptionForeground);
+    }
+    .chart-legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      min-width: 0;
+    }
+    .chart-swatch {
+      width: 14px;
+      height: 3px;
+      flex: 0 0 auto;
+    }
     #viewport {
       position: relative;
       flex: 1;
@@ -1711,6 +2059,18 @@ export class KdbResultsPanel {
             </div>
           </details>
         </section>
+        <section id="dataToolsSection" class="tools-section data-tools-section" role="group" aria-labelledby="dataToolsLabel">
+          <div id="dataToolsLabel" class="tools-section-label">Local data</div>
+          <button id="startLocalDataServer" disabled>Start server</button>
+          <button id="stopLocalDataServer" disabled>Stop server</button>
+          <button id="copyCurrentCsvUrl" disabled>Copy current.csv URL</button>
+          <button id="copyMetadataUrl" disabled>Copy metadata URL</button>
+          <span id="localDataServerStatus" class="status">Server stopped</span>
+        </section>
+        <section id="chartToolsSection" class="tools-section chart-tools-section" role="group" aria-labelledby="chartToolsLabel">
+          <div id="chartToolsLabel" class="tools-section-label">Chart</div>
+          <button id="openChart" disabled>Line chart</button>
+        </section>
       </div>
     </details>
     <span id="spinner" class="spinner" hidden></span>
@@ -1729,6 +2089,20 @@ export class KdbResultsPanel {
     <span id="selection" class="selection"></span>
   </div>
   <div id="message" class="message" hidden></div>
+  <div id="chartPanel" class="chart-panel" hidden>
+    <div class="chart-toolbar">
+      <label class="chart-field"><span>X</span><select id="chartXColumn" disabled></select></label>
+      <div id="chartYColumns" class="chart-y-list" role="group" aria-label="Y columns"></div>
+      <button id="renderChart" disabled>Render</button>
+      <button id="closeChart">Close</button>
+      <span id="chartStatus" class="status"></span>
+    </div>
+    <div id="chartCanvasWrap" class="chart-canvas-wrap">
+      <canvas id="chartCanvas"></canvas>
+      <div id="chartTooltip" class="chart-tooltip" hidden></div>
+    </div>
+    <div id="chartLegend" class="chart-legend"></div>
+  </div>
   <div id="viewport" tabindex="0" data-vscode-context='{"webviewSection":"kdbResultsTable","preventDefaultContextMenuItems":true}'>
     <div id="canvas">
       <div id="header" class="header" role="row"></div>
@@ -1801,6 +2175,12 @@ export class KdbResultsPanel {
       const deselectAllColumns = document.getElementById('deselectAllColumns');
       const resetColumns = document.getElementById('resetColumns');
       const resetColumnWidths = document.getElementById('resetColumnWidths');
+      const startLocalDataServer = document.getElementById('startLocalDataServer');
+      const stopLocalDataServer = document.getElementById('stopLocalDataServer');
+      const copyCurrentCsvUrl = document.getElementById('copyCurrentCsvUrl');
+      const copyMetadataUrl = document.getElementById('copyMetadataUrl');
+      const localDataServerStatus = document.getElementById('localDataServerStatus');
+      const openChart = document.getElementById('openChart');
       const spinner = document.getElementById('spinner');
       const summary = document.getElementById('summary');
       const largeResultWarning = document.getElementById('largeResultWarning');
@@ -1811,6 +2191,16 @@ export class KdbResultsPanel {
       const status = document.getElementById('status');
       const selectionLabel = document.getElementById('selection');
       const message = document.getElementById('message');
+      const chartPanel = document.getElementById('chartPanel');
+      const chartXColumn = document.getElementById('chartXColumn');
+      const chartYColumns = document.getElementById('chartYColumns');
+      const renderChart = document.getElementById('renderChart');
+      const closeChart = document.getElementById('closeChart');
+      const chartStatus = document.getElementById('chartStatus');
+      const chartCanvasWrap = document.getElementById('chartCanvasWrap');
+      const chartCanvas = document.getElementById('chartCanvas');
+      const chartTooltip = document.getElementById('chartTooltip');
+      const chartLegend = document.getElementById('chartLegend');
       const empty = document.getElementById('empty');
       let data = emptyData();
       let slice = emptySlice();
@@ -1833,6 +2223,11 @@ export class KdbResultsPanel {
       let columnDragState = null;
       let toolbarOverflowQueued = false;
       let toolbarOverflowActive = false;
+      let localDataServer = null;
+      let latestChartRequestId = 0;
+      let chartOptionsRequestId = 0;
+      let chartOptions = { xColumns: [], yColumns: [], warnings: [] };
+      let chartData = null;
       const toolbarOverflowMedia = typeof window.matchMedia === 'function'
         ? window.matchMedia(TOOLBAR_OVERFLOW_MEDIA_QUERY)
         : null;
@@ -1869,6 +2264,16 @@ export class KdbResultsPanel {
           renderColumnSettings();
         } else if (msg.type === 'copySelection') {
           copySelection();
+        } else if (msg.type === 'localDataServerStatus') {
+          setLocalDataServerStatus(msg.server || null, String(msg.message || ''));
+        } else if (msg.type === 'localDataServerMessage') {
+          localDataServerStatus.textContent = String(msg.message || '');
+        } else if (msg.type === 'chartOptions' && isCurrentVersionMessage(msg)) {
+          setChartOptions(msg);
+        } else if (msg.type === 'chartData' && msg.data) {
+          setChartData(msg.data);
+        } else if (msg.type === 'chartError' && isCurrentVersionMessage(msg)) {
+          setChartError(msg);
         }
       });
 
@@ -1938,6 +2343,16 @@ export class KdbResultsPanel {
       });
       resetColumns.addEventListener('click', () => vscode.postMessage({ type: 'resetHiddenColumns' }));
       resetColumnWidths.addEventListener('click', resetColumnWidthOverrides);
+      startLocalDataServer.addEventListener('click', () => vscode.postMessage({ type: 'startLocalDataServer' }));
+      stopLocalDataServer.addEventListener('click', () => vscode.postMessage({ type: 'stopLocalDataServer' }));
+      copyCurrentCsvUrl.addEventListener('click', () => vscode.postMessage({ type: 'copyLocalDataServerUrl', endpoint: 'current.csv' }));
+      copyMetadataUrl.addEventListener('click', () => vscode.postMessage({ type: 'copyLocalDataServerUrl', endpoint: 'metadata.json' }));
+      openChart.addEventListener('click', openChartPanel);
+      chartXColumn.addEventListener('change', updateChartControls);
+      renderChart.addEventListener('click', requestChartData);
+      closeChart.addEventListener('click', closeChartPanel);
+      chartCanvasWrap.addEventListener('mousemove', showChartTooltip);
+      chartCanvasWrap.addEventListener('mouseleave', hideChartTooltip);
       viewport.addEventListener('scroll', requestRender);
       viewport.addEventListener('contextmenu', () => {
         vscode.postMessage({ type: 'tableContextMenu' });
@@ -1988,6 +2403,7 @@ export class KdbResultsPanel {
       });
       window.addEventListener('resize', () => {
         requestRender();
+        drawChart();
         queueToolbarOverflowUpdate();
       });
       if (typeof ResizeObserver === 'function') {
@@ -2096,6 +2512,9 @@ export class KdbResultsPanel {
         selectionLabel.textContent = '';
         spinner.hidden = false;
         setActionsDisabled(true);
+        updateLocalDataServerControls();
+        resetChartState('Run a query result before charting.');
+        sendSelectionChanged();
         renderColumnSettings();
         showMessage('', false);
         updateLargeResultWarning();
@@ -2137,6 +2556,9 @@ export class KdbResultsPanel {
         resetSearch(false);
         spinner.hidden = true;
         updateActionState();
+        updateLocalDataServerControls();
+        resetChartState('');
+        sendSelectionChanged();
         updateSelectionLabel();
         renderColumnSettings();
         showMessage(resultMessageText(data), data.error);
@@ -2367,10 +2789,487 @@ export class KdbResultsPanel {
 
       function updateActionState() {
         setActionsDisabled(!hasTableCells());
+        updateLocalDataServerControls();
+        updateChartControls();
       }
 
       function hasTableCells() {
         return data.rowCount > 0 && data.columns.length > 0;
+      }
+
+      function setLocalDataServerStatus(server, message) {
+        localDataServer = server;
+        updateLocalDataServerControls();
+        if (message) {
+          localDataServerStatus.textContent = message;
+          return;
+        }
+        localDataServerStatus.textContent = server
+          ? 'Server: ' + server.host + ':' + server.port
+          : 'Server stopped';
+      }
+
+      function updateLocalDataServerControls() {
+        const hasResult = data.hasResult && !data.error && data.rowCount >= 0;
+        const running = !!localDataServer;
+        startLocalDataServer.disabled = !hasResult || running;
+        stopLocalDataServer.disabled = !running;
+        copyCurrentCsvUrl.disabled = !running || !hasResult;
+        copyMetadataUrl.disabled = !running || !hasResult;
+      }
+
+      function updateChartControls() {
+        openChart.disabled = !hasTableCells() || !!data.error;
+        renderChart.disabled = !chartCanRender();
+      }
+
+      function openChartPanel() {
+        if (!hasTableCells() || data.error) {
+          return;
+        }
+        chartPanel.hidden = false;
+        chartStatus.textContent = 'Detecting chart columns...';
+        chartData = null;
+        chartLegend.textContent = '';
+        hideChartTooltip();
+        requestChartOptions();
+        updateChartControls();
+        drawChart();
+      }
+
+      function closeChartPanel() {
+        chartPanel.hidden = true;
+        latestChartRequestId += 1;
+        chartData = null;
+        hideChartTooltip();
+        chartStatus.textContent = '';
+        chartLegend.textContent = '';
+        updateChartControls();
+      }
+
+      function resetChartState(messageText) {
+        latestChartRequestId += 1;
+        chartOptionsRequestId += 1;
+        chartOptions = { xColumns: [], yColumns: [], warnings: [] };
+        chartData = null;
+        chartPanel.hidden = true;
+        chartXColumn.textContent = '';
+        chartYColumns.textContent = '';
+        chartStatus.textContent = messageText || '';
+        chartLegend.textContent = '';
+        hideChartTooltip();
+        updateChartControls();
+      }
+
+      function requestChartOptions() {
+        if (chartPanel.hidden || !hasTableCells()) {
+          return;
+        }
+        chartOptionsRequestId += 1;
+        vscode.postMessage({
+          type: 'requestChartOptions',
+          version: data.version,
+          requestId: chartOptionsRequestId
+        });
+      }
+
+      function setChartOptions(msg) {
+        const requestId = toInteger(msg.requestId, 0);
+        if (requestId < chartOptionsRequestId) {
+          return;
+        }
+        chartOptions = normalizeChartOptions(msg.options || {});
+        renderChartOptions();
+      }
+
+      function normalizeChartOptions(value) {
+        return {
+          xColumns: normalizeChartColumnOptions(value.xColumns),
+          yColumns: normalizeChartColumnOptions(value.yColumns),
+          warnings: Array.isArray(value.warnings) ? value.warnings.map(String) : []
+        };
+      }
+
+      function normalizeChartColumnOptions(values) {
+        if (!Array.isArray(values)) {
+          return [];
+        }
+        return values
+          .map(option => {
+            return {
+              columnName: String(option && option.columnName || ''),
+              columnIndex: toInteger(option && option.columnIndex, -1),
+              kind: option && option.kind === 'temporal' ? 'temporal' : 'numeric'
+            };
+          })
+          .filter(option => option.columnName && option.columnIndex >= 0);
+      }
+
+      function renderChartOptions() {
+        chartXColumn.textContent = '';
+        chartYColumns.textContent = '';
+        chartXColumn.disabled = chartOptions.xColumns.length === 0;
+        chartOptions.xColumns.forEach(option => {
+          const element = document.createElement('option');
+          element.value = option.columnName;
+          element.textContent = option.columnName + ' (' + option.kind + ')';
+          chartXColumn.appendChild(element);
+        });
+        const preferredX = chartOptions.xColumns.find(option => option.kind === 'temporal') || chartOptions.xColumns[0];
+        if (preferredX) {
+          chartXColumn.value = preferredX.columnName;
+        }
+
+        const defaultY = defaultChartYColumns();
+        chartOptions.yColumns.forEach(option => {
+          const label = document.createElement('label');
+          label.className = 'checkbox';
+          label.title = option.columnName;
+          const checkbox = document.createElement('input');
+          checkbox.type = 'checkbox';
+          checkbox.value = option.columnName;
+          checkbox.checked = defaultY.indexOf(option.columnName) !== -1;
+          checkbox.addEventListener('change', updateChartControls);
+          const text = document.createElement('span');
+          text.textContent = option.columnName;
+          label.appendChild(checkbox);
+          label.appendChild(text);
+          chartYColumns.appendChild(label);
+        });
+
+        const warnings = chartOptions.warnings.length > 0 ? ' ' + chartOptions.warnings.join(' ') : '';
+        if (chartOptions.xColumns.length === 0 || chartOptions.yColumns.length === 0) {
+          chartStatus.textContent = 'No eligible line chart columns.' + warnings;
+        } else {
+          chartStatus.textContent = 'Choose x and y columns.' + warnings;
+        }
+        updateChartControls();
+      }
+
+      function defaultChartYColumns() {
+        const x = String(chartXColumn.value || '');
+        const names = chartOptions.yColumns
+          .map(option => option.columnName)
+          .filter(column => column !== x);
+        return (names.length > 0 ? names : chartOptions.yColumns.map(option => option.columnName)).slice(0, 2);
+      }
+
+      function chartCanRender() {
+        return !chartPanel.hidden &&
+          hasTableCells() &&
+          chartOptions.xColumns.length > 0 &&
+          selectedChartYColumns().length > 0 &&
+          String(chartXColumn.value || '').length > 0;
+      }
+
+      function selectedChartYColumns() {
+        const values = [];
+        chartYColumns.querySelectorAll('input[type="checkbox"]').forEach(input => {
+          if (input.checked) {
+            values.push(String(input.value || ''));
+          }
+        });
+        return values.filter(Boolean);
+      }
+
+      function requestChartData() {
+        if (!chartCanRender()) {
+          chartStatus.textContent = 'Select one x column and at least one numeric y column.';
+          return;
+        }
+        latestChartRequestId += 1;
+        chartStatus.textContent = 'Sampling chart data...';
+        vscode.postMessage({
+          type: 'requestChart',
+          version: data.version,
+          requestId: latestChartRequestId,
+          xColumn: String(chartXColumn.value || ''),
+          yColumns: selectedChartYColumns(),
+          width: Math.max(320, Math.floor(chartCanvasWrap.clientWidth || 800))
+        });
+      }
+
+      function setChartData(value) {
+        if (toNonNegativeInteger(value.version, -1) !== data.version ||
+          toNonNegativeInteger(value.requestId, -1) !== latestChartRequestId) {
+          return;
+        }
+        chartData = normalizeChartData(value);
+        const warnings = chartData.warnings.length > 0 ? ' ' + chartData.warnings.join(' ') : '';
+        chartStatus.textContent = 'Showing ' + formatUiCount(chartData.sampledPointCount) +
+          ' of ' + formatUiCount(chartData.sourceRowCount) +
+          ' rows (' + chartData.algorithm + ').' + warnings;
+        drawChart();
+      }
+
+      function normalizeChartData(value) {
+        return {
+          version: toNonNegativeInteger(value.version, 0),
+          requestId: toNonNegativeInteger(value.requestId, 0),
+          xColumn: String(value.xColumn || ''),
+          xKind: value.xKind === 'temporal' ? 'temporal' : 'numeric',
+          x: Array.isArray(value.x) ? value.x.map(Number).filter(Number.isFinite) : [],
+          xText: Array.isArray(value.xText) ? value.xText.map(String) : [],
+          series: Array.isArray(value.series) ? value.series.map(series => {
+            return {
+              columnName: String(series && series.columnName || ''),
+              values: Array.isArray(series && series.values)
+                ? series.values.map(item => Number.isFinite(Number(item)) ? Number(item) : null)
+                : []
+            };
+          }).filter(series => series.columnName) : [],
+          sourceRowCount: toNonNegativeInteger(value.sourceRowCount, 0),
+          eligibleRowCount: toNonNegativeInteger(value.eligibleRowCount, 0),
+          sampledPointCount: toNonNegativeInteger(value.sampledPointCount, 0),
+          algorithm: String(value.algorithm || 'none'),
+          sorted: value.sorted === true,
+          warnings: Array.isArray(value.warnings) ? value.warnings.map(String) : []
+        };
+      }
+
+      function setChartError(msg) {
+        if (toNonNegativeInteger(msg.requestId, -1) !== latestChartRequestId) {
+          return;
+        }
+        chartStatus.textContent = String(msg.message || 'Chart failed.');
+        chartData = null;
+        chartLegend.textContent = '';
+        drawChart();
+      }
+
+      function drawChart() {
+        if (!chartCanvas || chartPanel.hidden) {
+          return;
+        }
+        const context = chartCanvas.getContext('2d');
+        if (!context) {
+          return;
+        }
+        const rect = chartCanvasWrap.getBoundingClientRect();
+        const width = Math.max(320, Math.floor(rect.width || 0));
+        const height = Math.max(180, Math.floor(rect.height || 0));
+        const ratio = Math.max(1, window.devicePixelRatio || 1);
+        if (chartCanvas.width !== width * ratio || chartCanvas.height !== height * ratio) {
+          chartCanvas.width = width * ratio;
+          chartCanvas.height = height * ratio;
+        }
+        chartCanvas.style.width = width + 'px';
+        chartCanvas.style.height = height + 'px';
+        context.setTransform(ratio, 0, 0, ratio, 0, 0);
+        context.clearRect(0, 0, width, height);
+
+        if (!chartData || chartData.x.length === 0 || chartData.series.length === 0) {
+          chartLegend.textContent = '';
+          return;
+        }
+
+        const colors = chartColors();
+        const geometry = chartGeometry(width, height, chartData);
+        if (!geometry) {
+          chartLegend.textContent = '';
+          return;
+        }
+        drawChartAxes(context, geometry);
+        chartData.series.forEach((series, seriesIndex) => {
+          drawChartSeries(context, geometry, series, colors[seriesIndex % colors.length]);
+        });
+        renderChartLegend(colors);
+      }
+
+      function chartGeometry(width, height, value) {
+        const xRange = finiteRange(value.x);
+        const yRange = chartYRange(value.series);
+        if (!xRange || !yRange) {
+          return null;
+        }
+        const margin = { left: 58, right: 16, top: 18, bottom: 34 };
+        const plotWidth = Math.max(1, width - margin.left - margin.right);
+        const plotHeight = Math.max(1, height - margin.top - margin.bottom);
+        const xMin = xRange.min;
+        const xMax = xRange.max === xRange.min ? xRange.min + 1 : xRange.max;
+        let yMin = yRange.min;
+        let yMax = yRange.max;
+        if (yMin === yMax) {
+          const pad = Math.abs(yMin || 1) * 0.05;
+          yMin -= pad;
+          yMax += pad;
+        }
+        return {
+          margin,
+          plotWidth,
+          plotHeight,
+          xMin,
+          xMax,
+          yMin,
+          yMax,
+          xToPixel: x => margin.left + (x - xMin) / (xMax - xMin) * plotWidth,
+          yToPixel: y => margin.top + (yMax - y) / (yMax - yMin) * plotHeight
+        };
+      }
+
+      function drawChartAxes(context, geometry) {
+        const foreground = cssColor('--vscode-descriptionForeground', '#888');
+        const border = cssColor('--vscode-panel-border', '#555');
+        const left = geometry.margin.left;
+        const right = geometry.margin.left + geometry.plotWidth;
+        const top = geometry.margin.top;
+        const bottom = geometry.margin.top + geometry.plotHeight;
+        context.strokeStyle = border;
+        context.lineWidth = 1;
+        context.beginPath();
+        context.moveTo(left, top);
+        context.lineTo(left, bottom);
+        context.lineTo(right, bottom);
+        context.stroke();
+        context.fillStyle = foreground;
+        context.font = '11px ' + getComputedStyle(document.body).fontFamily;
+        context.textAlign = 'right';
+        context.textBaseline = 'middle';
+        context.fillText(formatChartNumber(geometry.yMax), left - 6, top);
+        context.fillText(formatChartNumber(geometry.yMin), left - 6, bottom);
+        context.textAlign = 'left';
+        context.textBaseline = 'top';
+        context.fillText(chartXLabel(0), left, bottom + 6);
+        context.textAlign = 'center';
+        context.fillText(chartXLabel(Math.floor(chartData.x.length / 2)), left + geometry.plotWidth / 2, bottom + 6);
+        context.textAlign = 'right';
+        context.fillText(chartXLabel(chartData.x.length - 1), right, bottom + 6);
+      }
+
+      function drawChartSeries(context, geometry, series, color) {
+        context.strokeStyle = color;
+        context.lineWidth = 1.5;
+        context.beginPath();
+        let open = false;
+        for (let index = 0; index < chartData.x.length; index++) {
+          const y = series.values[index];
+          if (!Number.isFinite(y)) {
+            open = false;
+            continue;
+          }
+          const xPixel = geometry.xToPixel(chartData.x[index]);
+          const yPixel = geometry.yToPixel(y);
+          if (!open) {
+            context.moveTo(xPixel, yPixel);
+            open = true;
+          } else {
+            context.lineTo(xPixel, yPixel);
+          }
+        }
+        context.stroke();
+      }
+
+      function renderChartLegend(colors) {
+        chartLegend.textContent = '';
+        const fragment = document.createDocumentFragment();
+        chartData.series.forEach((series, index) => {
+          const item = document.createElement('span');
+          item.className = 'chart-legend-item';
+          const swatch = document.createElement('span');
+          swatch.className = 'chart-swatch';
+          swatch.style.background = colors[index % colors.length];
+          const label = document.createElement('span');
+          label.textContent = series.columnName;
+          item.appendChild(swatch);
+          item.appendChild(label);
+          fragment.appendChild(item);
+        });
+        chartLegend.appendChild(fragment);
+      }
+
+      function showChartTooltip(event) {
+        if (!chartData || chartData.x.length === 0 || chartPanel.hidden) {
+          hideChartTooltip();
+          return;
+        }
+        const rect = chartCanvasWrap.getBoundingClientRect();
+        const geometry = chartGeometry(Math.max(320, Math.floor(rect.width || 0)), Math.max(180, Math.floor(rect.height || 0)), chartData);
+        if (!geometry) {
+          hideChartTooltip();
+          return;
+        }
+        const localX = event.clientX - rect.left;
+        let bestIndex = 0;
+        let bestDistance = Infinity;
+        for (let index = 0; index < chartData.x.length; index++) {
+          const distance = Math.abs(geometry.xToPixel(chartData.x[index]) - localX);
+          if (distance < bestDistance) {
+            bestDistance = distance;
+            bestIndex = index;
+          }
+        }
+        const lines = [chartData.xColumn + ': ' + chartXLabel(bestIndex)];
+        chartData.series.forEach(series => {
+          const value = series.values[bestIndex];
+          lines.push(series.columnName + ': ' + (Number.isFinite(value) ? formatChartNumber(value) : 'null'));
+        });
+        chartTooltip.textContent = lines.join('\\n');
+        chartTooltip.hidden = false;
+        chartTooltip.style.left = Math.min(Math.max(4, rect.width - 260), Math.max(4, event.clientX - rect.left + 12)) + 'px';
+        chartTooltip.style.top = Math.min(Math.max(4, rect.height - 80), Math.max(4, event.clientY - rect.top + 12)) + 'px';
+      }
+
+      function hideChartTooltip() {
+        chartTooltip.hidden = true;
+      }
+
+      function chartXLabel(index) {
+        if (!chartData || chartData.x.length === 0) {
+          return '';
+        }
+        const bounded = clampInteger(index, 0, chartData.x.length - 1);
+        return chartData.xText[bounded] || formatChartNumber(chartData.x[bounded]);
+      }
+
+      function finiteRange(values) {
+        let min = Infinity;
+        let max = -Infinity;
+        values.forEach(value => {
+          if (!Number.isFinite(value)) {
+            return;
+          }
+          min = Math.min(min, value);
+          max = Math.max(max, value);
+        });
+        return min === Infinity ? null : { min, max };
+      }
+
+      function chartYRange(seriesValues) {
+        let min = Infinity;
+        let max = -Infinity;
+        seriesValues.forEach(series => {
+          series.values.forEach(value => {
+            if (!Number.isFinite(value)) {
+              return;
+            }
+            min = Math.min(min, value);
+            max = Math.max(max, value);
+          });
+        });
+        return min === Infinity ? null : { min, max };
+      }
+
+      function chartColors() {
+        return ['#4ec9b0', '#dcdcaa', '#569cd6', '#c586c0', '#ce9178', '#b5cea8', '#9cdcfe'];
+      }
+
+      function cssColor(name, fallback) {
+        const value = getComputedStyle(document.documentElement).getPropertyValue(name);
+        return value && value.trim() ? value.trim() : fallback;
+      }
+
+      function formatChartNumber(value) {
+        if (!Number.isFinite(value)) {
+          return '';
+        }
+        const abs = Math.abs(value);
+        if (abs !== 0 && (abs >= 1000000 || abs < 0.001)) {
+          return value.toExponential(2);
+        }
+        if (abs >= 1000) {
+          return Math.round(value).toLocaleString();
+        }
+        return String(Number(value.toFixed(4)));
       }
 
       function applySettings(value) {
@@ -3332,6 +4231,7 @@ export class KdbResultsPanel {
         status.textContent = '';
         updateActionState();
         updateSelectionLabel();
+        sendSelectionChanged();
         renderNow();
       }
 
@@ -3353,6 +4253,14 @@ export class KdbResultsPanel {
           endColumn: clampInteger(Math.max(selection.anchorColumn, selection.focusColumn), 0, maxColumn)
         };
         return range.startRow <= range.endRow && range.startColumn <= range.endColumn ? range : null;
+      }
+
+      function sendSelectionChanged() {
+        vscode.postMessage({
+          type: 'selectionChanged',
+          version: data.version,
+          range: normalizedSelection()
+        });
       }
 
       function isSelected(row, column, range) {
@@ -3893,6 +4801,21 @@ function exportFormat(value: any): ExportFormat {
       return value;
   }
   return 'csv';
+}
+
+function localDataServerEndpoint(value: any): LocalDataServerEndpoint {
+  switch (value) {
+    case 'metadata.json':
+    case 'current.csv':
+    case 'current.json':
+    case 'current.ndjson':
+    case 'slice.csv':
+    case 'slice.json':
+    case 'selection.csv':
+    case 'selection.json':
+      return value;
+  }
+  return 'current.csv';
 }
 
 function saveFilters(format: ExportFormat): { [name: string]: string[] } {

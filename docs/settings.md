@@ -12,6 +12,8 @@ Set these in VS Code User or Workspace settings JSON.
 | `kdb-sqltools.results.kdbPanel.arrayDisplayFormat` | `commaSpace` | `commaSpace`, `space`, `raw` | Array/list cell display. |
 | `kdb-sqltools.performance.trace` | `false` | `true`, `false` | Logs query timing and memory snapshots to the extension host console with the `[kdb-sqltools:perf]` prefix. |
 
+There is no setting that auto-starts the local data server. Start it explicitly from the kdb panel `Tools` area or the Command Palette.
+
 Array display examples:
 
 | Value | Display |
