@@ -68,6 +68,8 @@ The `kdb+: Copy Example Global Connection Settings` command copies this User-set
 - TCP q IPC authentication handshake with optional username/password.
 - Synchronous text query execution.
 - Result grids for q tables, keyed tables, dictionaries, vectors, lists, and scalars. Nested q values inside cells are displayed as compact strings, and unsafe-width q longs are displayed as exact decimal strings.
+- Opt-in local data server for the current kdb results panel, bound to `127.0.0.1` with tokenized URLs for metadata, CSV, JSON, NDJSON, slices, and selection.
+- Built-in bounded line/time-series charting from the current kdb results panel with extension-side downsampling.
 - Object explorer groups for tables, root q views, functions, and table columns. Column metadata preserves q `meta` type, foreign-key, and attribute fields for SQLTools describe/explorer views.
 - Table preview and count support through SQLTools, using q `sublist` for limit/offset previews.
 - Definition query generation for tables, views, and functions.
@@ -111,6 +113,8 @@ The top toolbar Auto-fit checkbox sizes visible columns from headers plus the cu
 Header mode defaults to Drag. Drag column headers to reorder visible columns for the current panel session; copy, export, search, and sort use that visible order. Change the toolbar mode to Select for whole-column selection or Sort to sort visible columns in the extension; repeated sort clicks cycle ascending, descending, and original order. Sorting uses the panel's visible cell text, warns before sorting very large row counts, and resets on the third click.
 
 Toolbar search runs in the extension against visible columns only. It returns capped row-match metadata to the webview instead of transferring all result cells, and the status marks capped or partial scans.
+
+The Tools menu can start a tokenized local data server for the current panel result and open a line/time-series chart. The local server never starts automatically, binds only to `127.0.0.1`, and falls forward from port `7742` if needed. The built-in chart supports one numeric/temporal x column and one or more numeric y columns from visible columns, with extension-side min/max downsampling before data reaches the webview.
 
 Normal successful result messages stay hidden because the top summary already shows row count and elapsed time; errors remain visible in the message area.
 

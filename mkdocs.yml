@@ -50,7 +50,8 @@ nav:
   - Connections: connections.md
   - Running q: running-q.md
   - Results panel: results-panel.md
-  - Charting roadmap: charting-roadmap.md
+  - Local data server: local-data-server.md
+  - Charting: charting.md
   - Copy and export: copy-export.md
   - Settings: settings.md
   - Troubleshooting: troubleshooting.md

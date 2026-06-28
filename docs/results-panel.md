@@ -39,6 +39,17 @@ Very large results show a non-blocking warning. Copy, export, search, and sort m
 
 Column reorder, sort, search, copy, and export use the current visible column order. Hidden-column choices persist only for later results in the same panel when the full column list matches.
 
+## Tools
+
+The `Tools` area contains view tools plus two result workflows:
+
+| Tool | Behavior |
+| --- | --- |
+| Local data server | Starts or stops the opt-in `127.0.0.1` server for this panel and copies current-result URLs. |
+| Line chart | Opens the first built-in chart UI for the current visible result. |
+
+The local data server and chart both use the extension-side current result. Hidden, reordered, and sorted visible columns are honored where they apply.
+
 ## Selection
 
 The panel supports:
@@ -66,3 +77,9 @@ Toolbar search runs in the extension against visible columns only. It returns ca
 | `raw` | `[1 2 3]` where q-like bracketed display is available |
 
 Text copy/export formats use this display text. JSON and NDJSON keep structured values.
+
+## Local data and charting
+
+See [Local data server](local-data-server.md) for tokenized localhost endpoints and Python/pandas usage.
+
+See [Charting](charting.md) for the built-in line/time-series chart, downsampling, and current limitations.

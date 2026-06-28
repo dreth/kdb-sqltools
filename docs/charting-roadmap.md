@@ -1,36 +1,28 @@
 # Charting Roadmap
 
-!!! warning "Future work"
+!!! note "Current status"
 
-    Built-in charting has not shipped yet. There is no chart UI, local data server, or chart export in the current extension. This page records the intended architecture and tradeoffs before implementation starts.
+    The first built-in line/time-series chart and the opt-in local data server have shipped. See [Charting](charting.md) and [Local data server](local-data-server.md) for user-facing behavior. This page now tracks future charting direction.
 
 ## Current status
 
-The extension currently focuses on q execution, the kdb results panel, copy, and export. Charting has not been built.
+The extension currently supports q execution, the kdb results panel, copy/export, an opt-in local data server, and a first built-in line/time-series chart.
 
-The first charting work should be planned around large kdb time-series results rather than small demo datasets. The design should avoid sending millions of raw points to a VS Code webview.
+Future charting work should stay focused on large kdb time-series results rather than small demo datasets. The design should continue to avoid sending millions of raw points to a VS Code webview.
 
 ## Library recommendation
 
 | Tool | Recommended role | Notes |
 | --- | --- | --- |
-| uPlot | First built-in VS Code charting candidate. | Lightweight and fast for line and time-series charts. It keeps the webview dependency small, but the extension must own data shaping, downsampling, legends, and richer interactions. |
+| uPlot | Next built-in VS Code charting candidate. | Lightweight and fast for line and time-series charts. It keeps the webview dependency small, but the extension must own data shaping, downsampling, legends, and richer interactions. |
 | ECharts | Rich fallback or prototype candidate. | Larger than uPlot, but useful for comparing tooltips, zoom, legends, mixed chart types, and polished interactions before committing to custom uPlot work. |
 | Plotly and plotly-resampler | External Python/pandas workflow through a future local data server. | `plotly-resampler` is strongest in Python workflows where pandas/NumPy data and callback-driven viewport updates are natural. Pulling Plotly.js into the built-in webview first would add a heavier dependency before proving that the extension needs Plotly-specific chart features. |
 
 The default built-in path should be uPlot-first for fast time-series. ECharts is the practical fallback if the first-class UX needs richer built-in interactions. Plotly should stay available through external workflows rather than becoming the first webview dependency.
 
-## Local data server first
+## Local data server
 
-The local data server should land before built-in charting. It would let users move the current result, selection, visible columns, or row slices into pandas and Plotly tooling without waiting for the extension to own every charting feature.
-
-Expected shape:
-
-- Opt-in localhost server only.
-- Endpoints for current result, current selection, visible columns, slices, and metadata.
-- Tokenized URLs tied to the panel or extension session.
-- Guardrails matching copy/export limits.
-- Metadata for row count, column names, hidden columns, q types where available, source label, elapsed time, and warnings.
+The local data server is now the external-workflow path for pandas, Plotly, and `plotly-resampler`. Future server work can add richer metadata and streaming or chunked workflows if needed.
 
 That path makes `plotly-resampler` useful where it fits best: Python analysis using pandas dataframes and dynamic Plotly figures.
 
@@ -100,7 +92,7 @@ Large resampling jobs should use cancellation and versioning:
 
 ## Build phases
 
-1. Local data server.
+1. Local data server. Shipped.
    - Serve current result, selection, visible columns, row slices, and metadata from localhost.
    - Document Python/pandas usage, including Plotly and plotly-resampler workflows.
    - Keep the server opt-in and guarded by tokenized URLs.
@@ -108,11 +100,11 @@ Large resampling jobs should use cancellation and versioning:
    - Compare uPlot, ECharts, and Plotly.js inside a VS Code webview.
    - Benchmark bundle size, first render, zoom/pan latency, tooltip behavior, memory, and extension-to-webview transfer cost.
    - Test small, medium, and large time-series results with and without downsampling.
-3. First built-in chart.
+3. First built-in chart. Shipped in bounded form.
    - Line/time-series only.
    - User selects one x column and one or more y columns.
    - Auto downsampling based on plot width and visible x range.
-   - Basic zoom, pan, tooltip, legend, and sampled/full row-count metadata.
+   - Basic tooltip, legend, and sampled/full row-count metadata.
 4. Docs and tests.
    - Update user docs for any shipped charting behavior.
    - Add fixtures for sorted and unsorted x values, nulls, infinities, duplicate timestamps, and dense ranges.

@@ -1,5 +1,6 @@
 const assert = require('assert');
 const fs = require('fs');
+const http = require('http');
 const Module = require('module');
 const path = require('path');
 const JSZip = require('jszip');
@@ -15,6 +16,12 @@ const {
 } = require('../out/ls/q-ipc');
 const perfModule = require('../out/perf');
 const queriesModule = require('../out/ls/queries');
+const {
+  ChartDataError,
+  buildLineChartData,
+  chartColumnOptions,
+  chartTargetPointCount,
+} = require('../out/charting');
 const { currentQBlock, selectedTextOrCurrentBlock, selectedTextOrCurrentLine } = require('../out/q-text');
 const {
   allCellsRange,
@@ -41,6 +48,13 @@ const {
   validateXlsxSheetLimits,
   visibleIndexRange,
 } = require('../out/kdb-results');
+const {
+  DEFAULT_LOCAL_DATA_SERVER_PORT,
+  LOCAL_DATA_SERVER_HOST,
+  LOCAL_DATA_SERVER_FULL_EXPORT_CELL_LIMIT,
+  LocalDataServer,
+  randomLocalDataServerToken,
+} = require('../out/local-data-server');
 const KdbDriver = require('../out/ls/driver').default;
 const { ContextValue } = require('@sqltools/types');
 const connectionSchema = require('../connection.schema.json');
@@ -636,6 +650,182 @@ function panelFormatElapsedMs(milliseconds, display) {
     { includeHeaders: false, includeRowIndex: true }
   )));
 
+  const chartTable = rowsToColumnarPanelResult(
+    [
+      { ts: '2024-01-03', price: 10, size: 100, sym: 'A' },
+      { ts: '2024-01-01', price: null, size: 200, sym: 'B' },
+      { ts: '2024-01-02', price: Infinity, size: 300, sym: 'C' },
+      { ts: '2024-01-04', price: 5, size: 400, sym: 'D' },
+    ],
+    ['ts', 'price', 'size', 'sym']
+  );
+  const chartOptions = chartColumnOptions(chartTable);
+  assert.deepStrictEqual(chartOptions.xColumns.map(option => `${option.columnName}:${option.kind}`), [
+    'ts:temporal',
+    'price:numeric',
+    'size:numeric',
+  ]);
+  assert.deepStrictEqual(chartOptions.yColumns.map(option => option.columnName), ['price', 'size']);
+  const unsortedChart = buildLineChartData(chartTable, {
+    version: 2,
+    requestId: 3,
+    xColumn: 'ts',
+    yColumns: ['price'],
+    width: 800,
+  });
+  assert.strictEqual(unsortedChart.sorted, true);
+  assert.deepStrictEqual(unsortedChart.xText, ['2024-01-01', '2024-01-02', '2024-01-03', '2024-01-04']);
+  assert.deepStrictEqual(unsortedChart.series[0].values, [null, null, 10, 5]);
+  assert.ok(unsortedChart.warnings.some(warning => /sorted/.test(warning)));
+  assert.ok(unsortedChart.warnings.some(warning => /Null and non-finite/.test(warning)));
+
+  const spikeTable = createColumnarPanelResult(['x', 'y'], 100, (rowIndex, columnIndex) => {
+    if (columnIndex === 0) {
+      return rowIndex;
+    }
+    return rowIndex === 50 ? 999 : 0;
+  });
+  const sampledChart = buildLineChartData(spikeTable, {
+    version: 1,
+    requestId: 1,
+    xColumn: 'x',
+    yColumns: ['y'],
+    width: 10,
+    maxSampledPoints: 10,
+  });
+  assert.strictEqual(sampledChart.algorithm, 'minmax-bucket/10');
+  assert.ok(sampledChart.sampledPointCount <= 10);
+  assert.ok(sampledChart.series[0].values.includes(999), 'min/max chart sampling should preserve spikes');
+  assert.ok(chartTargetPointCount(1000) < 1000000, 'chart target should not send million-point series by default');
+  assert.throws(
+    () => buildLineChartData(spikeTable, {
+      version: 1,
+      requestId: 1,
+      xColumn: 'x',
+      yColumns: ['y'],
+      width: 800,
+      maxSourceRows: 50,
+    }),
+    error => error instanceof ChartDataError && /limit/.test(error.message)
+  );
+  assert.throws(
+    () => buildLineChartData(chartTable, {
+      version: 1,
+      requestId: 1,
+      xColumn: 'sym',
+      yColumns: ['price'],
+      width: 800,
+    }),
+    /not eligible/
+  );
+
+  assert.strictEqual(DEFAULT_LOCAL_DATA_SERVER_PORT, 7742);
+  assert.strictEqual(LOCAL_DATA_SERVER_HOST, '127.0.0.1');
+  assert.strictEqual(randomLocalDataServerToken().length, 48);
+  const blocker = http.createServer((_request, response) => response.end('busy'));
+  await listenTestServer(blocker, 0, LOCAL_DATA_SERVER_HOST);
+  const blockedPort = blocker.address().port;
+  let selectionRange;
+  let localServerSnapshot = {
+    metadata: {
+      version: 7,
+      columns: ['time', 'price'],
+      query: 'select from trade',
+      connectionName: 'local kdb',
+    },
+    table: rowsToColumnarPanelResult(
+      [
+        { time: '2024-01-01', price: 1.5, sym: 'AAPL' },
+        { time: '2024-01-02', price: 2.5, sym: 'MSFT' },
+      ],
+      ['time', 'price']
+    ),
+    cellTextOptions: { arrayDisplayFormat: 'commaSpace' },
+  };
+  const localDataServer = new LocalDataServer({
+    preferredPort: blockedPort,
+    provider: {
+      current: () => ({ ...localServerSnapshot, selectionRange }),
+    },
+  });
+  let stoppedLocalDataUrl = '';
+  try {
+    const serverInfo = await localDataServer.start();
+    stoppedLocalDataUrl = `${serverInfo.baseUrl}/current.csv`;
+    assert.strictEqual(serverInfo.host, LOCAL_DATA_SERVER_HOST);
+    assert.notStrictEqual(serverInfo.port, blockedPort, 'busy preferred port should fall forward');
+    assert.ok(serverInfo.baseUrl.startsWith(`http://${LOCAL_DATA_SERVER_HOST}:`));
+    assert.ok(serverInfo.baseUrl.endsWith(`/${serverInfo.token}`));
+
+    let response = await httpGet(`${serverInfo.baseUrl}/metadata.json`);
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(JSON.parse(response.body).connectionName, 'local kdb');
+    assert.deepStrictEqual(JSON.parse(response.body).visibleColumns, ['time', 'price']);
+
+    response = await httpGet(`${serverInfo.baseUrl}/current.csv`);
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body, 'time,price\n2024-01-01,1.5\n2024-01-02,2.5');
+
+    response = await httpGet(`${serverInfo.baseUrl}/current.json`);
+    assert.strictEqual(response.status, 200);
+    assert.deepStrictEqual(JSON.parse(response.body), [
+      { time: '2024-01-01', price: 1.5 },
+      { time: '2024-01-02', price: 2.5 },
+    ]);
+
+    response = await httpGet(`${serverInfo.baseUrl}/current.ndjson`);
+    assert.strictEqual(response.status, 200);
+    assert.deepStrictEqual(response.body.split('\n'), [
+      '{"time":"2024-01-01","price":1.5}',
+      '{"time":"2024-01-02","price":2.5}',
+    ]);
+
+    response = await httpGet(`${serverInfo.baseUrl}/slice.csv?rowStart=1&rowCount=1&colStart=1&colCount=1`);
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body, 'price\n2.5');
+
+    response = await httpGet(`${serverInfo.baseUrl}/slice.json?rowStart=0&rowCount=1&colStart=0&colCount=1`);
+    assert.strictEqual(response.status, 200);
+    assert.deepStrictEqual(JSON.parse(response.body), [{ time: '2024-01-01' }]);
+
+    response = await httpGet(`${serverInfo.baseUrl}/selection.json`);
+    assert.strictEqual(response.status, 400);
+    assert.strictEqual(JSON.parse(response.body).error.code, 'no_selection');
+    selectionRange = { startRow: 0, endRow: 0, startColumn: 1, endColumn: 1 };
+    response = await httpGet(`${serverInfo.baseUrl}/selection.json`);
+    assert.strictEqual(response.status, 200);
+    assert.deepStrictEqual(JSON.parse(response.body), [{ price: 1.5 }]);
+
+    response = await httpGet(`http://${serverInfo.host}:${serverInfo.port}/bad-token/current.csv`);
+    assert.strictEqual(response.status, 404);
+    assert.strictEqual(JSON.parse(response.body).error.code, 'unknown_token');
+
+    response = await httpGet(`${serverInfo.baseUrl}/slice.csv?rowStart=-1&rowCount=1&colStart=0&colCount=1`);
+    assert.strictEqual(response.status, 400);
+    assert.strictEqual(JSON.parse(response.body).error.code, 'invalid_slice');
+
+    const bigColumnCount = 1001;
+    localServerSnapshot = {
+      metadata: { version: 8, columns: [] },
+      table: createColumnarPanelResult(
+        Array.from({ length: bigColumnCount }, (_unused, index) => `c${index}`),
+        Math.ceil(LOCAL_DATA_SERVER_FULL_EXPORT_CELL_LIMIT / bigColumnCount) + 1,
+        () => 1
+      ),
+      cellTextOptions: {},
+    };
+    response = await httpGet(`${serverInfo.baseUrl}/current.csv`);
+    assert.strictEqual(response.status, 413);
+    assert.strictEqual(JSON.parse(response.body).error.code, 'full_export_too_large');
+  } finally {
+    await localDataServer.stop();
+    await closeTestServer(blocker);
+  }
+  await assert.rejects(
+    () => httpGet(stoppedLocalDataUrl),
+    /ECONNREFUSED|socket hang up|ECONNRESET/
+  );
+
   const resultsPanelSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'results-panel.ts'), 'utf8');
   const extensionSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'extension.ts'), 'utf8');
   const kdbResultsSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'kdb-results.ts'), 'utf8');
@@ -715,6 +905,13 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(toolsPanelSource.includes('id="interactionMode"'), true);
   assert.strictEqual(toolsPanelSource.includes('id="settingsMenu"'), true);
   assert.strictEqual(toolsPanelSource.includes('id="autoFit"'), true);
+  assert.strictEqual(toolsPanelSource.includes('id="startLocalDataServer"'), true);
+  assert.strictEqual(toolsPanelSource.includes('id="copyCurrentCsvUrl"'), true);
+  assert.strictEqual(toolsPanelSource.includes('id="openChart"'), true);
+  assert.strictEqual(resultsPanelSource.includes('id="chartPanel"'), true);
+  assert.strictEqual(resultsPanelSource.includes("vscode.postMessage({ type: 'startLocalDataServer' })"), true);
+  assert.strictEqual(resultsPanelSource.includes("type: 'requestChart'"), true);
+  assert.strictEqual(resultsPanelSource.includes('buildLineChartData(table'), true);
   assert.ok(resultsPanelSource.indexOf('id="actionFormat"') < resultsPanelSource.indexOf('id="toolsMenu"'));
   assert.ok(resultsPanelSource.indexOf('id="copy"') < resultsPanelSource.indexOf('id="toolsMenu"'));
   assert.ok(resultsPanelSource.indexOf('id="export"') < resultsPanelSource.indexOf('id="toolsMenu"'));
@@ -735,6 +932,9 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(commandTitle('kdb-sqltools.runSelectionOrBlockInNewKdbPanel'), 'Run Selection in New kdb Panel');
   assert.strictEqual(commandTitle('kdb-sqltools.openKeyboardShortcuts'), 'Open kdb Keyboard Shortcuts');
   assert.strictEqual(commandTitle('kdb-sqltools.copyKdbPanelSelection'), 'Copy');
+  assert.strictEqual(commandTitle('kdb-sqltools.openLocalDataServer'), 'Start Local Data Server');
+  assert.strictEqual(commandTitle('kdb-sqltools.stopLocalDataServer'), 'Stop Local Data Server');
+  assert.strictEqual(commandTitle('kdb-sqltools.copyLocalDataServerUrl'), 'Copy Local Data Server current.csv URL');
   assert.strictEqual(commandTitle('kdb-sqltools.reportBug'), 'Report Bug');
   assert.strictEqual(commandTitle('kdb-sqltools.requestFeature'), 'Request Feature');
   assert.strictEqual(commandTitle('kdb-sqltools.giveFeedback'), 'Give Feedback');
@@ -746,12 +946,19 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.runSelectionOrBlockInNewKdbPanel'));
   assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.runSelectionOrBlockInKdbPanelReplace'));
   assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.copyKdbPanelSelection'));
+  assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.openLocalDataServer'));
+  assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.stopLocalDataServer'));
+  assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.copyLocalDataServerUrl'));
   assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.reportBug'));
   assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.requestFeature'));
   assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.giveFeedback'));
   assert.strictEqual(extensionSource.includes("'kdb-sqltools.runSelectionOrBlockInNewKdbPanel'"), true);
   assert.strictEqual(extensionSource.includes("'kdb-sqltools.runSelectionOrBlockInKdbPanelReplace'"), true);
   assert.strictEqual(extensionSource.includes("'kdb-sqltools.copyKdbPanelSelection'"), true);
+  assert.strictEqual(extensionSource.includes("'kdb-sqltools.openLocalDataServer'"), true);
+  assert.strictEqual(extensionSource.includes("'kdb-sqltools.stopLocalDataServer'"), true);
+  assert.strictEqual(extensionSource.includes("'kdb-sqltools.copyLocalDataServerUrl'"), true);
+  assert.strictEqual(extensionSource.includes('KdbResultsPanel.stopAllLocalDataServers();'), true);
   assert.strictEqual(extensionSource.includes("'kdb-sqltools.reportBug'"), true);
   assert.strictEqual(extensionSource.includes("'kdb-sqltools.requestFeature'"), true);
   assert.strictEqual(extensionSource.includes("'kdb-sqltools.giveFeedback'"), true);
@@ -1684,6 +1891,58 @@ function mockVscode() {
     window: {},
     workspace: {},
   };
+}
+
+function listenTestServer(server, port, host) {
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      server.removeListener('error', onError);
+      server.removeListener('listening', onListening);
+    };
+    const onError = error => {
+      cleanup();
+      reject(error);
+    };
+    const onListening = () => {
+      cleanup();
+      resolve();
+    };
+    server.once('error', onError);
+    server.once('listening', onListening);
+    server.listen(port, host);
+  });
+}
+
+function closeTestServer(server) {
+  return new Promise((resolve, reject) => {
+    server.close(error => {
+      if (error && error.code !== 'ERR_SERVER_NOT_RUNNING') {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+function httpGet(url) {
+  return new Promise((resolve, reject) => {
+    const request = http.get(url, response => {
+      const chunks = [];
+      response.on('data', chunk => chunks.push(Buffer.from(chunk)));
+      response.on('end', () => {
+        resolve({
+          status: response.statusCode,
+          headers: response.headers,
+          body: Buffer.concat(chunks).toString('utf8'),
+        });
+      });
+    });
+    request.on('error', reject);
+    request.setTimeout(3000, () => {
+      request.destroy(new Error(`GET timed out: ${url}`));
+    });
+  });
 }
 
 function createDriver() {

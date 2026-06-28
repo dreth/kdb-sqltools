@@ -61,6 +61,9 @@ export async function activate(extContext: ExtensionContext): Promise<IDriverExt
     vscode.commands.registerCommand('kdb-sqltools.openKeyboardShortcuts', openKeyboardShortcuts),
     vscode.commands.registerCommand('kdb-sqltools.copyExampleConnectionSettings', copyExampleConnectionSettings),
     vscode.commands.registerCommand('kdb-sqltools.copyKdbPanelSelection', () => KdbResultsPanel.copySelectionFromActivePanel()),
+    vscode.commands.registerCommand('kdb-sqltools.openLocalDataServer', () => KdbResultsPanel.openLocalDataServerForActivePanel()),
+    vscode.commands.registerCommand('kdb-sqltools.stopLocalDataServer', () => KdbResultsPanel.stopLocalDataServerForActivePanel()),
+    vscode.commands.registerCommand('kdb-sqltools.copyLocalDataServerUrl', () => KdbResultsPanel.copyLocalDataServerUrlFromActivePanel()),
     vscode.commands.registerCommand('kdb-sqltools.reportBug', () => openFeedbackIssue('bug')),
     vscode.commands.registerCommand('kdb-sqltools.requestFeature', () => openFeedbackIssue('feature')),
     vscode.commands.registerCommand('kdb-sqltools.giveFeedback', () => openFeedbackIssue('feedback')),
@@ -98,7 +101,9 @@ export async function activate(extContext: ExtensionContext): Promise<IDriverExt
   };
 }
 
-export function deactivate() {}
+export function deactivate() {
+  KdbResultsPanel.stopAllLocalDataServers();
+}
 
 async function runQFile(
   extContext: ExtensionContext,

@@ -41,7 +41,8 @@ The kdb results panel is the default result target. SQLTools' own result grid re
 - [Connections](connections.md): local q, SQLTools JSON, namespaces, and connection scope.
 - [Running q](running-q.md): commands, keybindings, default target, and SQLTools opt-in.
 - [Results panel](results-panel.md): selection, sorting, search, hidden columns, virtualization, and result placement.
-- [Charting roadmap](charting-roadmap.md): future charting architecture, library tradeoffs, and downsampling plan.
+- [Local data server](local-data-server.md): opt-in localhost endpoints for the current kdb result panel.
+- [Charting](charting.md): built-in line/time-series charting, eligibility rules, and downsampling behavior.
 - [Copy and export](copy-export.md): supported formats and guardrails.
 - [Settings](settings.md): setting keys, defaults, and practical effects.
 - [Troubleshooting](troubleshooting.md): known limits and common failure modes.
