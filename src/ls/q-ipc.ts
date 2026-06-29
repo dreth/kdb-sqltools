@@ -290,6 +290,7 @@ export class QIpcReceiveBuffer {
 
 export class KdbIpcClient {
   private socket: net.Socket | null = null;
+  private connectingSocket: net.Socket | null = null;
   private receiveBuffer = new QIpcReceiveBuffer();
   private pending: PendingQuery | null = null;
   private queue: PendingQuery[] = [];
@@ -307,6 +308,7 @@ export class KdbIpcClient {
         host: this.options.host,
         port: this.options.port,
       });
+      this.connectingSocket = socket;
       let settled = false;
 
       const fail = (error: Error) => {
@@ -325,6 +327,9 @@ export class KdbIpcClient {
         socket.removeListener('error', onError);
         socket.removeListener('close', onClose);
         socket.removeListener('timeout', onTimeout);
+        if (this.connectingSocket === socket) {
+          this.connectingSocket = null;
+        }
       };
 
       const onConnect = () => {
@@ -390,9 +395,17 @@ export class KdbIpcClient {
 
   public async close(): Promise<void> {
     const socket = this.socket;
+    const connectingSocket = this.connectingSocket && this.connectingSocket !== socket
+      ? this.connectingSocket
+      : null;
     this.socket = null;
+    this.connectingSocket = null;
     this.receiveBuffer.clear();
     this.failAll(new KdbIpcError('kdb+ connection closed'));
+
+    if (connectingSocket && !connectingSocket.destroyed) {
+      connectingSocket.destroy();
+    }
 
     if (!socket || socket.destroyed) {
       return;
@@ -401,6 +414,24 @@ export class KdbIpcClient {
     await new Promise<void>(resolve => {
       socket.end(() => resolve());
     });
+  }
+
+  public cancel(error: Error = new KdbIpcError('kdb+ query canceled')): void {
+    const socket = this.socket;
+    const connectingSocket = this.connectingSocket && this.connectingSocket !== socket
+      ? this.connectingSocket
+      : null;
+    this.socket = null;
+    this.connectingSocket = null;
+    this.receiveBuffer.clear();
+    this.failAll(error);
+
+    if (socket && !socket.destroyed) {
+      socket.destroy(error);
+    }
+    if (connectingSocket && !connectingSocket.destroyed) {
+      connectingSocket.destroy(error);
+    }
   }
 
   public getProtocolVersion(): number {

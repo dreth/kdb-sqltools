@@ -285,9 +285,40 @@ async function executeQTextInKdbPanel(
   }
 
   const panel = KdbResultsPanel.showLoading(extContext, { query: text, connectionName: connection.name }, kdbPanelMode);
+  const runVersion = panel.currentVersion();
 
   const driver = new KdbDriver(connection, async () => []);
   const started = Date.now();
+  let cancelRequested = false;
+  let canceledResultShown = false;
+  const cancellationError = new Error('Query canceled.');
+  cancellationError.name = 'KdbPanelQueryCanceled';
+  const showCanceledResult = () => {
+    if (canceledResultShown) {
+      return;
+    }
+    canceledResultShown = true;
+    if (!panel.isLoadingVersion(runVersion)) {
+      return;
+    }
+    panel.showResult({
+      table: emptyColumnarPanelResult(),
+      query: text,
+      connectionName: connection.name,
+      elapsedMs: Date.now() - started,
+      messages: ['Query canceled.'],
+      canceled: true,
+    });
+  };
+  const cancelRun = () => {
+    if (cancelRequested) {
+      return;
+    }
+    cancelRequested = true;
+    driver.cancel(cancellationError);
+    showCanceledResult();
+  };
+  const panelCancel = panel.setLoadingCancelHandler(runVersion, cancelRun);
   try {
     const ipcQuerySpan = perfSpan('extension.kdbPanel.ipc.query', {
       connectionName: connection.name,
@@ -299,17 +330,29 @@ async function executeQTextInKdbPanel(
         {
           location: vscode.ProgressLocation.Notification,
           title: `Running q on ${connection.name}`,
-          cancellable: false,
+          cancellable: true,
         },
-        async () => {
-          const client = await driver.open();
-          return client.query(text);
+        async (_progress, token) => {
+          const tokenCancel = token.onCancellationRequested(cancelRun);
+          try {
+            const client = await driver.open();
+            if (cancelRequested) {
+              throw cancellationError;
+            }
+            return await client.query(text);
+          } finally {
+            tokenCancel.dispose();
+          }
         }
       );
     } finally {
       endPerfSpan(ipcQuerySpan, {
-        error: value === undefined,
+        error: value === undefined && !cancelRequested,
+        canceled: cancelRequested,
       });
+    }
+    if (cancelRequested || !panel.isLoadingVersion(runVersion)) {
+      return;
     }
     const panelResultSpan = perfSpan('extension.kdbPanel.toColumnarResult', {
       connectionName: connection.name,
@@ -339,8 +382,18 @@ async function executeQTextInKdbPanel(
         endPerfSpan(panelResultSpan, { error: true });
       }
     }
+    if (cancelRequested || !panel.isLoadingVersion(runVersion)) {
+      return;
+    }
     panel.showResult(panelResult);
   } catch (error) {
+    if (cancelRequested || error === cancellationError) {
+      showCanceledResult();
+      return;
+    }
+    if (!panel.isLoadingVersion(runVersion)) {
+      return;
+    }
     const err = toError(error);
     panel.showResult({
       table: emptyColumnarPanelResult(),
@@ -352,6 +405,7 @@ async function executeQTextInKdbPanel(
     });
     vscode.window.showErrorMessage(err.message);
   } finally {
+    panelCancel.dispose();
     await driver.close();
   }
 }

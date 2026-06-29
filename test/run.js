@@ -839,12 +839,17 @@ function panelFormatElapsedMs(milliseconds, display) {
 
   const resultsPanelSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'results-panel.ts'), 'utf8');
   const extensionSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'extension.ts'), 'utf8');
+  const driverSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'ls', 'driver.ts'), 'utf8');
+  const qIpcSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'ls', 'q-ipc.ts'), 'utf8');
   const kdbResultsSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'kdb-results.ts'), 'utf8');
   const chartingSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'charting.ts'), 'utf8');
   const perfSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'perf.ts'), 'utf8');
   const readmeSource = fs.readFileSync(path.join(__dirname, '..', 'README.md'), 'utf8');
   const chartingDocsSource = fs.readFileSync(path.join(__dirname, '..', 'docs', 'charting.md'), 'utf8');
+  const runningDocsSource = fs.readFileSync(path.join(__dirname, '..', 'docs', 'running-q.md'), 'utf8');
+  const resultsDocsSource = fs.readFileSync(path.join(__dirname, '..', 'docs', 'results-panel.md'), 'utf8');
   const settingsDocsSource = fs.readFileSync(path.join(__dirname, '..', 'docs', 'settings.md'), 'utf8');
+  const troubleshootingDocsSource = fs.readFileSync(path.join(__dirname, '..', 'docs', 'troubleshooting.md'), 'utf8');
   const packageSource = fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8');
   const commandTitle = commandId => packageJson.contributes.commands.find(command => command.command === commandId).title;
   const keybinding = commandId => packageJson.contributes.keybindings.find(binding => binding.command === commandId);
@@ -900,6 +905,25 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="includeRowIndex"'), 1);
   assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="searchInput"'), 1);
   assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="interactionMode"'), 1);
+  assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="cancelQuery"'), 1);
+  assert.ok(resultsPanelSource.indexOf('<span id="spinner"') < resultsPanelSource.indexOf('id="cancelQuery"'));
+  assert.strictEqual(resultsPanelSource.includes('<button id="cancelQuery" class="cancel-query" title="Cancel running q query" hidden disabled>Cancel query</button>'), true);
+  assert.strictEqual(resultsPanelSource.includes("vscode.postMessage({ type: 'cancelRunningQuery', version: data.version });"), true);
+  assert.strictEqual(resultsPanelSource.includes("message.type === 'cancelRunningQuery'"), true);
+  assert.strictEqual(resultsPanelSource.includes('private runningQueryCancel: { version: number; cancel(): void } | undefined;'), true);
+  assert.strictEqual(resultsPanelSource.includes('public setLoadingCancelHandler(version: number, cancel: () => void): vscode.Disposable'), true);
+  const setLoadingSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function setLoading'),
+    resultsPanelSource.indexOf('function setResultMeta')
+  );
+  const setResultMetaSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function setResultMeta'),
+    resultsPanelSource.indexOf('function setSlice')
+  );
+  assert.strictEqual(setLoadingSource.includes('cancelQuery.hidden = false;'), true);
+  assert.strictEqual(setLoadingSource.includes('cancelQuery.disabled = false;'), true);
+  assert.strictEqual(setResultMetaSource.includes('cancelQuery.hidden = true;'), true);
+  assert.strictEqual(setResultMetaSource.includes('cancelQuery.disabled = true;'), true);
   assert.strictEqual(outputControlsSource.includes('id="outputControlsLabel" class="toolbar-group-label">Output:</span>'), true);
   assert.strictEqual(outputControlsSource.includes('role="group" aria-labelledby="outputControlsLabel"'), true);
   assert.ok(outputControlsSource.indexOf('id="actionFormat"') < outputControlsSource.indexOf('id="includeHeaders"'));
@@ -1076,7 +1100,7 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('private hideLargeResultWarningOnce = false;'), true);
   assert.strictEqual(resultsPanelSource.includes('parts.push(value.guardrailMessage)'), false);
   assert.strictEqual(resultsPanelSource.includes("className = 'message-actions'"), false);
-  assert.strictEqual(resultsPanelSource.includes("return value.error ? value.messages.slice().join('\\\\n') : '';"), true);
+  assert.strictEqual(resultsPanelSource.includes("return value.error || value.canceled ? value.messages.slice().join('\\\\n') : '';"), true);
   assert.strictEqual(resultsPanelSource.includes('function formatElapsedMs(milliseconds, display)'), true);
   assert.strictEqual(resultsPanelSource.includes("display === 'milliseconds'"), true);
   assert.strictEqual(resultsPanelSource.includes("formatElapsedMs(data.elapsedMs, settings.elapsedTimeDisplay)"), true);
@@ -1088,6 +1112,36 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(kdbResultsSource.includes('XLSX_MAX_COLUMNS = 16384'), true);
   assert.strictEqual(extensionSource.includes('driver.query(text, {})'), false, 'kdbPanel execution must not use row-object SQLTools driver.query');
   assert.strictEqual(extensionSource.includes('client.query(text)'), true, 'kdbPanel execution should query IPC directly');
+  const kdbPanelRunSource = extensionSource.slice(
+    extensionSource.indexOf('async function executeQTextInKdbPanel'),
+    extensionSource.indexOf('async function pickKdbConnection')
+  );
+  assert.strictEqual(kdbPanelRunSource.includes('cancellable: true'), true);
+  assert.strictEqual(kdbPanelRunSource.includes('cancellable: false'), false);
+  assert.strictEqual(kdbPanelRunSource.includes('const cancelRun = () => {'), true);
+  assert.strictEqual(kdbPanelRunSource.includes('driver.cancel(cancellationError);'), true);
+  assert.strictEqual(kdbPanelRunSource.includes('panel.setLoadingCancelHandler(runVersion, cancelRun)'), true);
+  assert.strictEqual(kdbPanelRunSource.includes('token.onCancellationRequested(cancelRun)'), true);
+  assert.strictEqual(kdbPanelRunSource.includes('panel.isLoadingVersion(runVersion)'), true);
+  assert.strictEqual(kdbPanelRunSource.includes('canceled: true'), true);
+  assert.ok(
+    kdbPanelRunSource.indexOf('if (cancelRequested || error === cancellationError)') <
+      kdbPanelRunSource.indexOf('vscode.window.showErrorMessage(err.message)'),
+    'expected user cancellation should return before error toast'
+  );
+  assert.strictEqual(qIpcSource.includes('private connectingSocket: net.Socket | null = null;'), true);
+  assert.strictEqual(qIpcSource.includes("public cancel(error: Error = new KdbIpcError('kdb+ query canceled')): void"), true);
+  assert.strictEqual(qIpcSource.includes('this.failAll(error);'), true);
+  assert.strictEqual(qIpcSource.includes('socket.destroy(error);'), true);
+  assert.strictEqual(qIpcSource.includes('connectingSocket.destroy(error);'), true);
+  assert.strictEqual(driverSource.includes("public cancel(error: Error = new KdbIpcError('kdb+ query canceled')): void"), true);
+  assert.strictEqual(driverSource.includes('this.openingClient.cancel(error);'), true);
+  assert.strictEqual(driverSource.includes('client => client.cancel(error)'), true);
+  assert.strictEqual(readmeSource.includes('Cancellable kdb results panel runs'), true);
+  assert.strictEqual(runningDocsSource.includes('## Canceling a run'), true);
+  assert.strictEqual(resultsDocsSource.includes('## Cancel running queries'), true);
+  assert.strictEqual(troubleshootingDocsSource.includes('click `Cancel query`'), true);
+  assert.strictEqual(/best-effort/i.test(readmeSource + runningDocsSource + resultsDocsSource + troubleshootingDocsSource), true);
   const resultSettings = packageJson.contributes.configuration.properties;
   assert.strictEqual(resultSettings['kdb-sqltools.results.target'].default, 'kdbPanel');
   assert.strictEqual(resultSettings['kdb-sqltools.results.kdbPanel.defaultRunMode'].default, 'new');

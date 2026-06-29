@@ -2,7 +2,7 @@ import AbstractDriver from '@sqltools/base-driver';
 import { IConnectionDriver, MConnectionExplorer, NSDatabase, ContextValue, Arg0, IQueryOptions } from '@sqltools/types';
 import { v4 as generateId } from 'uuid';
 import queries, { normalizeNamespace, qSymbolExpression, TableParams } from './queries';
-import { KdbIpcClient, qValueToTabular } from './q-ipc';
+import { KdbIpcClient, KdbIpcError, qValueToTabular } from './q-ipc';
 import { endPerfSpan, perfSpan } from '../perf';
 
 interface KdbDriverOptions {
@@ -15,6 +15,7 @@ type DriverOptions = KdbDriverOptions;
 export default class KdbDriver extends AbstractDriver<DriverLib, DriverOptions> implements IConnectionDriver {
   public queries = queries;
   private sshTunnel: { port: number; close(): void } | null = null;
+  private openingClient: KdbIpcClient | null = null;
 
   public async open(): Promise<KdbIpcClient> {
     if (this.connection) {
@@ -25,6 +26,7 @@ export default class KdbDriver extends AbstractDriver<DriverLib, DriverOptions> 
     let port = Number(this.credentials.port || 5000);
 
     let tunnel: { port: number; close(): void } | null = null;
+    let client: KdbIpcClient | null = null;
 
     try {
       if (this.credentials.ssh === 'Enabled' && this.credentials.sshOptions) {
@@ -44,7 +46,7 @@ export default class KdbDriver extends AbstractDriver<DriverLib, DriverOptions> 
         port = tunnel.port;
       }
 
-      const client = new KdbIpcClient({
+      client = new KdbIpcClient({
         host,
         port,
         username: this.credentials.username,
@@ -52,10 +54,20 @@ export default class KdbDriver extends AbstractDriver<DriverLib, DriverOptions> 
         timeoutMs: this.connectionTimeoutMs(),
       });
 
+      this.openingClient = client;
       await client.connect();
+      if (this.openingClient !== client) {
+        client.cancel(new KdbIpcError('kdb+ query canceled'));
+        throw new KdbIpcError('kdb+ query canceled');
+      }
+      this.openingClient = null;
       this.connection = Promise.resolve(client);
       return this.connection;
     } catch (error) {
+      if (client && this.openingClient === client) {
+        this.openingClient.cancel(toError(error));
+        this.openingClient = null;
+      }
       if (tunnel) {
         tunnel.close();
       }
@@ -65,10 +77,36 @@ export default class KdbDriver extends AbstractDriver<DriverLib, DriverOptions> 
   }
 
   public async close(): Promise<void> {
+    if (this.openingClient) {
+      this.openingClient.cancel(new KdbIpcError('kdb+ connection closed'));
+      this.openingClient = null;
+    }
+
     if (this.connection) {
       const client = await this.connection;
       this.connection = null;
       await client.close();
+    }
+
+    if (this.sshTunnel) {
+      this.sshTunnel.close();
+      this.sshTunnel = null;
+    }
+  }
+
+  public cancel(error: Error = new KdbIpcError('kdb+ query canceled')): void {
+    const connection = this.connection;
+    this.connection = null;
+    if (connection) {
+      connection.then(
+        client => client.cancel(error),
+        () => undefined
+      );
+    }
+
+    if (this.openingClient) {
+      this.openingClient.cancel(error);
+      this.openingClient = null;
     }
 
     if (this.sshTunnel) {
