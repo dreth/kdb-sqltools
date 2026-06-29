@@ -28,7 +28,7 @@ Very large results show a non-blocking warning. Copy, export, search, and sort m
 
 ## Cancel running queries
 
-When a run is still loading, the toolbar shows `Cancel query` next to the spinner. The same run can also be canceled from VS Code's progress notification. Canceling stops the extension from waiting for that result, closes the active q IPC connection, and changes the panel to a canceled state so late results from that run do not replace newer output.
+When a run is still loading, the toolbar shows a short `Cancel` button next to the spinner. The same run can also be canceled from VS Code's progress notification. Canceling stops the extension from waiting for that result, closes the active q IPC connection, and changes the panel to a canceled state so late results from that run do not replace newer output.
 
 Server-side interruption is best-effort. If the q process or gateway has already started the work, closing the client IPC connection may not stop that work immediately.
 
@@ -37,22 +37,26 @@ Server-side interruption is best-effort. If the q process or gateway has already
 | Feature | Behavior |
 | --- | --- |
 | Resize | Drag column edges to set widths for the current panel session. |
-| Auto-fit | Sizes visible columns from headers and currently rendered cells as you scroll. |
-| Reorder | Header mode `Drag` lets you drag headers to reorder visible columns. A drag cue marks the insertion position. |
-| Select columns | Header mode `Select` turns header clicks into whole-column selection. |
-| Sort | Header mode `Sort` cycles ascending, descending, and original order. Sorting uses visible cell text. |
+| Auto-fit | Enable from `Settings`. It sizes visible columns from headers and currently rendered cells as you scroll. |
+| Reorder | `Settings` -> header mode `Drag` lets you drag headers to reorder visible columns. A drag cue marks the insertion position. |
+| Select columns | `Settings` -> header mode `Select` turns header clicks into whole-column selection. |
+| Sort | `Settings` -> header mode `Sort` cycles ascending, descending, and original order. Sorting uses visible cell text. |
 | Hidden columns | Hide columns from the panel settings menu for the current panel session. Reset restores all columns. |
 
 Column reorder, sort, search, copy, and export use the current visible column order. Hidden-column choices persist only for later results in the same panel when the full column list matches.
 
-## Tools
+## Toolbar
 
-The `Tools` area contains output options, view tools, and compact menus for result workflows:
+The toolbar is a single compact line:
+
+```text
+Output: [format] [Headers] [Row #] [Copy] [Export] [Chart] [Settings] [Cancel] [spinner/status]
+```
 
 | Tool | Behavior |
 | --- | --- |
-| Data server menu | Starts or stops the opt-in `127.0.0.1` server for this panel and copies current-result URLs. The base URL is shown inside the menu when running. |
-| Chart menu | Opens the uPlot-powered line chart UI for the current visible result. After the chart panel is open, it provides x/y controls, cursor tooltip, drag zoom, reset zoom, legend toggling, and PNG export after render. |
+| Chart menu | Top-level dropdown that opens the uPlot-powered line chart UI for the current visible result. After the chart panel is open, it provides x/y controls, cursor tooltip, drag zoom, reset zoom, legend toggling, and PNG export after render. |
+| Settings menu | Contains view controls, search, hidden columns, output defaults, and the local data server controls. The data server subgroup starts or stops the opt-in `127.0.0.1` server and copies current-result URLs. The base URL is shown only there when running. |
 
 The local data server and chart both use the extension-side current result. Hidden, reordered, and sorted visible columns are honored where they apply.
 
@@ -70,7 +74,7 @@ With no selection, copy and export use all cells.
 
 ## Search
 
-Toolbar search runs in the extension against visible columns only. It returns capped row-match metadata to the webview, so the panel does not need to transfer every cell to search. The search status indicates capped or partial scans.
+Settings search runs in the extension against visible columns only. It returns capped row-match metadata to the webview, so the panel does not need to transfer every cell to search. The search status indicates capped or partial scans.
 
 ## Array display formats
 

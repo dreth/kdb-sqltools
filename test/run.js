@@ -877,37 +877,36 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('rowElement.style.top = renderedRowTop(row, verticalState, layout)'), true);
   assert.strictEqual(resultsPanelSource.includes('rowElement.style.top = (layout.headerHeight + row * layout.rowHeight)'), false);
   assert.deepStrictEqual(htmlSelectOptions(resultsPanelSource, 'actionFormat'), ['csv', 'xlsx', 'tsv', 'json', 'ndjson', 'html', 'markdown']);
-  assert.strictEqual(resultsPanelSource.includes('id="toolsMenu"'), true);
-  assert.strictEqual(resultsPanelSource.includes('<summary id="toolsSummary">Tools</summary>'), true);
-  assert.strictEqual(resultsPanelSource.includes('class="tools-panel"'), true);
-  assert.strictEqual(resultsPanelSource.includes('function updateToolbarOverflow()'), true);
-  assert.strictEqual(resultsPanelSource.includes('ResizeObserver'), true);
-  assert.strictEqual(resultsPanelSource.includes("toolbar.classList.toggle('toolbar-overflow', shouldOverflow);"), true);
+  assert.strictEqual(resultsPanelSource.includes('id="toolsMenu"'), false);
+  assert.strictEqual(resultsPanelSource.includes('<summary id="toolsSummary">Tools</summary>'), false);
+  assert.strictEqual(resultsPanelSource.includes('class="tools-panel"'), false);
+  assert.strictEqual(resultsPanelSource.includes('id="dataToolsSection"'), false);
+  assert.strictEqual(resultsPanelSource.includes('id="chartToolsSection"'), false);
+  assert.strictEqual(resultsPanelSource.includes('id="viewToolsSection"'), false);
+  assert.strictEqual(resultsPanelSource.includes('class="tools-section"'), false);
+  assert.strictEqual(resultsPanelSource.includes('function updateToolbarOverflow()'), false);
+  assert.strictEqual(resultsPanelSource.includes("toolbar.classList.toggle('toolbar-overflow', shouldOverflow);"), false);
   assert.strictEqual(resultsPanelSource.includes("document.addEventListener('click', event => {"), true);
   assert.strictEqual(resultsPanelSource.includes("event.key === 'Escape' && closeToolbarMenus(true)"), true);
-  const toolsPanelSource = resultsPanelSource.slice(
-    resultsPanelSource.indexOf('<div class="tools-panel">'),
-    resultsPanelSource.indexOf('<span id="spinner"')
+  const toolbarSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('<div id="resultsToolbar"'),
+    resultsPanelSource.indexOf('<div id="message"')
   );
   const outputControlsSource = resultsPanelSource.slice(
     resultsPanelSource.indexOf('<div id="outputControls"'),
-    resultsPanelSource.indexOf('<details id="toolsMenu"')
+    resultsPanelSource.indexOf('<details id="chartMenu"')
   );
   const inlineOutputOptionsSource = outputControlsSource.slice(
     outputControlsSource.indexOf('<span id="inlineOutputOptions"'),
     outputControlsSource.indexOf('<button id="copy"')
   );
-  const toolsOutputOptionsSource = toolsPanelSource.slice(
-    toolsPanelSource.indexOf('<section id="toolsOutputOptions"'),
-    toolsPanelSource.indexOf('<section id="viewToolsSection"')
+  const chartMenuSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('<details id="chartMenu"'),
+    resultsPanelSource.indexOf('<details id="settingsMenu"')
   );
-  const dataToolsSource = toolsPanelSource.slice(
-    toolsPanelSource.indexOf('<section id="dataToolsSection"'),
-    toolsPanelSource.indexOf('<section id="chartToolsSection"')
-  );
-  const chartToolsSource = toolsPanelSource.slice(
-    toolsPanelSource.indexOf('<section id="chartToolsSection"'),
-    toolsPanelSource.length
+  const settingsMenuSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('<details id="settingsMenu"'),
+    resultsPanelSource.indexOf('<button id="cancelQuery"')
   );
   assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="actionFormat"'), 1);
   assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="includeHeaders"'), 1);
@@ -915,8 +914,12 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="searchInput"'), 1);
   assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="interactionMode"'), 1);
   assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="cancelQuery"'), 1);
-  assert.ok(resultsPanelSource.indexOf('<span id="spinner"') < resultsPanelSource.indexOf('id="cancelQuery"'));
-  assert.strictEqual(resultsPanelSource.includes('<button id="cancelQuery" class="cancel-query" title="Cancel running q query" hidden disabled>Cancel query</button>'), true);
+  assert.ok(toolbarSource.indexOf('id="outputControls"') < toolbarSource.indexOf('id="chartMenu"'));
+  assert.ok(toolbarSource.indexOf('id="chartMenu"') < toolbarSource.indexOf('id="settingsMenu"'));
+  assert.ok(toolbarSource.indexOf('id="settingsMenu"') < toolbarSource.indexOf('id="cancelQuery"'));
+  assert.ok(toolbarSource.indexOf('id="cancelQuery"') < toolbarSource.indexOf('<span id="spinner"'));
+  assert.strictEqual(resultsPanelSource.includes('<button id="cancelQuery" class="cancel-query" title="Cancel running q query" aria-label="Cancel running q query" hidden disabled>Cancel</button>'), true);
+  assert.strictEqual(resultsPanelSource.includes('>Cancel query</button>'), false);
   assert.strictEqual(resultsPanelSource.includes("vscode.postMessage({ type: 'cancelRunningQuery', version: data.version });"), true);
   assert.strictEqual(resultsPanelSource.includes("message.type === 'cancelRunningQuery'"), true);
   assert.strictEqual(resultsPanelSource.includes('private runningQueryCancel: { version: number; cancel(): void } | undefined;'), true);
@@ -943,35 +946,36 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(inlineOutputOptionsSource.includes('id="includeRowIndex"'), true);
   assert.strictEqual(inlineOutputOptionsSource.includes('title="Include column headers in copied/exported output"'), true);
   assert.strictEqual(inlineOutputOptionsSource.includes('title="Include row numbers in copied/exported output"'), true);
-  assert.strictEqual(toolsPanelSource.includes('id="outputOptionsLabel" class="tools-section-label">Output options</div>'), true);
-  assert.strictEqual(toolsPanelSource.includes('id="viewToolsLabel" class="tools-section-label">View tools</div>'), true);
-  assert.strictEqual(toolsOutputOptionsSource.includes('id="overflowOutputOptions"'), true);
-  assert.strictEqual(resultsPanelSource.includes('function placeOutputOptions(inToolsMenu)'), true);
-  assert.strictEqual(resultsPanelSource.includes('placeOutputOptions(shouldOverflow);'), true);
-  assert.strictEqual(toolsPanelSource.includes('id="searchInput"'), true);
-  assert.strictEqual(toolsPanelSource.includes('id="interactionMode"'), true);
-  assert.strictEqual(toolsPanelSource.includes('id="settingsMenu"'), true);
-  assert.strictEqual(toolsPanelSource.includes('id="autoFit"'), true);
-  assert.strictEqual(dataToolsSource.includes('id="dataToolsLabel" class="tools-section-label">Data server</div>'), true);
-  assert.strictEqual(dataToolsSource.includes('<details id="dataServerMenu" class="tool-dropdown">'), true);
-  assert.strictEqual(dataToolsSource.includes('aria-label="Data server menu"'), true);
-  assert.strictEqual(dataToolsSource.includes('id="localDataServerBadge" class="tool-summary-status">Stopped</span>'), true);
-  assert.strictEqual(dataToolsSource.includes('id="localDataServerBaseUrl" class="tool-menu-note" hidden'), true);
-  assert.strictEqual(dataToolsSource.includes('id="startLocalDataServer"'), true);
-  assert.strictEqual(dataToolsSource.includes('id="stopLocalDataServer"'), true);
-  assert.strictEqual(dataToolsSource.includes('id="copyCurrentCsvUrl"'), true);
-  assert.strictEqual(dataToolsSource.includes('id="copyMetadataUrl"'), true);
-  assert.strictEqual(dataToolsSource.includes('Start server'), true);
-  assert.strictEqual(dataToolsSource.includes('Stop server'), true);
-  assert.strictEqual(dataToolsSource.includes('Copy current.csv URL'), true);
-  assert.strictEqual(dataToolsSource.includes('Copy metadata URL'), true);
-  assert.strictEqual(dataToolsSource.includes('Local data</div>'), false);
-  assert.strictEqual(chartToolsSource.includes('id="chartToolsLabel" class="tools-section-label">Chart</div>'), true);
-  assert.strictEqual(chartToolsSource.includes('<details id="chartMenu" class="tool-dropdown">'), true);
-  assert.strictEqual(chartToolsSource.includes('aria-label="Chart menu"'), true);
-  assert.strictEqual(chartToolsSource.includes('id="chartMenuStatus" class="tool-summary-status">Unavailable</span>'), true);
-  assert.strictEqual(chartToolsSource.includes('id="openChart"'), true);
-  assert.strictEqual(chartToolsSource.includes('Line chart'), true);
+  assert.strictEqual(resultsPanelSource.includes('function placeOutputOptions(inToolsMenu)'), false);
+  assert.strictEqual(resultsPanelSource.includes('id="overflowOutputOptions"'), false);
+  assert.strictEqual(chartMenuSource.includes('<details id="chartMenu" class="tool-dropdown">'), true);
+  assert.strictEqual(chartMenuSource.includes('<summary id="chartSummary" aria-label="Chart menu">Chart</summary>'), true);
+  assert.strictEqual(chartMenuSource.includes('id="chartMenuStatus" class="tool-menu-status">Unavailable</div>'), true);
+  assert.strictEqual(chartMenuSource.includes('id="openChart"'), true);
+  assert.strictEqual(chartMenuSource.includes('Line chart'), true);
+  assert.strictEqual(settingsMenuSource.includes('<summary id="settingsSummary" aria-label="Settings menu">Settings</summary>'), true);
+  assert.strictEqual(settingsMenuSource.includes('role="group" aria-label="Settings controls"'), true);
+  assert.strictEqual(settingsMenuSource.includes('<span>View</span>'), true);
+  assert.strictEqual(settingsMenuSource.includes('id="autoFit"'), true);
+  assert.strictEqual(settingsMenuSource.includes('id="interactionMode"'), true);
+  assert.strictEqual(settingsMenuSource.includes('<option value="drag">Drag</option>'), true);
+  assert.strictEqual(settingsMenuSource.includes('<option value="select">Select</option>'), true);
+  assert.strictEqual(settingsMenuSource.includes('<option value="sort">Sort</option>'), true);
+  assert.strictEqual(settingsMenuSource.includes('id="searchInput"'), true);
+  assert.strictEqual(settingsMenuSource.includes('<span>Data server</span>'), true);
+  assert.strictEqual(settingsMenuSource.includes('id="localDataServerBadge" class="tool-summary-status">Stopped</span>'), true);
+  assert.strictEqual(settingsMenuSource.includes('id="localDataServerBaseUrl" class="tool-menu-note" hidden'), true);
+  assert.strictEqual(settingsMenuSource.includes('id="startLocalDataServer"'), true);
+  assert.strictEqual(settingsMenuSource.includes('id="stopLocalDataServer"'), true);
+  assert.strictEqual(settingsMenuSource.includes('id="copyCurrentCsvUrl"'), true);
+  assert.strictEqual(settingsMenuSource.includes('id="copyMetadataUrl"'), true);
+  assert.strictEqual(settingsMenuSource.includes('Start server'), true);
+  assert.strictEqual(settingsMenuSource.includes('Stop server'), true);
+  assert.strictEqual(settingsMenuSource.includes('Copy current.csv URL'), true);
+  assert.strictEqual(settingsMenuSource.includes('Copy metadata URL'), true);
+  assert.strictEqual(settingsMenuSource.includes('<span>Preferences</span>'), true);
+  assert.strictEqual(settingsMenuSource.includes('<span>Columns</span>'), true);
+  assert.strictEqual(resultsPanelSource.includes('id="dataServerMenu"'), false);
   assert.strictEqual(resultsPanelSource.includes("localDataServerStatus.textContent = server\n          ? 'Server: ' + server.host + ':' + server.port"), false);
   assert.strictEqual(resultsPanelSource.includes("localDataServerBaseUrl.textContent = server ? 'Base URL: ' + String(server.baseUrl || '') : '';"), true);
   assert.strictEqual(resultsPanelSource.includes("chartMenuStatus.textContent = chartPanel.hidden"), true);
@@ -1003,9 +1007,9 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('function chartMaxSourceRowsSettingValue'), true);
   assert.strictEqual(resultsPanelSource.includes('maxSourceRows: chartMaxSourceRowsSetting()'), true);
   assert.strictEqual(/temporarily block the extension host, especially with multiple y columns/.test(chartingSource), true);
-  assert.ok(resultsPanelSource.indexOf('id="actionFormat"') < resultsPanelSource.indexOf('id="toolsMenu"'));
-  assert.ok(resultsPanelSource.indexOf('id="copy"') < resultsPanelSource.indexOf('id="toolsMenu"'));
-  assert.ok(resultsPanelSource.indexOf('id="export"') < resultsPanelSource.indexOf('id="toolsMenu"'));
+  assert.ok(resultsPanelSource.indexOf('id="actionFormat"') < resultsPanelSource.indexOf('id="chartMenu"'));
+  assert.ok(resultsPanelSource.indexOf('id="copy"') < resultsPanelSource.indexOf('id="chartMenu"'));
+  assert.ok(resultsPanelSource.indexOf('id="export"') < resultsPanelSource.indexOf('id="chartMenu"'));
   assert.strictEqual(resultsPanelSource.includes('id="copyFormat"'), false);
   assert.strictEqual(resultsPanelSource.includes('id="exportFormat"'), false);
   assert.strictEqual(resultsPanelSource.includes("format === 'xlsx'"), true);
@@ -1170,7 +1174,9 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(readmeSource.includes('Cancellable kdb results panel runs'), true);
   assert.strictEqual(runningDocsSource.includes('## Canceling a run'), true);
   assert.strictEqual(resultsDocsSource.includes('## Cancel running queries'), true);
-  assert.strictEqual(troubleshootingDocsSource.includes('click `Cancel query`'), true);
+  assert.strictEqual(runningDocsSource.includes("panel's `Cancel` button"), true);
+  assert.strictEqual(resultsDocsSource.includes('short `Cancel` button'), true);
+  assert.strictEqual(troubleshootingDocsSource.includes('click `Cancel`'), true);
   assert.strictEqual(/best-effort/i.test(readmeSource + runningDocsSource + resultsDocsSource + troubleshootingDocsSource), true);
   const resultSettings = packageJson.contributes.configuration.properties;
   assert.strictEqual(resultSettings['kdb-sqltools.results.target'].default, 'kdbPanel');
@@ -1355,12 +1361,17 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes("type: 'chartExportSkipped', version: requestVersion, requestId"), true);
   assert.strictEqual(resultsPanelSource.includes("type: 'chartExportError', version: requestVersion, requestId"), true);
   assert.strictEqual(chartingDocsSource.includes('Export PNG'), true);
-  assert.strictEqual(resultsDocsSource.includes('Data server menu'), true);
+  assert.strictEqual(resultsDocsSource.includes('The toolbar is a single compact line'), true);
+  assert.strictEqual(resultsDocsSource.includes('Settings menu'), true);
+  assert.strictEqual(resultsDocsSource.includes('Data server subgroup'), false);
+  assert.strictEqual(resultsDocsSource.includes('The data server subgroup starts or stops'), true);
   assert.strictEqual(resultsDocsSource.includes('Chart menu'), true);
-  assert.strictEqual(localDataDocsSource.includes('Open the `Data server` dropdown menu.'), true);
-  assert.strictEqual(localDataDocsSource.includes('closed dropdown shows a short `host:port` badge'), true);
-  assert.strictEqual(chartingDocsSource.includes('Open the `Chart` dropdown menu.'), true);
-  assert.strictEqual(readmeSource.includes('compact `Data server` and `Chart` dropdown menus'), true);
+  assert.strictEqual(localDataDocsSource.includes('Open `Settings`.'), true);
+  assert.strictEqual(localDataDocsSource.includes('Find the `Data server` section.'), true);
+  assert.strictEqual(localDataDocsSource.includes('section shows a short `host:port` badge'), true);
+  assert.strictEqual(chartingDocsSource.includes('Open the top-level `Chart` dropdown menu.'), true);
+  assert.strictEqual(readmeSource.includes('The top toolbar is a single compact line'), true);
+  assert.strictEqual(readmeSource.includes('`Settings` contains view controls, search, hidden columns, output defaults, and `Data server` controls'), true);
   assert.strictEqual(chartingDocsSource.includes('PNG export saves the rendered uPlot canvas'), true);
   assert.strictEqual(chartingDocsSource.includes('uPlot powers the built-in chart'), true);
   assert.strictEqual(chartingDocsSource.includes('cursor/crosshair tooltip'), true);

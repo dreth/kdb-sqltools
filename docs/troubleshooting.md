@@ -58,7 +58,7 @@ The kdb panel virtualizes display, but the q IPC result is fully materialized in
 
 Large copy/export actions prompt before output is materialized. XLSX export also enforces Excel sheet limits.
 
-If a q run is taking too long, click `Cancel query` in the kdb results panel or cancel the VS Code progress notification. This closes the client IPC connection and stops VS Code waiting, but already-running q or gateway work may not stop immediately.
+If a q run is taking too long, click `Cancel` in the kdb results panel or cancel the VS Code progress notification. This closes the client IPC connection and stops VS Code waiting, but already-running q or gateway work may not stop immediately.
 
 ## Parquet export
 

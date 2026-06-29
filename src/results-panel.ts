@@ -1519,6 +1519,7 @@ export class KdbResultsPanel {
       border-bottom: 1px solid var(--vscode-panel-border);
       background: var(--vscode-sideBar-background);
       box-sizing: border-box;
+      flex-wrap: nowrap;
       white-space: nowrap;
       overflow: visible;
     }
@@ -1536,8 +1537,7 @@ export class KdbResultsPanel {
       border-radius: 2px;
       background: var(--vscode-editor-background);
     }
-    .toolbar-group-label,
-    .tools-section-label {
+    .toolbar-group-label {
       color: var(--vscode-descriptionForeground);
       font-weight: 600;
     }
@@ -1546,20 +1546,6 @@ export class KdbResultsPanel {
       align-items: center;
       gap: 8px;
       min-width: 0;
-    }
-    .output-options-slot:empty {
-      display: none;
-    }
-    .tools-menu,
-    .tools-panel,
-    .tools-section {
-      display: contents;
-    }
-    .tools-menu > summary {
-      display: none;
-    }
-    .tools-section-label {
-      display: none;
     }
     button, select, input[type="number"], input[type="search"] {
       height: 26px;
@@ -1655,10 +1641,10 @@ export class KdbResultsPanel {
       box-sizing: border-box;
     }
     .settings-panel {
-      width: 280px;
+      width: min(360px, calc(100vw - 20px));
     }
     .tool-dropdown-panel {
-      width: 260px;
+      width: min(260px, calc(100vw - 20px));
     }
     .tool-actions {
       display: grid;
@@ -1676,6 +1662,9 @@ export class KdbResultsPanel {
     }
     .tool-menu-status {
       color: var(--vscode-editor-foreground);
+    }
+    .tool-menu-status.is-running {
+      color: var(--vscode-testing-iconPassed, var(--vscode-editor-foreground));
     }
     .tool-menu-note {
       color: var(--vscode-descriptionForeground);
@@ -1697,6 +1686,10 @@ export class KdbResultsPanel {
       gap: 6px;
       padding-top: 8px;
       border-top: 1px solid var(--vscode-panel-border);
+    }
+    .settings-section:first-child {
+      padding-top: 0;
+      border-top: 0;
     }
     .settings-heading {
       display: flex;
@@ -1736,144 +1729,36 @@ export class KdbResultsPanel {
       width: 100%;
     }
     .search {
-      display: inline-flex;
-      align-items: center;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
       gap: 4px;
       min-width: 0;
-      flex: 0 1 auto;
+    }
+    .search input[type="search"] {
+      width: 100%;
+      min-width: 0;
     }
     .search button {
       padding: 0 6px;
     }
     .search-status {
+      grid-column: 1 / -1;
       color: var(--vscode-descriptionForeground);
       overflow: hidden;
       text-overflow: ellipsis;
       min-width: 0;
-      max-width: 160px;
-    }
-    .toolbar.toolbar-overflow {
-      gap: 6px;
-      overflow: visible;
-    }
-    .toolbar.toolbar-overflow .output-group {
-      gap: 4px;
-      padding: 0;
-      border: 0;
-      background: transparent;
-    }
-    .toolbar.toolbar-overflow .output-group .toolbar-group-label {
-      display: none;
-    }
-    .toolbar.toolbar-overflow .tools-menu {
-      display: block;
-      position: relative;
-      flex: 0 0 auto;
-      color: var(--vscode-editor-foreground);
-    }
-    .toolbar.toolbar-overflow .tools-menu > summary {
-      display: inline-flex;
-      align-items: center;
-      height: 26px;
-      padding: 0 10px;
-      color: var(--vscode-button-foreground);
-      background: var(--vscode-button-secondaryBackground, var(--vscode-button-background));
-      border: 1px solid var(--vscode-button-border, transparent);
-      border-radius: 2px;
-      cursor: pointer;
-      list-style: none;
-      box-sizing: border-box;
-    }
-    .toolbar.toolbar-overflow .tools-menu > summary::-webkit-details-marker {
-      display: none;
-    }
-    .toolbar.toolbar-overflow .tools-menu > summary:hover {
-      background: var(--vscode-button-secondaryHoverBackground, var(--vscode-button-hoverBackground));
-    }
-    .toolbar.toolbar-overflow .tools-menu:not([open]) > .tools-panel {
-      display: none;
-    }
-    .toolbar.toolbar-overflow .tools-menu[open] > .tools-panel {
-      position: absolute;
-      top: 30px;
-      right: 0;
-      z-index: 30;
-      display: grid;
-      grid-template-columns: minmax(0, 1fr);
-      gap: 8px;
-      width: min(360px, calc(100vw - 20px));
-      max-height: calc(100vh - 60px);
-      overflow: auto;
-      padding: 10px;
-      border: 1px solid var(--vscode-panel-border);
-      background: var(--vscode-sideBar-background);
-      box-shadow: 0 4px 12px var(--vscode-widget-shadow);
-      box-sizing: border-box;
-    }
-    .toolbar.toolbar-overflow .tools-section {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr);
-      gap: 8px;
-      padding-bottom: 8px;
-      border-bottom: 1px solid var(--vscode-panel-border);
-    }
-    .toolbar.toolbar-overflow .tools-section:last-child {
-      padding-bottom: 0;
-      border-bottom: 0;
-    }
-    .toolbar.toolbar-overflow .tools-section-label {
-      display: block;
-    }
-    .toolbar.toolbar-overflow .output-options-slot {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr);
-      gap: 8px;
-      width: 100%;
-    }
-    .toolbar.toolbar-overflow .output-options-slot:empty {
-      display: none;
-    }
-    .toolbar.toolbar-overflow .tools-section > select,
-    .toolbar.toolbar-overflow .tools-section > button,
-    .toolbar.toolbar-overflow .tools-section > .settings,
-    .toolbar.toolbar-overflow .tools-section > .tool-dropdown,
-    .toolbar.toolbar-overflow .tools-section > .checkbox,
-    .toolbar.toolbar-overflow .output-options-slot > .checkbox {
-      width: 100%;
-      min-width: 0;
-    }
-    .toolbar.toolbar-overflow .tools-panel .search {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto auto;
-      gap: 6px;
-      width: 100%;
-    }
-    .toolbar.toolbar-overflow .tools-panel .search input[type="search"] {
-      width: 100%;
-      min-width: 0;
-    }
-    .toolbar.toolbar-overflow .tools-panel .search-status {
-      grid-column: 1 / -1;
       max-width: none;
-    }
-    .toolbar.toolbar-overflow .tools-panel .settings summary {
-      width: 100%;
-    }
-    .toolbar.toolbar-overflow .tools-panel .tool-dropdown summary {
-      width: 100%;
-    }
-    .toolbar.toolbar-overflow .tools-panel .settings-panel,
-    .toolbar.toolbar-overflow .tools-panel .tool-dropdown-panel {
-      position: static;
-      width: 100%;
-      max-height: none;
-      margin-top: 6px;
-      box-shadow: none;
     }
     .summary, .selection, .status {
       overflow: hidden;
       text-overflow: ellipsis;
       min-width: 0;
+    }
+    .summary {
+      flex: 1 1 auto;
+    }
+    .status, .selection {
+      flex: 0 1 auto;
     }
     .status {
       color: var(--vscode-descriptionForeground);
@@ -2215,96 +2100,81 @@ export class KdbResultsPanel {
       <button id="copy" disabled>Copy</button>
       <button id="export" disabled>Export</button>
     </div>
-    <details id="toolsMenu" class="tools-menu" open>
-      <summary id="toolsSummary">Tools</summary>
-      <div class="tools-panel">
-        <section id="toolsOutputOptions" class="tools-section output-tools-section" role="group" aria-labelledby="outputOptionsLabel">
-          <div id="outputOptionsLabel" class="tools-section-label">Output options</div>
-          <span id="overflowOutputOptions" class="output-options-slot"></span>
-        </section>
-        <section id="viewToolsSection" class="tools-section view-tools-section" role="group" aria-labelledby="viewToolsLabel">
-          <div id="viewToolsLabel" class="tools-section-label">View tools</div>
+    <details id="chartMenu" class="tool-dropdown">
+      <summary id="chartSummary" aria-label="Chart menu">Chart</summary>
+      <div class="tool-dropdown-panel" role="group" aria-label="Chart controls">
+        <div id="chartMenuStatus" class="tool-menu-status">Unavailable</div>
+        <button id="openChart" disabled>Line chart</button>
+      </div>
+    </details>
+    <details id="settingsMenu" class="settings">
+      <summary id="settingsSummary" aria-label="Settings menu">Settings</summary>
+      <div class="settings-panel" role="group" aria-label="Settings controls">
+        <div class="settings-section">
+          <div class="settings-heading"><span>View</span><span id="sortStatus" class="tool-menu-note">Sort: none</span></div>
           <label class="checkbox"><input id="autoFit" type="checkbox" disabled>Auto-fit</label>
-          <select id="interactionMode" aria-label="Header mode">
+          <label class="settings-row"><span>Header mode</span><select id="interactionMode" aria-label="Header mode">
             <option value="drag">Drag</option>
             <option value="select">Select</option>
             <option value="sort">Sort</option>
-          </select>
-          <span id="sortStatus" class="status">Sort: none</span>
+          </select></label>
           <span class="search">
             <input id="searchInput" type="search" placeholder="Search" aria-label="Search visible cells" disabled>
             <button id="searchPrev" disabled>Prev</button>
             <button id="searchNext" disabled>Next</button>
             <span id="searchStatus" class="search-status"></span>
           </span>
-          <details id="settingsMenu" class="settings">
-            <summary>Settings</summary>
-            <div class="settings-panel">
-              <label class="checkbox"><input id="settingsShowRowIndex" type="checkbox">Show row #</label>
-              <label class="checkbox"><input id="settingsIncludeHeaders" type="checkbox">Include headers</label>
-              <label class="checkbox"><input id="settingsIncludeRowIndex" type="checkbox">Include row #</label>
-              <label class="checkbox"><input id="settingsHideLargeResultWarnings" type="checkbox">Hide large-result warnings</label>
-              <label class="checkbox"><input id="settingsHideLargeSortWarnings" type="checkbox">Hide large-sort warnings</label>
-              <label class="settings-row"><span>Elapsed time</span><select id="settingsElapsedTimeDisplay">
-                <option value="auto">Auto</option>
-                <option value="milliseconds">Milliseconds</option>
-              </select></label>
-              <label class="settings-row"><span>Arrays</span><select id="settingsArrayDisplayFormat">
-                <option value="commaSpace">Comma + space</option>
-                <option value="space">Spaces</option>
-                <option value="raw">Raw brackets</option>
-              </select></label>
-              <label class="settings-row"><span>Density</span><select id="settingsDensity">
-                <option value="compact">Compact</option>
-                <option value="standard">Standard</option>
-                <option value="comfortable">Comfortable</option>
-              </select></label>
-              <label class="settings-row"><span>Cell width</span><input id="settingsCellWidth" type="number" min="80" max="600" step="1"></label>
-              <label class="settings-row"><span>Row height</span><input id="settingsRowHeight" type="number" min="20" max="80" step="1"></label>
-              <label class="settings-row"><span>Font size</span><input id="settingsFontSize" type="number" min="0" max="32" step="1"></label>
-              <div class="settings-section">
-                <div class="settings-heading"><span>Columns</span><span id="hiddenColumns">All visible</span></div>
-                <div class="settings-actions">
-                  <button id="selectAllColumns" type="button">Select all</button>
-                  <button id="deselectAllColumns" type="button">Deselect all</button>
-                </div>
-                <div id="columnList" class="column-list" role="list"></div>
-                <button id="resetColumns" class="reset-columns" disabled>Reset hidden columns</button>
-                <button id="resetColumnWidths" class="reset-columns" disabled>Reset column widths</button>
-              </div>
-            </div>
-          </details>
-        </section>
-        <section id="dataToolsSection" class="tools-section data-tools-section" role="group" aria-labelledby="dataToolsLabel">
-          <div id="dataToolsLabel" class="tools-section-label">Data server</div>
-          <details id="dataServerMenu" class="tool-dropdown">
-            <summary aria-label="Data server menu"><span>Data server</span><span id="localDataServerBadge" class="tool-summary-status">Stopped</span></summary>
-            <div class="tool-dropdown-panel" role="group" aria-label="Data server controls">
-              <div id="localDataServerStatus" class="tool-menu-status">Server stopped</div>
-              <div id="localDataServerBaseUrl" class="tool-menu-note" hidden></div>
-              <div class="tool-actions">
-                <button id="startLocalDataServer" disabled>Start server</button>
-                <button id="stopLocalDataServer" disabled>Stop server</button>
-                <button id="copyCurrentCsvUrl" disabled>Copy current.csv URL</button>
-                <button id="copyMetadataUrl" disabled>Copy metadata URL</button>
-              </div>
-            </div>
-          </details>
-        </section>
-        <section id="chartToolsSection" class="tools-section chart-tools-section" role="group" aria-labelledby="chartToolsLabel">
-          <div id="chartToolsLabel" class="tools-section-label">Chart</div>
-          <details id="chartMenu" class="tool-dropdown">
-            <summary aria-label="Chart menu"><span>Chart</span><span id="chartMenuStatus" class="tool-summary-status">Unavailable</span></summary>
-            <div class="tool-dropdown-panel" role="group" aria-label="Chart controls">
-              <div class="tool-menu-note">Open line/time-series controls for the current visible result.</div>
-              <button id="openChart" disabled>Line chart</button>
-            </div>
-          </details>
-        </section>
+        </div>
+        <div class="settings-section">
+          <div class="settings-heading"><span>Data server</span><span id="localDataServerBadge" class="tool-summary-status">Stopped</span></div>
+          <div id="localDataServerStatus" class="tool-menu-status">Server stopped</div>
+          <div id="localDataServerBaseUrl" class="tool-menu-note" hidden></div>
+          <div class="tool-actions">
+            <button id="startLocalDataServer" disabled>Start server</button>
+            <button id="stopLocalDataServer" disabled>Stop server</button>
+            <button id="copyCurrentCsvUrl" disabled>Copy current.csv URL</button>
+            <button id="copyMetadataUrl" disabled>Copy metadata URL</button>
+          </div>
+        </div>
+        <div class="settings-section">
+          <div class="settings-heading"><span>Preferences</span></div>
+          <label class="checkbox"><input id="settingsShowRowIndex" type="checkbox">Show row #</label>
+          <label class="checkbox"><input id="settingsIncludeHeaders" type="checkbox">Include headers</label>
+          <label class="checkbox"><input id="settingsIncludeRowIndex" type="checkbox">Include row #</label>
+          <label class="checkbox"><input id="settingsHideLargeResultWarnings" type="checkbox">Hide large-result warnings</label>
+          <label class="checkbox"><input id="settingsHideLargeSortWarnings" type="checkbox">Hide large-sort warnings</label>
+          <label class="settings-row"><span>Elapsed time</span><select id="settingsElapsedTimeDisplay">
+            <option value="auto">Auto</option>
+            <option value="milliseconds">Milliseconds</option>
+          </select></label>
+          <label class="settings-row"><span>Arrays</span><select id="settingsArrayDisplayFormat">
+            <option value="commaSpace">Comma + space</option>
+            <option value="space">Spaces</option>
+            <option value="raw">Raw brackets</option>
+          </select></label>
+          <label class="settings-row"><span>Density</span><select id="settingsDensity">
+            <option value="compact">Compact</option>
+            <option value="standard">Standard</option>
+            <option value="comfortable">Comfortable</option>
+          </select></label>
+          <label class="settings-row"><span>Cell width</span><input id="settingsCellWidth" type="number" min="80" max="600" step="1"></label>
+          <label class="settings-row"><span>Row height</span><input id="settingsRowHeight" type="number" min="20" max="80" step="1"></label>
+          <label class="settings-row"><span>Font size</span><input id="settingsFontSize" type="number" min="0" max="32" step="1"></label>
+        </div>
+        <div class="settings-section">
+          <div class="settings-heading"><span>Columns</span><span id="hiddenColumns">All visible</span></div>
+          <div class="settings-actions">
+            <button id="selectAllColumns" type="button">Select all</button>
+            <button id="deselectAllColumns" type="button">Deselect all</button>
+          </div>
+          <div id="columnList" class="column-list" role="list"></div>
+          <button id="resetColumns" class="reset-columns" disabled>Reset hidden columns</button>
+          <button id="resetColumnWidths" class="reset-columns" disabled>Reset column widths</button>
+        </div>
       </div>
     </details>
+    <button id="cancelQuery" class="cancel-query" title="Cancel running q query" aria-label="Cancel running q query" hidden disabled>Cancel</button>
     <span id="spinner" class="spinner" hidden></span>
-    <button id="cancelQuery" class="cancel-query" title="Cancel running q query" hidden disabled>Cancel query</button>
     <span id="summary" class="summary"></span>
     <details id="largeResultWarning" class="large-warning" hidden>
       <summary id="largeResultSummary" title="Large result warning">ⓘ Large result</summary>
@@ -2368,10 +2238,6 @@ export class KdbResultsPanel {
         elapsedTimeDisplay: 'auto',
         arrayDisplayFormat: 'commaSpace'
       };
-      const TOOLBAR_OVERFLOW_MEDIA_QUERY = '(max-width: 720px)';
-      const toolbar = document.getElementById('resultsToolbar');
-      const toolsMenu = document.getElementById('toolsMenu');
-      const toolsSummary = document.getElementById('toolsSummary');
       const viewport = document.getElementById('viewport');
       const canvas = document.getElementById('canvas');
       const header = document.getElementById('header');
@@ -2379,10 +2245,6 @@ export class KdbResultsPanel {
       const actionFormat = document.getElementById('actionFormat');
       const copyButton = document.getElementById('copy');
       const exportButton = document.getElementById('export');
-      const inlineOutputOptions = document.getElementById('inlineOutputOptions');
-      const overflowOutputOptions = document.getElementById('overflowOutputOptions');
-      const includeHeadersLabel = document.getElementById('includeHeadersLabel');
-      const includeRowIndexLabel = document.getElementById('includeRowIndexLabel');
       const includeRowIndex = document.getElementById('includeRowIndex');
       const includeHeaders = document.getElementById('includeHeaders');
       const autoFit = document.getElementById('autoFit');
@@ -2410,7 +2272,6 @@ export class KdbResultsPanel {
       const deselectAllColumns = document.getElementById('deselectAllColumns');
       const resetColumns = document.getElementById('resetColumns');
       const resetColumnWidths = document.getElementById('resetColumnWidths');
-      const dataServerMenu = document.getElementById('dataServerMenu');
       const startLocalDataServer = document.getElementById('startLocalDataServer');
       const stopLocalDataServer = document.getElementById('stopLocalDataServer');
       const copyCurrentCsvUrl = document.getElementById('copyCurrentCsvUrl');
@@ -2464,8 +2325,6 @@ export class KdbResultsPanel {
       let resizeState = null;
       let autoFitEnabled = false;
       let columnDragState = null;
-      let toolbarOverflowQueued = false;
-      let toolbarOverflowActive = false;
       let localDataServer = null;
       let latestChartRequestId = 0;
       let chartOptionsRequestId = 0;
@@ -2475,10 +2334,6 @@ export class KdbResultsPanel {
       let chartUPlot = null;
       let chartZoomed = false;
       const CHART_PNG_DATA_URL_PREFIX = 'data:image/png;base64,';
-      const toolbarOverflowMedia = typeof window.matchMedia === 'function'
-        ? window.matchMedia(TOOLBAR_OVERFLOW_MEDIA_QUERY)
-        : null;
-
       window.addEventListener('message', event => {
         const msg = event.data || {};
         if (msg.type === 'loading') {
@@ -2619,17 +2474,8 @@ export class KdbResultsPanel {
       });
       document.addEventListener('click', event => {
         const target = event.target;
-        if (toolbarOverflowActive && toolsMenu.open && !toolsMenu.contains(target)) {
-          toolsMenu.open = false;
-          settingsMenu.open = false;
-          dataServerMenu.open = false;
-          chartMenu.open = false;
-        }
         if (settingsMenu.open && !settingsMenu.contains(target)) {
           settingsMenu.open = false;
-        }
-        if (dataServerMenu.open && !dataServerMenu.contains(target)) {
-          dataServerMenu.open = false;
         }
         if (chartMenu.open && !chartMenu.contains(target)) {
           chartMenu.open = false;
@@ -2672,124 +2518,38 @@ export class KdbResultsPanel {
       window.addEventListener('resize', () => {
         requestRender();
         drawChart();
-        queueToolbarOverflowUpdate();
-      });
-      if (typeof ResizeObserver === 'function') {
-        new ResizeObserver(queueToolbarOverflowUpdate).observe(toolbar);
-      } else {
-        window.addEventListener('resize', queueToolbarOverflowUpdate);
-      }
-      if (typeof MutationObserver === 'function') {
-        new MutationObserver(queueToolbarOverflowUpdate).observe(toolbar, {
-          childList: true,
-          subtree: true,
-          characterData: true,
-          attributes: true,
-          attributeFilter: ['disabled', 'hidden']
-        });
-      }
-      if (toolbarOverflowMedia) {
-        if (typeof toolbarOverflowMedia.addEventListener === 'function') {
-          toolbarOverflowMedia.addEventListener('change', queueToolbarOverflowUpdate);
-        } else if (typeof toolbarOverflowMedia.addListener === 'function') {
-          toolbarOverflowMedia.addListener(queueToolbarOverflowUpdate);
-        }
-      }
-      toolsMenu.addEventListener('toggle', () => {
-        if (!toolsMenu.open) {
-          settingsMenu.open = false;
-          dataServerMenu.open = false;
-          chartMenu.open = false;
-        }
       });
       settingsMenu.addEventListener('toggle', () => {
         if (settingsMenu.open) {
-          dataServerMenu.open = false;
-          chartMenu.open = false;
-        }
-      });
-      dataServerMenu.addEventListener('toggle', () => {
-        if (dataServerMenu.open) {
-          settingsMenu.open = false;
           chartMenu.open = false;
         }
       });
       chartMenu.addEventListener('toggle', () => {
         if (chartMenu.open) {
           settingsMenu.open = false;
-          dataServerMenu.open = false;
         }
       });
-      queueToolbarOverflowUpdate();
-
-      function queueToolbarOverflowUpdate() {
-        if (toolbarOverflowQueued) {
-          return;
-        }
-        toolbarOverflowQueued = true;
-        requestAnimationFrame(() => {
-          toolbarOverflowQueued = false;
-          updateToolbarOverflow();
-        });
-      }
-
-      function updateToolbarOverflow() {
-        if (!toolbar || !toolsMenu || toolbar.clientWidth <= 0) {
-          return;
-        }
-        const wasOverflow = toolbarOverflowActive;
-        const wasOpen = toolsMenu.open;
-        toolbar.classList.remove('toolbar-overflow');
-        toolsMenu.open = true;
-        const mediaOverflow = toolbarOverflowMedia
-          ? toolbarOverflowMedia.matches
-          : window.innerWidth <= 720;
-        const shouldOverflow = mediaOverflow || toolbar.scrollWidth > toolbar.clientWidth + 1;
-        toolbarOverflowActive = shouldOverflow;
-        toolbar.classList.toggle('toolbar-overflow', shouldOverflow);
-        placeOutputOptions(shouldOverflow);
-        toolsMenu.open = shouldOverflow ? wasOverflow && wasOpen : true;
-      }
-
-      function placeOutputOptions(inToolsMenu) {
-        const target = inToolsMenu ? overflowOutputOptions : inlineOutputOptions;
-        if (!target || !includeHeadersLabel || !includeRowIndexLabel) {
-          return;
-        }
-        if (includeHeadersLabel.parentElement === target && includeHeadersLabel.nextElementSibling === includeRowIndexLabel) {
-          return;
-        }
-        target.appendChild(includeHeadersLabel);
-        target.appendChild(includeRowIndexLabel);
-      }
 
       function closeToolbarMenus(restoreFocus) {
         let closed = false;
-        if (toolbarOverflowActive && toolsMenu.open) {
-          toolsMenu.open = false;
-          settingsMenu.open = false;
-          dataServerMenu.open = false;
-          chartMenu.open = false;
-          closed = true;
-        }
+        let focusTarget = null;
         if (settingsMenu.open) {
+          focusTarget = settingsMenu;
           settingsMenu.open = false;
-          closed = true;
-        }
-        if (dataServerMenu.open) {
-          dataServerMenu.open = false;
           closed = true;
         }
         if (chartMenu.open) {
+          focusTarget = chartMenu;
           chartMenu.open = false;
           closed = true;
         }
         if (largeResultWarning.open) {
+          focusTarget = largeResultWarning;
           largeResultWarning.open = false;
           closed = true;
         }
-        if (closed && restoreFocus && toolbarOverflowActive) {
-          toolsSummary.focus();
+        if (closed && restoreFocus && focusTarget) {
+          focusTarget.focus();
         }
         return closed;
       }
