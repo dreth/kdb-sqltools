@@ -10,8 +10,11 @@ Start it from the kdb results panel:
 
 1. Run q into a kdb results panel.
 2. Open `Tools`.
-3. Use `Start server`.
-4. Use `Copy current.csv URL` or `Copy metadata URL`.
+3. Open the `Data server` dropdown menu.
+4. Use `Start server`.
+5. Use `Copy current.csv URL` or `Copy metadata URL`.
+
+When the server is running, the closed dropdown shows a short `host:port` badge. The tokenized base URL is shown only inside the `Data server` menu.
 
 Command Palette commands are also available:
 

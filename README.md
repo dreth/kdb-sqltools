@@ -117,7 +117,7 @@ Header mode defaults to Drag. Drag column headers to reorder visible columns for
 
 Toolbar search runs in the extension against visible columns only. It returns capped row-match metadata to the webview instead of transferring all result cells, and the status marks capped or partial scans.
 
-The Tools menu can start a tokenized local data server for the current panel result and open a uPlot-powered line/time-series chart. The local server never starts automatically, binds only to `127.0.0.1`, and falls forward from port `7742` if needed. The built-in chart supports one numeric/temporal x column and one or more numeric y columns from visible columns, with extension-side min/max downsampling before data reaches the webview, cursor tooltips, drag zoom, reset zoom, legend toggling, and PNG export after render.
+The Tools menu has compact `Data server` and `Chart` dropdown menus. `Data server` can start a tokenized local server for the current panel result and copy current-result URLs; the closed menu shows only a short status badge. `Chart` opens a uPlot-powered line/time-series chart panel. The local server never starts automatically, binds only to `127.0.0.1`, and falls forward from port `7742` if needed. The built-in chart supports one numeric/temporal x column and one or more numeric y columns from visible columns, with extension-side min/max downsampling before data reaches the webview, cursor tooltips, drag zoom, reset zoom, legend toggling, and PNG export after render.
 
 Normal successful result messages stay hidden because the top summary already shows row count and elapsed time; errors remain visible in the message area.
 

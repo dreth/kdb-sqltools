@@ -1606,12 +1606,17 @@ export class KdbResultsPanel {
       gap: 4px;
       color: var(--vscode-descriptionForeground);
     }
-    .settings {
+    .settings,
+    .tool-dropdown {
       position: relative;
       flex: 0 0 auto;
       color: var(--vscode-editor-foreground);
     }
-    .settings summary {
+    .settings summary,
+    .tool-dropdown summary {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
       height: 26px;
       line-height: 26px;
       padding: 0 8px;
@@ -1622,14 +1627,25 @@ export class KdbResultsPanel {
       list-style-position: inside;
       box-sizing: border-box;
     }
-    .settings-panel {
+    .tool-summary-status {
+      max-width: 92px;
+      overflow: hidden;
+      color: var(--vscode-descriptionForeground);
+      font-size: 0.92em;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .tool-summary-status.is-running {
+      color: var(--vscode-testing-iconPassed, var(--vscode-descriptionForeground));
+    }
+    .settings-panel,
+    .tool-dropdown-panel {
       position: absolute;
       top: 30px;
       right: 0;
       z-index: 20;
       display: grid;
       gap: 8px;
-      width: 280px;
       max-height: calc(100vh - 60px);
       overflow: auto;
       padding: 10px;
@@ -1637,6 +1653,33 @@ export class KdbResultsPanel {
       background: var(--vscode-sideBar-background);
       box-shadow: 0 4px 12px var(--vscode-widget-shadow);
       box-sizing: border-box;
+    }
+    .settings-panel {
+      width: 280px;
+    }
+    .tool-dropdown-panel {
+      width: 260px;
+    }
+    .tool-actions {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 6px;
+    }
+    .tool-actions button {
+      width: 100%;
+      min-width: 0;
+    }
+    .tool-menu-status,
+    .tool-menu-note {
+      overflow-wrap: anywhere;
+      white-space: normal;
+    }
+    .tool-menu-status {
+      color: var(--vscode-editor-foreground);
+    }
+    .tool-menu-note {
+      color: var(--vscode-descriptionForeground);
+      line-height: 1.35;
     }
     .settings-row {
       display: grid;
@@ -1793,6 +1836,7 @@ export class KdbResultsPanel {
     .toolbar.toolbar-overflow .tools-section > select,
     .toolbar.toolbar-overflow .tools-section > button,
     .toolbar.toolbar-overflow .tools-section > .settings,
+    .toolbar.toolbar-overflow .tools-section > .tool-dropdown,
     .toolbar.toolbar-overflow .tools-section > .checkbox,
     .toolbar.toolbar-overflow .output-options-slot > .checkbox {
       width: 100%;
@@ -1815,7 +1859,11 @@ export class KdbResultsPanel {
     .toolbar.toolbar-overflow .tools-panel .settings summary {
       width: 100%;
     }
-    .toolbar.toolbar-overflow .tools-panel .settings-panel {
+    .toolbar.toolbar-overflow .tools-panel .tool-dropdown summary {
+      width: 100%;
+    }
+    .toolbar.toolbar-overflow .tools-panel .settings-panel,
+    .toolbar.toolbar-overflow .tools-panel .tool-dropdown-panel {
       position: static;
       width: 100%;
       max-height: none;
@@ -2228,16 +2276,30 @@ export class KdbResultsPanel {
           </details>
         </section>
         <section id="dataToolsSection" class="tools-section data-tools-section" role="group" aria-labelledby="dataToolsLabel">
-          <div id="dataToolsLabel" class="tools-section-label">Local data</div>
-          <button id="startLocalDataServer" disabled>Start server</button>
-          <button id="stopLocalDataServer" disabled>Stop server</button>
-          <button id="copyCurrentCsvUrl" disabled>Copy current.csv URL</button>
-          <button id="copyMetadataUrl" disabled>Copy metadata URL</button>
-          <span id="localDataServerStatus" class="status">Server stopped</span>
+          <div id="dataToolsLabel" class="tools-section-label">Data server</div>
+          <details id="dataServerMenu" class="tool-dropdown">
+            <summary aria-label="Data server menu"><span>Data server</span><span id="localDataServerBadge" class="tool-summary-status">Stopped</span></summary>
+            <div class="tool-dropdown-panel" role="group" aria-label="Data server controls">
+              <div id="localDataServerStatus" class="tool-menu-status">Server stopped</div>
+              <div id="localDataServerBaseUrl" class="tool-menu-note" hidden></div>
+              <div class="tool-actions">
+                <button id="startLocalDataServer" disabled>Start server</button>
+                <button id="stopLocalDataServer" disabled>Stop server</button>
+                <button id="copyCurrentCsvUrl" disabled>Copy current.csv URL</button>
+                <button id="copyMetadataUrl" disabled>Copy metadata URL</button>
+              </div>
+            </div>
+          </details>
         </section>
         <section id="chartToolsSection" class="tools-section chart-tools-section" role="group" aria-labelledby="chartToolsLabel">
           <div id="chartToolsLabel" class="tools-section-label">Chart</div>
-          <button id="openChart" disabled>Line chart</button>
+          <details id="chartMenu" class="tool-dropdown">
+            <summary aria-label="Chart menu"><span>Chart</span><span id="chartMenuStatus" class="tool-summary-status">Unavailable</span></summary>
+            <div class="tool-dropdown-panel" role="group" aria-label="Chart controls">
+              <div class="tool-menu-note">Open line/time-series controls for the current visible result.</div>
+              <button id="openChart" disabled>Line chart</button>
+            </div>
+          </details>
         </section>
       </div>
     </details>
@@ -2330,6 +2392,7 @@ export class KdbResultsPanel {
       const searchPrev = document.getElementById('searchPrev');
       const searchNext = document.getElementById('searchNext');
       const searchStatus = document.getElementById('searchStatus');
+      const settingsMenu = document.getElementById('settingsMenu');
       const settingsShowRowIndex = document.getElementById('settingsShowRowIndex');
       const settingsIncludeHeaders = document.getElementById('settingsIncludeHeaders');
       const settingsIncludeRowIndex = document.getElementById('settingsIncludeRowIndex');
@@ -2347,11 +2410,16 @@ export class KdbResultsPanel {
       const deselectAllColumns = document.getElementById('deselectAllColumns');
       const resetColumns = document.getElementById('resetColumns');
       const resetColumnWidths = document.getElementById('resetColumnWidths');
+      const dataServerMenu = document.getElementById('dataServerMenu');
       const startLocalDataServer = document.getElementById('startLocalDataServer');
       const stopLocalDataServer = document.getElementById('stopLocalDataServer');
       const copyCurrentCsvUrl = document.getElementById('copyCurrentCsvUrl');
       const copyMetadataUrl = document.getElementById('copyMetadataUrl');
       const localDataServerStatus = document.getElementById('localDataServerStatus');
+      const localDataServerBadge = document.getElementById('localDataServerBadge');
+      const localDataServerBaseUrl = document.getElementById('localDataServerBaseUrl');
+      const chartMenu = document.getElementById('chartMenu');
+      const chartMenuStatus = document.getElementById('chartMenuStatus');
       const openChart = document.getElementById('openChart');
       const spinner = document.getElementById('spinner');
       const cancelQuery = document.getElementById('cancelQuery');
@@ -2446,7 +2514,7 @@ export class KdbResultsPanel {
         } else if (msg.type === 'localDataServerStatus') {
           setLocalDataServerStatus(msg.server || null, String(msg.message || ''));
         } else if (msg.type === 'localDataServerMessage') {
-          localDataServerStatus.textContent = String(msg.message || '');
+          setLocalDataServerStatus(localDataServer, String(msg.message || ''));
         } else if (msg.type === 'chartOptions' && isCurrentVersionMessage(msg)) {
           setChartOptions(msg);
         } else if (msg.type === 'chartData' && msg.data) {
@@ -2554,9 +2622,17 @@ export class KdbResultsPanel {
         if (toolbarOverflowActive && toolsMenu.open && !toolsMenu.contains(target)) {
           toolsMenu.open = false;
           settingsMenu.open = false;
+          dataServerMenu.open = false;
+          chartMenu.open = false;
         }
         if (settingsMenu.open && !settingsMenu.contains(target)) {
           settingsMenu.open = false;
+        }
+        if (dataServerMenu.open && !dataServerMenu.contains(target)) {
+          dataServerMenu.open = false;
+        }
+        if (chartMenu.open && !chartMenu.contains(target)) {
+          chartMenu.open = false;
         }
         if (largeResultWarning.open && !largeResultWarning.contains(target)) {
           largeResultWarning.open = false;
@@ -2622,6 +2698,26 @@ export class KdbResultsPanel {
       toolsMenu.addEventListener('toggle', () => {
         if (!toolsMenu.open) {
           settingsMenu.open = false;
+          dataServerMenu.open = false;
+          chartMenu.open = false;
+        }
+      });
+      settingsMenu.addEventListener('toggle', () => {
+        if (settingsMenu.open) {
+          dataServerMenu.open = false;
+          chartMenu.open = false;
+        }
+      });
+      dataServerMenu.addEventListener('toggle', () => {
+        if (dataServerMenu.open) {
+          settingsMenu.open = false;
+          chartMenu.open = false;
+        }
+      });
+      chartMenu.addEventListener('toggle', () => {
+        if (chartMenu.open) {
+          settingsMenu.open = false;
+          dataServerMenu.open = false;
         }
       });
       queueToolbarOverflowUpdate();
@@ -2672,10 +2768,20 @@ export class KdbResultsPanel {
         if (toolbarOverflowActive && toolsMenu.open) {
           toolsMenu.open = false;
           settingsMenu.open = false;
+          dataServerMenu.open = false;
+          chartMenu.open = false;
           closed = true;
         }
         if (settingsMenu.open) {
           settingsMenu.open = false;
+          closed = true;
+        }
+        if (dataServerMenu.open) {
+          dataServerMenu.open = false;
+          closed = true;
+        }
+        if (chartMenu.open) {
+          chartMenu.open = false;
           closed = true;
         }
         if (largeResultWarning.open) {
@@ -3001,13 +3107,12 @@ export class KdbResultsPanel {
       function setLocalDataServerStatus(server, message) {
         localDataServer = server;
         updateLocalDataServerControls();
-        if (message) {
-          localDataServerStatus.textContent = message;
-          return;
-        }
-        localDataServerStatus.textContent = server
-          ? 'Server: ' + server.host + ':' + server.port
-          : 'Server stopped';
+        const runningLabel = server ? server.host + ':' + server.port : '';
+        localDataServerStatus.textContent = message || (server ? 'Server running on ' + runningLabel : 'Server stopped');
+        localDataServerBadge.textContent = server ? runningLabel : 'Stopped';
+        localDataServerBadge.classList.toggle('is-running', !!server);
+        localDataServerBaseUrl.hidden = !server;
+        localDataServerBaseUrl.textContent = server ? 'Base URL: ' + String(server.baseUrl || '') : '';
       }
 
       function updateLocalDataServerControls() {
@@ -3026,6 +3131,10 @@ export class KdbResultsPanel {
         exportChart.hidden = !canExport;
         exportChart.disabled = !canExport;
         resetChartZoomButton.disabled = !canExport || !chartZoomed;
+        chartMenuStatus.textContent = chartPanel.hidden
+          ? (openChart.disabled ? 'Unavailable' : 'Ready')
+          : (chartRendered ? 'Rendered' : 'Open');
+        chartMenuStatus.classList.toggle('is-running', !chartPanel.hidden);
       }
 
       function openChartPanel() {
@@ -3033,6 +3142,7 @@ export class KdbResultsPanel {
           return;
         }
         chartPanel.hidden = false;
+        chartMenu.open = false;
         chartStatus.textContent = 'Detecting chart columns...';
         chartData = null;
         chartRendered = null;

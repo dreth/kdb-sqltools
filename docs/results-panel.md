@@ -47,12 +47,12 @@ Column reorder, sort, search, copy, and export use the current visible column or
 
 ## Tools
 
-The `Tools` area contains view tools plus two result workflows:
+The `Tools` area contains output options, view tools, and compact menus for result workflows:
 
 | Tool | Behavior |
 | --- | --- |
-| Local data server | Starts or stops the opt-in `127.0.0.1` server for this panel and copies current-result URLs. |
-| Line chart | Opens the uPlot-powered chart UI for the current visible result, including cursor tooltip, drag zoom, reset zoom, legend toggling, and PNG export after render. |
+| Data server menu | Starts or stops the opt-in `127.0.0.1` server for this panel and copies current-result URLs. The base URL is shown inside the menu when running. |
+| Chart menu | Opens the uPlot-powered line chart UI for the current visible result. After the chart panel is open, it provides x/y controls, cursor tooltip, drag zoom, reset zoom, legend toggling, and PNG export after render. |
 
 The local data server and chart both use the extension-side current result. Hidden, reordered, and sorted visible columns are honored where they apply.
 

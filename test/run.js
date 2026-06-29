@@ -846,6 +846,7 @@ function panelFormatElapsedMs(milliseconds, display) {
   const perfSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'perf.ts'), 'utf8');
   const readmeSource = fs.readFileSync(path.join(__dirname, '..', 'README.md'), 'utf8');
   const chartingDocsSource = fs.readFileSync(path.join(__dirname, '..', 'docs', 'charting.md'), 'utf8');
+  const localDataDocsSource = fs.readFileSync(path.join(__dirname, '..', 'docs', 'local-data-server.md'), 'utf8');
   const runningDocsSource = fs.readFileSync(path.join(__dirname, '..', 'docs', 'running-q.md'), 'utf8');
   const resultsDocsSource = fs.readFileSync(path.join(__dirname, '..', 'docs', 'results-panel.md'), 'utf8');
   const settingsDocsSource = fs.readFileSync(path.join(__dirname, '..', 'docs', 'settings.md'), 'utf8');
@@ -900,6 +901,14 @@ function panelFormatElapsedMs(milliseconds, display) {
     toolsPanelSource.indexOf('<section id="toolsOutputOptions"'),
     toolsPanelSource.indexOf('<section id="viewToolsSection"')
   );
+  const dataToolsSource = toolsPanelSource.slice(
+    toolsPanelSource.indexOf('<section id="dataToolsSection"'),
+    toolsPanelSource.indexOf('<section id="chartToolsSection"')
+  );
+  const chartToolsSource = toolsPanelSource.slice(
+    toolsPanelSource.indexOf('<section id="chartToolsSection"'),
+    toolsPanelSource.length
+  );
   assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="actionFormat"'), 1);
   assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="includeHeaders"'), 1);
   assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="includeRowIndex"'), 1);
@@ -943,9 +952,30 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(toolsPanelSource.includes('id="interactionMode"'), true);
   assert.strictEqual(toolsPanelSource.includes('id="settingsMenu"'), true);
   assert.strictEqual(toolsPanelSource.includes('id="autoFit"'), true);
-  assert.strictEqual(toolsPanelSource.includes('id="startLocalDataServer"'), true);
-  assert.strictEqual(toolsPanelSource.includes('id="copyCurrentCsvUrl"'), true);
-  assert.strictEqual(toolsPanelSource.includes('id="openChart"'), true);
+  assert.strictEqual(dataToolsSource.includes('id="dataToolsLabel" class="tools-section-label">Data server</div>'), true);
+  assert.strictEqual(dataToolsSource.includes('<details id="dataServerMenu" class="tool-dropdown">'), true);
+  assert.strictEqual(dataToolsSource.includes('aria-label="Data server menu"'), true);
+  assert.strictEqual(dataToolsSource.includes('id="localDataServerBadge" class="tool-summary-status">Stopped</span>'), true);
+  assert.strictEqual(dataToolsSource.includes('id="localDataServerBaseUrl" class="tool-menu-note" hidden'), true);
+  assert.strictEqual(dataToolsSource.includes('id="startLocalDataServer"'), true);
+  assert.strictEqual(dataToolsSource.includes('id="stopLocalDataServer"'), true);
+  assert.strictEqual(dataToolsSource.includes('id="copyCurrentCsvUrl"'), true);
+  assert.strictEqual(dataToolsSource.includes('id="copyMetadataUrl"'), true);
+  assert.strictEqual(dataToolsSource.includes('Start server'), true);
+  assert.strictEqual(dataToolsSource.includes('Stop server'), true);
+  assert.strictEqual(dataToolsSource.includes('Copy current.csv URL'), true);
+  assert.strictEqual(dataToolsSource.includes('Copy metadata URL'), true);
+  assert.strictEqual(dataToolsSource.includes('Local data</div>'), false);
+  assert.strictEqual(chartToolsSource.includes('id="chartToolsLabel" class="tools-section-label">Chart</div>'), true);
+  assert.strictEqual(chartToolsSource.includes('<details id="chartMenu" class="tool-dropdown">'), true);
+  assert.strictEqual(chartToolsSource.includes('aria-label="Chart menu"'), true);
+  assert.strictEqual(chartToolsSource.includes('id="chartMenuStatus" class="tool-summary-status">Unavailable</span>'), true);
+  assert.strictEqual(chartToolsSource.includes('id="openChart"'), true);
+  assert.strictEqual(chartToolsSource.includes('Line chart'), true);
+  assert.strictEqual(resultsPanelSource.includes("localDataServerStatus.textContent = server\n          ? 'Server: ' + server.host + ':' + server.port"), false);
+  assert.strictEqual(resultsPanelSource.includes("localDataServerBaseUrl.textContent = server ? 'Base URL: ' + String(server.baseUrl || '') : '';"), true);
+  assert.strictEqual(resultsPanelSource.includes("chartMenuStatus.textContent = chartPanel.hidden"), true);
+  assert.strictEqual(resultsPanelSource.includes('chartMenu.open = false;'), true);
   assert.strictEqual(resultsPanelSource.includes('id="chartPanel"'), true);
   assert.strictEqual(resultsPanelSource.includes('id="exportChart" hidden disabled'), true);
   assert.strictEqual(resultsPanelSource.includes('id="resetChartZoom" disabled'), true);
@@ -1325,6 +1355,12 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes("type: 'chartExportSkipped', version: requestVersion, requestId"), true);
   assert.strictEqual(resultsPanelSource.includes("type: 'chartExportError', version: requestVersion, requestId"), true);
   assert.strictEqual(chartingDocsSource.includes('Export PNG'), true);
+  assert.strictEqual(resultsDocsSource.includes('Data server menu'), true);
+  assert.strictEqual(resultsDocsSource.includes('Chart menu'), true);
+  assert.strictEqual(localDataDocsSource.includes('Open the `Data server` dropdown menu.'), true);
+  assert.strictEqual(localDataDocsSource.includes('closed dropdown shows a short `host:port` badge'), true);
+  assert.strictEqual(chartingDocsSource.includes('Open the `Chart` dropdown menu.'), true);
+  assert.strictEqual(readmeSource.includes('compact `Data server` and `Chart` dropdown menus'), true);
   assert.strictEqual(chartingDocsSource.includes('PNG export saves the rendered uPlot canvas'), true);
   assert.strictEqual(chartingDocsSource.includes('uPlot powers the built-in chart'), true);
   assert.strictEqual(chartingDocsSource.includes('cursor/crosshair tooltip'), true);
