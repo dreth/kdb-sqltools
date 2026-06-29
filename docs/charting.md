@@ -8,11 +8,12 @@ SQLTools remains required for connections and q execution. Charting uses the cur
 
 1. Run q into a kdb results panel.
 2. Open `Tools`.
-3. Select `Line chart`.
-4. Pick one x column and one or more y columns.
-5. Press `Render`.
-6. Use the cursor tooltip/crosshair, drag across the plot to zoom, or press `Reset zoom`.
-7. After the chart renders, press `Export PNG` to save the chart as `kdb-chart.png` or another PNG file.
+3. Open the `Chart` dropdown menu.
+4. Select `Line chart`.
+5. Pick one x column and one or more y columns in the chart panel.
+6. Press `Render`.
+7. Use the cursor tooltip/crosshair, drag across the plot to zoom, or press `Reset zoom`.
+8. After the chart renders, press `Export PNG` to save the chart as `kdb-chart.png` or another PNG file.
 
 uPlot powers the built-in chart. Supported interactions are cursor/crosshair tooltip values, drag-select zoom, reset zoom, legend labels with live values, legend series toggling, and PNG export.
 
