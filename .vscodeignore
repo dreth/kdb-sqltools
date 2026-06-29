@@ -20,6 +20,8 @@ node_modules/uplot/dist/uPlot.cjs.js
 node_modules/uplot/dist/uPlot.d.ts
 node_modules/uplot/dist/uPlot.esm.js
 node_modules/uplot/dist/uPlot.iife.js
+node_modules/**/README.md
+node_modules/**/readme.md
 test/**
 CODEX*.md
 PROMPT*.md
