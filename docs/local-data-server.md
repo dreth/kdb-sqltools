@@ -9,12 +9,12 @@ SQLTools is still required for the extension and connection workflow. The local 
 Start it from the kdb results panel:
 
 1. Run q into a kdb results panel.
-2. Open `Tools`.
-3. Open the `Data server` dropdown menu.
+2. Open `Settings`.
+3. Find the `Data server` section.
 4. Use `Start server`.
 5. Use `Copy current.csv URL` or `Copy metadata URL`.
 
-When the server is running, the closed dropdown shows a short `host:port` badge. The tokenized base URL is shown only inside the `Data server` menu.
+When the server is running, the `Data server` section shows a short `host:port` badge. The tokenized base URL is shown only inside that Settings section.
 
 Command Palette commands are also available:
 
