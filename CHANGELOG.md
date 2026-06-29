@@ -1,5 +1,13 @@
 # Change Log
 
+## 0.3.3
+
+- Added a Cancel query button and running state for active kdb results panel queries.
+- Made VS Code progress notifications cancellable for kdb panel query runs.
+- On user cancellation, the extension closes the IPC connection, stops waiting for the query, suppresses the user-cancel error toast, and prevents stale late results from replacing newer panel output.
+- Cancellation is best effort on the server side: closing the client connection stops this extension from waiting, but kdb server behavior depends on the running query and process state.
+- Compact Data server and Chart dropdown controls under a Tools menu to reduce intrusive toolbar UI.
+
 ## 0.3.2
 
 - Added a uPlot-powered built-in line chart renderer for eligible time-series-style result data.
