@@ -1,12 +1,18 @@
 # Change Log
 
+## 0.3.4
+
+- Reworked the kdb results panel toolbar into one compact line.
+- Moved Chart into a top-level dropdown.
+- Moved Data server controls, search, auto-fit, header mode and drag/select/sort controls, hidden columns, and preferences into Settings.
+- Shortened the visible cancel button to `Cancel` while retaining the full tooltip and aria label.
+
 ## 0.3.3
 
-- Added a short Cancel button and running state for active kdb results panel queries.
+- Added a visible query cancellation control and running state for active kdb results panel queries.
 - Made VS Code progress notifications cancellable for kdb panel query runs.
 - On user cancellation, the extension closes the IPC connection, stops waiting for the query, suppresses the user-cancel error toast, and prevents stale late results from replacing newer panel output.
 - Cancellation is best effort on the server side: closing the client connection stops this extension from waiting, but kdb server behavior depends on the running query and process state.
-- Reworked the kdb results panel toolbar into a one-line layout with a top-level Chart menu and Settings-hosted Data server, search, auto-fit, and header-mode controls.
 
 ## 0.3.2
 
