@@ -68,6 +68,7 @@ The `kdb+: Copy Example Global Connection Settings` command copies this User-set
 - TCP q IPC authentication handshake with optional username/password.
 - Synchronous text query execution.
 - Result grids for q tables, keyed tables, dictionaries, vectors, lists, and scalars. Nested q values inside cells are displayed as compact strings, and unsafe-width q longs are displayed as exact decimal strings.
+- Cancellable kdb results panel runs from the panel toolbar or VS Code progress notification.
 - Opt-in local data server for the current kdb results panel, bound to `127.0.0.1` with tokenized URLs for metadata, CSV, JSON, NDJSON, slices, and selection.
 - Built-in uPlot-powered line/time-series charting from the current kdb results panel with extension-side downsampling, cursor tooltips, drag zoom, reset zoom, legend toggling, and PNG export.
 - Object explorer groups for tables, root q views, functions, and table columns. Column metadata preserves q `meta` type, foreign-key, and attribute fields for SQLTools describe/explorer views.
@@ -91,6 +92,8 @@ Default kdb-panel runs open a new result tab unless you set `"kdb-sqltools.resul
 Default keybindings in q files are `Ctrl+Enter` / `Cmd+Enter` for selection replace, `Ctrl+Shift+Enter` / `Cmd+Shift+Enter` for selection in a new result tab, and `Ctrl+Alt+Enter` / `Cmd+Alt+Enter` for whole-script replace. Change them in VS Code's Keyboard Shortcuts UI or `keybindings.json`; extension settings cannot define arbitrary VS Code keybindings. The `kdb+: Open kdb Keyboard Shortcuts` command opens the Keyboard Shortcuts UI.
 
 Running kdb-panel commands keeps focus in the q editor while the result tab updates.
+
+While a run is loading, the panel shows `Cancel query` next to the spinner and the VS Code progress notification is cancellable. Canceling stops the extension from waiting for that run, tears down the active q IPC connection, and leaves a canceled state in the panel. Server-side interruption is best-effort: q or gateway work that already started may not stop immediately.
 
 When replacing results, the extension reveals the existing kdb result tab in its current editor group instead of forcing `ViewColumn.Beside`. New kdb result tabs open beside existing kdb result tabs when one is already present. VS Code does not provide an extension API to create a bottom split automatically, so the first new kdb result tab uses `"kdb-sqltools.results.kdbPanel.initialViewColumn"` (`active`, `beside`, `one`, `two`, or `three`).
 
@@ -185,7 +188,7 @@ GitHub links:
 
 - TLS is not implemented by this driver, so no TLS option is exposed in the connection UI.
 - The driver does not translate SQL to q. Write q/qSQL directly.
-- Arbitrary editor queries are sent exactly as written. The driver does not add hidden limits; the kdb panel reduces webview transfer and DOM work, but it does not stream q execution. The SQLTools target renders however many rows SQLTools receives.
+- Arbitrary editor queries are sent exactly as written. The driver does not add hidden limits; the kdb panel reduces webview transfer and DOM work, but it does not stream q execution. Canceling a kdb-panel run closes the client IPC connection and stops VS Code waiting, but already-running server-side work may continue depending on q/gateway behavior. The SQLTools target renders however many rows SQLTools receives.
 - SQLTools' "execute current query" command uses SQL-style semicolon/`GO` statement parsing before the driver is called. For q expressions that contain semicolons inside lambdas, projections, or multi-statement expressions, select the intended q text and run `kdb+: Run Selection` so it is sent as one q expression.
 - kdb has namespaces rather than SQL catalogs and schemas; SQLTools `database`/`schema` fields are mapped to the selected q namespace.
 - Root q views are listed with protected `views[]`; non-root view listing depends on what the target process returns for protected `system "b <namespace>"`.

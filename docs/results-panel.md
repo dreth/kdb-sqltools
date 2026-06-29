@@ -26,6 +26,12 @@ The q IPC response is still fully materialized in extension memory before displa
 
 Very large results show a non-blocking warning. Copy, export, search, and sort may require additional work because they operate beyond the currently visible cells.
 
+## Cancel running queries
+
+When a run is still loading, the toolbar shows `Cancel query` next to the spinner. The same run can also be canceled from VS Code's progress notification. Canceling stops the extension from waiting for that result, closes the active q IPC connection, and changes the panel to a canceled state so late results from that run do not replace newer output.
+
+Server-side interruption is best-effort. If the q process or gateway has already started the work, closing the client IPC connection may not stop that work immediately.
+
 ## Column controls
 
 | Feature | Behavior |

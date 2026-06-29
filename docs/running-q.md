@@ -14,6 +14,12 @@ The default is `kdbPanel`.
 
 `Run Selection` sends the selected text exactly. If there is no selection, it sends the current physical line. A blank current line shows the normal no-code warning. `Run q Script` sends the whole active editor document.
 
+## Canceling a run
+
+While a q run is loading in the kdb results panel, use the panel's `Cancel query` button or the VS Code progress notification's cancel action. Cancellation stops VS Code waiting for that run, tears down the active q IPC connection, and leaves a clear canceled message in the panel.
+
+Cancellation is best-effort on the server side. Depending on the q process, gateway, and query being executed, work that already reached the server may continue briefly or complete even after the client connection is closed.
+
 ## Keybindings
 
 | Keybinding | macOS | Command | Result behavior |

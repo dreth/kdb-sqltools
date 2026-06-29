@@ -41,6 +41,7 @@ export interface KdbPanelResult {
   elapsedMs: number;
   messages: string[];
   error?: boolean;
+  canceled?: boolean;
 }
 
 interface LoadingState {
@@ -59,6 +60,7 @@ interface KdbPanelMetadata {
   elapsedMs: number;
   messages: string[];
   error?: boolean;
+  canceled?: boolean;
   version: number;
   settings: KdbPanelSettings;
   sort: KdbPanelSortState | null;
@@ -173,6 +175,7 @@ export class KdbResultsPanel {
   private selectionRange: CellRange | undefined;
   private selectionVersion = 0;
   private activeChartRequestId = 0;
+  private runningQueryCancel: { version: number; cancel(): void } | undefined;
 
   public static showLoading(
     context: vscode.ExtensionContext,
@@ -180,6 +183,7 @@ export class KdbResultsPanel {
     mode: KdbResultsPanelRunMode = 'replace'
   ): KdbResultsPanel {
     const panel = KdbResultsPanel.ensure(context, mode);
+    panel.cancelRunningQuery();
     panel.version += 1;
     panel.firstSliceVersion = 0;
     panel.rowOrder = undefined;
@@ -212,6 +216,7 @@ export class KdbResultsPanel {
     if (this.disposed) {
       return this;
     }
+    this.clearRunningQueryCancel();
     this.version += 1;
     this.firstSliceVersion = 0;
     this.rowOrder = undefined;
@@ -231,6 +236,26 @@ export class KdbResultsPanel {
     this.revealExisting();
     this.postResultMetadata();
     return this;
+  }
+
+  public currentVersion(): number {
+    return this.version;
+  }
+
+  public isLoadingVersion(version: number): boolean {
+    return !this.disposed && !!this.loading && this.version === version;
+  }
+
+  public setLoadingCancelHandler(version: number, cancel: () => void): vscode.Disposable {
+    const handler = { version, cancel };
+    if (!this.disposed && this.loading && this.version === version) {
+      this.runningQueryCancel = handler;
+    }
+    return new vscode.Disposable(() => {
+      if (this.runningQueryCancel === handler) {
+        this.runningQueryCancel = undefined;
+      }
+    });
   }
 
   private static ensure(context: vscode.ExtensionContext, mode: KdbResultsPanelRunMode): KdbResultsPanel {
@@ -335,6 +360,7 @@ export class KdbResultsPanel {
 
     this.disposed = true;
     this.ready = false;
+    this.cancelRunningQuery();
     this.stopLocalDataServer('Local data server stopped.').catch(error => {
       console.error(toError(error).message);
     });
@@ -376,6 +402,14 @@ export class KdbResultsPanel {
       } else if (this.loading) {
         this.post({ type: 'loading', state: { ...this.loading, version: this.version, settings: panelSettings() } });
         this.postLocalDataServerStatus();
+      }
+      return;
+    }
+
+    if (message.type === 'cancelRunningQuery') {
+      const requestVersion = integerOrNull(message.version);
+      if (requestVersion !== null && requestVersion === this.version && this.loading) {
+        this.cancelRunningQuery(requestVersion);
       }
       return;
     }
@@ -523,6 +557,7 @@ export class KdbResultsPanel {
       elapsedMs: result.elapsedMs,
       messages: result.messages,
       error: result.error,
+      canceled: result.canceled,
       version: this.version,
       settings,
       sort: this.visibleSortState(result),
@@ -559,6 +594,22 @@ export class KdbResultsPanel {
       vscode.window.showErrorMessage(message);
       this.post({ type: 'localDataServerMessage', message });
     }
+  }
+
+  private cancelRunningQuery(version?: number): void {
+    const handler = this.runningQueryCancel;
+    if (!handler || (version !== undefined && handler.version !== version)) {
+      return;
+    }
+    this.runningQueryCancel = undefined;
+    handler.cancel();
+  }
+
+  private clearRunningQueryCancel(version?: number): void {
+    if (!this.runningQueryCancel || (version !== undefined && this.runningQueryCancel.version !== version)) {
+      return;
+    }
+    this.runningQueryCancel = undefined;
   }
 
   private async stopLocalDataServer(message?: string): Promise<void> {
@@ -1838,6 +1889,9 @@ export class KdbResultsPanel {
     .spinner[hidden] {
       display: none;
     }
+    .cancel-query[hidden] {
+      display: none;
+    }
     @keyframes spin {
       to {
         transform: rotate(360deg);
@@ -2188,6 +2242,7 @@ export class KdbResultsPanel {
       </div>
     </details>
     <span id="spinner" class="spinner" hidden></span>
+    <button id="cancelQuery" class="cancel-query" title="Cancel running q query" hidden disabled>Cancel query</button>
     <span id="summary" class="summary"></span>
     <details id="largeResultWarning" class="large-warning" hidden>
       <summary id="largeResultSummary" title="Large result warning">ⓘ Large result</summary>
@@ -2299,6 +2354,7 @@ export class KdbResultsPanel {
       const localDataServerStatus = document.getElementById('localDataServerStatus');
       const openChart = document.getElementById('openChart');
       const spinner = document.getElementById('spinner');
+      const cancelQuery = document.getElementById('cancelQuery');
       const summary = document.getElementById('summary');
       const largeResultWarning = document.getElementById('largeResultWarning');
       const largeResultSummary = document.getElementById('largeResultSummary');
@@ -2477,6 +2533,11 @@ export class KdbResultsPanel {
       stopLocalDataServer.addEventListener('click', () => vscode.postMessage({ type: 'stopLocalDataServer' }));
       copyCurrentCsvUrl.addEventListener('click', () => vscode.postMessage({ type: 'copyLocalDataServerUrl', endpoint: 'current.csv' }));
       copyMetadataUrl.addEventListener('click', () => vscode.postMessage({ type: 'copyLocalDataServerUrl', endpoint: 'metadata.json' }));
+      cancelQuery.addEventListener('click', () => {
+        cancelQuery.disabled = true;
+        status.textContent = 'Canceling query...';
+        vscode.postMessage({ type: 'cancelRunningQuery', version: data.version });
+      });
       openChart.addEventListener('click', openChartPanel);
       chartXColumn.addEventListener('change', onChartControlChanged);
       renderChart.addEventListener('click', requestChartData);
@@ -2642,6 +2703,8 @@ export class KdbResultsPanel {
         resetSearch(false);
         selectionLabel.textContent = '';
         spinner.hidden = false;
+        cancelQuery.hidden = false;
+        cancelQuery.disabled = false;
         setActionsDisabled(true);
         updateLocalDataServerControls();
         resetChartState('Run a query result before charting.');
@@ -2673,6 +2736,7 @@ export class KdbResultsPanel {
           connectionName: result.connectionName || '',
           elapsedMs: toNonNegativeInteger(result.elapsedMs, 0),
           error: !!result.error,
+          canceled: !!result.canceled,
           sort: normalizeSortState(result.sort),
           hasResult: true
         };
@@ -2686,6 +2750,8 @@ export class KdbResultsPanel {
         updateSortStatus();
         resetSearch(false);
         spinner.hidden = true;
+        cancelQuery.hidden = true;
+        cancelQuery.disabled = true;
         updateActionState();
         updateLocalDataServerControls();
         resetChartState('');
@@ -2945,7 +3011,7 @@ export class KdbResultsPanel {
       }
 
       function updateLocalDataServerControls() {
-        const hasResult = data.hasResult && !data.error && data.rowCount >= 0;
+        const hasResult = data.hasResult && !data.error && !data.canceled && data.rowCount >= 0;
         const running = !!localDataServer;
         startLocalDataServer.disabled = !hasResult || running;
         stopLocalDataServer.disabled = !running;
@@ -2954,7 +3020,7 @@ export class KdbResultsPanel {
       }
 
       function updateChartControls() {
-        openChart.disabled = !hasTableCells() || !!data.error;
+        openChart.disabled = !hasTableCells() || !!data.error || !!data.canceled;
         renderChart.disabled = !chartCanRender();
         const canExport = chartCanExport();
         exportChart.hidden = !canExport;
@@ -2963,7 +3029,7 @@ export class KdbResultsPanel {
       }
 
       function openChartPanel() {
-        if (!hasTableCells() || data.error) {
+        if (!hasTableCells() || data.error || data.canceled) {
           return;
         }
         chartPanel.hidden = false;
@@ -3830,6 +3896,12 @@ export class KdbResultsPanel {
         if (!data.hasResult) {
           return;
         }
+        if (data.canceled) {
+          summary.textContent = 'Query canceled' +
+            (data.connectionName ? ' | ' + data.connectionName : '') +
+            ' | ' + formatElapsedMs(data.elapsedMs, settings.elapsedTimeDisplay);
+          return;
+        }
         summary.textContent = formatUiCount(data.rowCount) + ' rows x ' + formatUiCount(data.columns.length) + ' columns' +
           (data.hiddenColumnCount > 0 ? ' (' + formatUiCount(data.hiddenColumnCount) + ' hidden)' : '') +
           (data.connectionName ? ' | ' + data.connectionName : '') +
@@ -3869,7 +3941,7 @@ export class KdbResultsPanel {
       }
 
       function resultMessageText(value) {
-        return value.error ? value.messages.slice().join('\\n') : '';
+        return value.error || value.canceled ? value.messages.slice().join('\\n') : '';
       }
 
       function updateLargeResultWarning() {
@@ -4675,6 +4747,7 @@ export class KdbResultsPanel {
           connectionName: '',
           elapsedMs: 0,
           error: false,
+          canceled: false,
           sort: null,
           hasResult: false
         };
