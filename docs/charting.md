@@ -16,6 +16,8 @@ SQLTools remains required for connections and q execution. Charting uses the cur
 
 uPlot powers the built-in chart. Supported interactions are cursor/crosshair tooltip values, drag-select zoom, reset zoom, legend labels with live values, legend series toggling, and PNG export.
 
+X-axis labels are auto-thinned to keep dense numeric and timestamp axes readable while preserving useful grid lines where possible. Hover and cursor/crosshair tooltip values still show the precise x value for the selected point.
+
 Only line charts are supported. Bar, pie, heatmap, dashboard, streaming, and pan features are not implemented. Zoom is applied to the sampled points already in the webview; it does not request a newly sampled viewport from the extension host yet.
 
 ## Eligible columns
