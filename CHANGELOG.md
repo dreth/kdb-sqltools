@@ -1,5 +1,12 @@
 # Change Log
 
+## 0.3.8
+
+- Added a compact Chart type selector with line, scatter, step, bar, and box chart modes.
+- Kept chart controls inside the existing Chart dropdown/panel so the top toolbar remains uncluttered.
+- Added box-plot statistics over x values/buckets for selected numeric y columns.
+- Preserved uPlot cursor, zoom, legend, x-axis label thinning, PNG export, and source-row guardrails.
+
 ## 0.3.7
 
 - Made copy/export confirmation cell threshold configurable from Settings -> Preferences and VS Code settings.

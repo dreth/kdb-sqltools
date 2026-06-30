@@ -1,6 +1,6 @@
 # Charting
 
-The kdb results panel includes a first built-in chart tool: a line/time-series chart for the current visible result.
+The kdb results panel includes a compact built-in chart tool for the current visible result.
 
 SQLTools remains required for connections and q execution. Charting uses the current kdb results panel data, not SQLTools' result-grid row objects.
 
@@ -8,17 +8,18 @@ SQLTools remains required for connections and q execution. Charting uses the cur
 
 1. Run q into a kdb results panel.
 2. Open the top-level `Chart` dropdown menu.
-3. Select `Line chart`.
-4. Pick one x column and one or more y columns in the chart panel.
-5. Press `Render`.
-6. Use the cursor tooltip/crosshair, drag across the plot to zoom, or press `Reset zoom`.
-7. After the chart renders, press `Export PNG` to save the chart as `kdb-chart.png` or another PNG file.
+3. Select `Open chart`.
+4. Pick a chart type from the single `Chart type` selector: `Line`, `Scatter`, `Step`, `Bar`, or `Box`.
+5. Pick one x column and one or more y columns in the chart panel.
+6. Press `Render`.
+7. Use the cursor tooltip/crosshair, drag across the plot to zoom, or press `Reset zoom`.
+8. After the chart renders, press `Export PNG` to save the chart as `kdb-chart.png` or another PNG file.
 
 uPlot powers the built-in chart. Supported interactions are cursor/crosshair tooltip values, drag-select zoom, reset zoom, legend labels with live values, legend series toggling, and PNG export.
 
 X-axis labels are auto-thinned to keep dense numeric and timestamp axes readable while preserving useful grid lines where possible. Hover and cursor/crosshair tooltip values still show the precise x value for the selected point.
 
-Only line charts are supported. Bar, pie, heatmap, dashboard, streaming, and pan features are not implemented. Zoom is applied to the sampled points already in the webview; it does not request a newly sampled viewport from the extension host yet.
+Supported chart types are intentionally compact: line, scatter, step, bar, and box. Scatter uses points without line clutter. Step uses stepped lines. Bar uses uPlot bar paths. Box plots compute per-x/bucket min, quartiles, median, and max for selected numeric y columns and draw those summaries over the sampled x axis. Pie, heatmap, dashboard, streaming, and pan features are not implemented. Zoom is applied to the sampled points already in the webview; it does not request a newly sampled viewport from the extension host yet.
 
 ## Eligible columns
 
@@ -27,7 +28,7 @@ The chart tool uses visible columns only.
 | Role | Eligible data |
 | --- | --- |
 | x | Numeric values or temporal strings such as dates, timestamps, months, and times. |
-| y | Numeric values. |
+| y | Numeric values. Box plots summarize selected numeric y columns per x value/bucket. |
 
 When q type metadata is unavailable, the extension samples column values and infers eligibility. Symbol, category, nested list, object, and mixed incompatible columns are rejected for this first chart.
 
@@ -51,7 +52,7 @@ The chart response includes:
 - sampling algorithm
 - warnings such as sorted x values or dropped invalid x values
 
-Null and non-finite y values render as line gaps where sampled. Rows with null, non-finite, or incompatible x values are dropped from the chart.
+Null and non-finite y values render as gaps for line/step charts and are skipped for scatter/bar/box statistics where sampled. Rows with null, non-finite, or incompatible x values are dropped from the chart.
 
 ## Implementation note
 

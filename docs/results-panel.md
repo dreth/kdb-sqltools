@@ -55,7 +55,7 @@ Output: [format] [Headers] [Row #] [Copy] [Export] [Chart] [Settings] [Cancel] [
 
 | Tool | Behavior |
 | --- | --- |
-| Chart menu | Top-level dropdown that opens the uPlot-powered line chart UI for the current visible result. After the chart panel is open, it provides x/y controls, auto-thinned readable x-axis labels, cursor tooltip, drag zoom, reset zoom, legend toggling, and PNG export after render. |
+| Chart menu | Top-level dropdown that opens the uPlot-powered chart UI for the current visible result. After the chart panel is open, it provides one compact chart-type selector for line, scatter, step, bar, and box charts, plus x/y controls, auto-thinned readable x-axis labels, cursor tooltip, drag zoom, reset zoom, legend toggling, and PNG export after render. |
 | Settings menu | Contains collapsible sections for view controls, search, hidden columns, output defaults, and local data server controls. Preferences opens by default; Data server is collapsed by default. The Data server section starts or stops the opt-in `127.0.0.1` server, copies current-result URLs, and reminds users that very large current.* exports may need a higher local server cell limit. |
 
 The local data server and chart both use the extension-side current result. Hidden, reordered, and sorted visible columns are honored where they apply.
