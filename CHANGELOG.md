@@ -1,5 +1,11 @@
 # Change Log
 
+## 0.3.5
+
+- Chart x-axis labels are dynamically thinned based on chart width and label length.
+- Dense timestamp/numeric axes stay readable while useful grid/tick lines can remain.
+- Hover/crosshair still shows precise x values.
+
 ## 0.3.4
 
 - Reworked the kdb results panel toolbar into one compact line.
