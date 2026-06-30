@@ -19,6 +19,9 @@ const queriesModule = require('../out/ls/queries');
 const {
   CHART_MAX_SOURCE_ROWS,
   ChartDataError,
+  boxChartTargetGroupCount,
+  boxStats,
+  buildChartData,
   buildLineChartData,
   chartColumnOptions,
   chartTargetPointCount,
@@ -675,10 +678,21 @@ function panelFormatElapsedMs(milliseconds, display) {
     width: 800,
   });
   assert.strictEqual(unsortedChart.sorted, true);
+  assert.strictEqual(unsortedChart.chartType, 'line');
   assert.deepStrictEqual(unsortedChart.xText, ['2024-01-01', '2024-01-02', '2024-01-03', '2024-01-04']);
   assert.deepStrictEqual(unsortedChart.series[0].values, [null, null, 10, 5]);
   assert.ok(unsortedChart.warnings.some(warning => /sorted/.test(warning)));
   assert.ok(unsortedChart.warnings.some(warning => /Null and non-finite/.test(warning)));
+  const scatterChart = buildChartData(chartTable, {
+    chartType: 'scatter',
+    version: 2,
+    requestId: 4,
+    xColumn: 'ts',
+    yColumns: ['price', 'size'],
+    width: 800,
+  });
+  assert.strictEqual(scatterChart.chartType, 'scatter');
+  assert.deepStrictEqual(scatterChart.series.map(series => series.columnName), ['price', 'size']);
 
   const spikeTable = createColumnarPanelResult(['x', 'y'], 100, (rowIndex, columnIndex) => {
     if (columnIndex === 0) {
@@ -729,6 +743,61 @@ function panelFormatElapsedMs(milliseconds, display) {
     }),
     /not eligible/
   );
+  assert.deepStrictEqual(boxStats([1, 2, 3, 4]), {
+    count: 4,
+    min: 1,
+    q1: 1.75,
+    median: 2.5,
+    q3: 3.25,
+    max: 4,
+  });
+  assert.strictEqual(boxStats([NaN, Infinity]), null);
+  assert.ok(boxChartTargetGroupCount(1000, 2, 800) <= 120);
+  const boxTable = rowsToColumnarPanelResult(
+    [
+      { bucket: 2, price: 10, size: 100 },
+      { bucket: 1, price: 1, size: 10 },
+      { bucket: 1, price: 3, size: 30 },
+      { bucket: 2, price: 20, size: 200 },
+      { bucket: 2, price: 30, size: null },
+    ],
+    ['bucket', 'price', 'size']
+  );
+  const boxChart = buildChartData(boxTable, {
+    chartType: 'box',
+    version: 7,
+    requestId: 8,
+    xColumn: 'bucket',
+    yColumns: ['price', 'size'],
+    width: 800,
+  });
+  assert.strictEqual(boxChart.chartType, 'box');
+  assert.strictEqual(boxChart.algorithm, 'box-exact/2');
+  assert.deepStrictEqual(boxChart.x, [1, 2]);
+  assert.deepStrictEqual(boxChart.series[0].values, [2, 20]);
+  assert.deepStrictEqual(boxChart.boxSeries[0].stats[0], {
+    count: 2,
+    min: 1,
+    q1: 1.5,
+    median: 2,
+    q3: 2.5,
+    max: 3,
+  });
+  assert.strictEqual(boxChart.boxSeries[1].stats[1].count, 2);
+  assert.ok(boxChart.warnings.some(warning => /skipped for box statistics/.test(warning)));
+  const binnedBoxChart = buildChartData(spikeTable, {
+    chartType: 'box',
+    version: 1,
+    requestId: 9,
+    xColumn: 'x',
+    yColumns: ['y'],
+    width: 20,
+    maxSampledPoints: 8,
+  });
+  assert.strictEqual(binnedBoxChart.chartType, 'box');
+  assert.strictEqual(binnedBoxChart.sampledPointCount, 8);
+  assert.strictEqual(binnedBoxChart.algorithm, 'box-bucket/8');
+  assert.ok(binnedBoxChart.warnings.some(warning => /x buckets/.test(warning)));
 
   assert.strictEqual(DEFAULT_LOCAL_DATA_SERVER_PORT, 7742);
   assert.strictEqual(LOCAL_DATA_SERVER_HOST, '127.0.0.1');
@@ -914,6 +983,7 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="includeRowIndex"'), 1);
   assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="searchInput"'), 1);
   assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="interactionMode"'), 1);
+  assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="chartType"'), 1);
   assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="cancelQuery"'), 1);
   assert.ok(toolbarSource.indexOf('id="outputControls"') < toolbarSource.indexOf('id="chartMenu"'));
   assert.ok(toolbarSource.indexOf('id="chartMenu"') < toolbarSource.indexOf('id="settingsMenu"'));
@@ -953,7 +1023,10 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(chartMenuSource.includes('<summary id="chartSummary" aria-label="Chart menu">Chart</summary>'), true);
   assert.strictEqual(chartMenuSource.includes('id="chartMenuStatus" class="tool-menu-status">Unavailable</div>'), true);
   assert.strictEqual(chartMenuSource.includes('id="openChart"'), true);
-  assert.strictEqual(chartMenuSource.includes('Line chart'), true);
+  assert.strictEqual(chartMenuSource.includes('Open chart'), true);
+  assert.strictEqual(toolbarSource.includes('id="chartType"'), false);
+  assert.ok(resultsPanelSource.indexOf('id="chartPanel"') < resultsPanelSource.indexOf('id="chartType"'));
+  assert.deepStrictEqual(htmlSelectOptions(resultsPanelSource, 'chartType'), ['line', 'scatter', 'step', 'bar', 'box']);
   assert.strictEqual(settingsMenuSource.includes('<summary id="settingsSummary" aria-label="Settings menu">Settings</summary>'), true);
   assert.strictEqual(settingsMenuSource.includes('role="group" aria-label="Settings controls"'), true);
   assert.strictEqual(settingsMenuSource.includes('<span>View</span>'), true);
@@ -992,6 +1065,12 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('localResourceRoots: [uplotDistRoot]'), true);
   assert.strictEqual(resultsPanelSource.includes('script-src ${cspSource}'), true);
   assert.strictEqual(resultsPanelSource.includes('new window.uPlot(chartUPlotOptions(dimensions), chartAlignedData(), chartPlot)'), true);
+  assert.strictEqual(resultsPanelSource.includes('function selectedChartType()'), true);
+  assert.strictEqual(resultsPanelSource.includes('chartType: selectedChartType()'), true);
+  assert.strictEqual(resultsPanelSource.includes("chartData.chartType === 'box'"), true);
+  assert.strictEqual(resultsPanelSource.includes('window.uPlot.paths.stepped'), true);
+  assert.strictEqual(resultsPanelSource.includes('window.uPlot.paths.bars'), true);
+  assert.strictEqual(resultsPanelSource.includes('function drawChartBoxes(self)'), true);
   assert.strictEqual(resultsPanelSource.includes('function chartThinnedXAxisLabels(self, splits)'), true);
   assert.strictEqual(resultsPanelSource.includes('function chartMaxVisibleXAxisLabels(self, labels)'), true);
   assert.strictEqual(resultsPanelSource.includes('values: (self, splits) => chartThinnedXAxisLabels(self, splits)'), true);
@@ -1006,7 +1085,10 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(/cdn\.jsdelivr|unpkg|cdnjs|https:\/\/cdn/i.test(resultsPanelSource), false);
   assert.strictEqual(resultsPanelSource.includes("vscode.postMessage({ type: 'startLocalDataServer' })"), true);
   assert.strictEqual(resultsPanelSource.includes("type: 'requestChart'"), true);
-  assert.strictEqual(resultsPanelSource.includes('buildLineChartData(table'), true);
+  assert.strictEqual(resultsPanelSource.includes('buildChartData(table'), true);
+  assert.strictEqual(chartingSource.includes("export type ChartType = 'line' | 'scatter' | 'step' | 'bar' | 'box';"), true);
+  assert.strictEqual(chartingSource.includes('export function boxStats'), true);
+  assert.strictEqual(chartingSource.includes('export function boxChartTargetGroupCount'), true);
   assert.strictEqual(resultsPanelSource.includes('function chartMaxSourceRowsSetting()'), true);
   assert.strictEqual(resultsPanelSource.includes('function chartMaxSourceRowsSettingValue'), true);
   assert.strictEqual(resultsPanelSource.includes('maxSourceRows: chartMaxSourceRowsSetting()'), true);
@@ -1388,7 +1470,7 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('id="settingsLocalDataServerFullExportCellLimit"'), true);
   assert.strictEqual(packageJson.contributes.configuration.properties['kdb-sqltools.results.copyExportConfirmCellThreshold'].minimum, 1);
   assert.strictEqual(packageJson.contributes.configuration.properties['kdb-sqltools.results.localDataServerFullExportCellLimit'].minimum, 1);
-  assert.strictEqual(packageJson.version, '0.3.7');
+  assert.strictEqual(packageJson.version, '0.3.8');
   assert.strictEqual(chartingDocsSource.includes('Open the top-level `Chart` dropdown menu.'), true);
   assert.strictEqual(readmeSource.includes('The top toolbar is a single compact line'), true);
   assert.strictEqual(readmeSource.includes('`Settings` contains collapsible sections for view controls, search, hidden columns, output defaults, and `Data server` controls'), true);

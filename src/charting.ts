@@ -1,6 +1,7 @@
 import { ColumnarPanelResult } from './kdb-results';
 
 export type ChartColumnKind = 'numeric' | 'temporal';
+export type ChartType = 'line' | 'scatter' | 'step' | 'bar' | 'box';
 
 export interface ChartColumnOption {
   columnName: string;
@@ -15,6 +16,7 @@ export interface ChartColumnOptions {
 }
 
 export interface LineChartRequest {
+  chartType?: ChartType;
   xColumn: string;
   yColumns: string[];
   width: number;
@@ -29,14 +31,30 @@ export interface LineChartSeries {
   values: Array<number | null>;
 }
 
+export interface BoxChartStats {
+  count: number;
+  min: number;
+  q1: number;
+  median: number;
+  q3: number;
+  max: number;
+}
+
+export interface BoxChartSeries {
+  columnName: string;
+  stats: Array<BoxChartStats | null>;
+}
+
 export interface LineChartData {
   version: number;
   requestId: number;
+  chartType: ChartType;
   xColumn: string;
   xKind: ChartColumnKind;
   x: number[];
   xText: string[];
   series: LineChartSeries[];
+  boxSeries?: BoxChartSeries[];
   sourceRowCount: number;
   eligibleRowCount: number;
   sampledPointCount: number;
@@ -65,6 +83,26 @@ interface ColumnInference {
   invalid: number;
 }
 
+interface PreparedChartSource {
+  xOption: ChartColumnOption;
+  yColumnNames: string[];
+  yColumnIndexes: number[];
+  warnings: string[];
+}
+
+interface CollectedChartPoints {
+  points: ChartPoint[];
+  droppedX: number;
+  yMissing: number;
+  yInvalid: number;
+}
+
+interface BoxChartBin {
+  x: number;
+  xText: string;
+  stats: Array<BoxChartStats | null>;
+}
+
 export class ChartDataError extends Error {
   public constructor(message: string) {
     super(message);
@@ -77,6 +115,7 @@ export const CHART_INFERENCE_SAMPLE_SIZE = 200;
 export const CHART_MAX_SOURCE_ROWS = 2000000;
 export const CHART_MAX_SAMPLED_POINTS = 12000;
 export const CHART_POINTS_PER_PIXEL = 3;
+export const CHART_MAX_BOX_GROUPS = 120;
 
 export function chartColumnOptions(table: ColumnarPanelResult, sampleSize = CHART_INFERENCE_SAMPLE_SIZE): ChartColumnOptions {
   const xColumns: ChartColumnOption[] = [];
@@ -108,6 +147,135 @@ export function chartColumnOptions(table: ColumnarPanelResult, sampleSize = CHAR
 }
 
 export function buildLineChartData(table: ColumnarPanelResult, request: LineChartRequest): LineChartData {
+  return buildChartData(table, { ...request, chartType: 'line' });
+}
+
+export function buildChartData(table: ColumnarPanelResult, request: LineChartRequest): LineChartData {
+  const chartType = normalizeChartType(request.chartType);
+  return chartType === 'box'
+    ? buildBoxChartData(table, request)
+    : buildXyChartData(table, request, chartType);
+}
+
+export function normalizeChartType(value: unknown): ChartType {
+  switch (String(value || '').toLowerCase()) {
+    case 'scatter':
+      return 'scatter';
+    case 'step':
+      return 'step';
+    case 'bar':
+      return 'bar';
+    case 'box':
+      return 'box';
+    case 'line':
+    default:
+      return 'line';
+  }
+}
+
+function buildXyChartData(table: ColumnarPanelResult, request: LineChartRequest, chartType: ChartType): LineChartData {
+  const source = prepareChartSource(table, request);
+  const warnings = source.warnings.slice();
+  const collected = collectChartPoints(table, source.xOption, source.yColumnIndexes);
+  appendCollectedWarnings(warnings, collected, source.xOption.kind, chartType === 'line' || chartType === 'step'
+    ? 'Null and non-finite y values are rendered as gaps where sampled.'
+    : 'Null and non-finite y values are skipped where sampled.');
+
+  const points = collected.points;
+  if (points.length === 0) {
+    throw new ChartDataError('No rows have a plottable x value.');
+  }
+  if (!hasAnyFiniteY(points)) {
+    throw new ChartDataError('No selected y column has finite numeric values.');
+  }
+
+  const sorted = sortChartPoints(points, warnings);
+  const maxSampledPoints = chartTargetPointCount(request.width, request.maxSampledPoints);
+  const sampled = downsampleMinMax(points, source.yColumnNames.length, maxSampledPoints);
+  const series = source.yColumnNames.map((columnName, seriesIndex) => {
+    return {
+      columnName,
+      values: sampled.points.map(point => point.y[seriesIndex]),
+    };
+  });
+
+  return {
+    version: request.version,
+    requestId: request.requestId,
+    chartType,
+    xColumn: request.xColumn,
+    xKind: source.xOption.kind,
+    x: sampled.points.map(point => point.x),
+    xText: sampled.points.map(point => point.xText),
+    series,
+    sourceRowCount: table.rowCount,
+    eligibleRowCount: points.length,
+    sampledPointCount: sampled.points.length,
+    algorithm: sampled.algorithm,
+    sorted,
+    warnings,
+  };
+}
+
+function buildBoxChartData(table: ColumnarPanelResult, request: LineChartRequest): LineChartData {
+  const source = prepareChartSource(table, request);
+  const warnings = source.warnings.slice();
+  const collected = collectChartPoints(table, source.xOption, source.yColumnIndexes);
+  appendCollectedWarnings(warnings, collected, source.xOption.kind, 'Null and non-finite y values are skipped for box statistics.');
+
+  const points = collected.points;
+  if (points.length === 0) {
+    throw new ChartDataError('No rows have a plottable x value.');
+  }
+  if (!hasAnyFiniteY(points)) {
+    throw new ChartDataError('No selected y column has finite numeric values.');
+  }
+
+  const sorted = sortChartPoints(points, warnings);
+  const maxGroups = boxChartTargetGroupCount(points.length, source.yColumnNames.length, request.width, request.maxSampledPoints);
+  const bins = buildBoxChartBins(points, source.yColumnNames.length, maxGroups);
+  const boxSeries = source.yColumnNames.map((columnName, seriesIndex) => {
+    return {
+      columnName,
+      stats: bins.map(bin => bin.stats[seriesIndex]),
+    };
+  });
+  if (!boxSeries.some(series => series.stats.some(stats => stats !== null))) {
+    throw new ChartDataError('No selected y column has finite numeric values for box statistics.');
+  }
+
+  if (bins.length < distinctXCount(points)) {
+    warnings.push(`Box plot grouped ${points.length} eligible rows into ${bins.length} x buckets.`);
+  }
+
+  return {
+    version: request.version,
+    requestId: request.requestId,
+    chartType: 'box',
+    xColumn: request.xColumn,
+    xKind: source.xOption.kind,
+    x: bins.map(bin => bin.x),
+    xText: bins.map(bin => bin.xText),
+    series: source.yColumnNames.map((columnName, seriesIndex) => {
+      return {
+        columnName,
+        values: bins.map(bin => {
+          const stats = bin.stats[seriesIndex];
+          return stats ? stats.median : null;
+        }),
+      };
+    }),
+    boxSeries,
+    sourceRowCount: table.rowCount,
+    eligibleRowCount: points.length,
+    sampledPointCount: bins.length,
+    algorithm: bins.length < distinctXCount(points) ? `box-bucket/${bins.length}` : `box-exact/${bins.length}`,
+    sorted,
+    warnings,
+  };
+}
+
+function prepareChartSource(table: ColumnarPanelResult, request: LineChartRequest): PreparedChartSource {
   const maxSourceRows = positiveInteger(request.maxSourceRows, CHART_MAX_SOURCE_ROWS);
   if (table.rowCount > maxSourceRows) {
     throw new ChartDataError(`Chart source has ${table.rowCount} rows; limit the q result or use the local data server for sources above ${maxSourceRows} rows.`);
@@ -144,12 +312,26 @@ export function buildLineChartData(table: ColumnarPanelResult, request: LineChar
   if (raisedSourceRowLimit) {
     warnings.push('Chart source exceeds the default row guard. Very large chartMaxSourceRows values can make rendering slow or temporarily block the extension host, especially with multiple y columns.');
   }
+
+  return {
+    xOption,
+    yColumnNames,
+    yColumnIndexes,
+    warnings,
+  };
+}
+
+function collectChartPoints(
+  table: ColumnarPanelResult,
+  xOption: ChartColumnOption,
+  yColumnIndexes: number[]
+): CollectedChartPoints {
   const points: ChartPoint[] = [];
   let droppedX = 0;
   let yMissing = 0;
   let yInvalid = 0;
   for (let rowIndex = 0; rowIndex < table.rowCount; rowIndex++) {
-    const x = normalizeXValue(table.cellValue(rowIndex, xColumnIndex), xOption.kind);
+    const x = normalizeXValue(table.cellValue(rowIndex, xOption.columnIndex), xOption.kind);
     if (!x) {
       droppedX += 1;
       continue;
@@ -170,20 +352,24 @@ export function buildLineChartData(table: ColumnarPanelResult, request: LineChar
     points.push({ rowIndex, x: x.value, xText: x.text, y: yValues });
   }
 
-  if (droppedX > 0) {
-    warnings.push(`${droppedX} row${droppedX === 1 ? '' : 's'} dropped because x was null, non-finite, or not ${xOption.kind}.`);
-  }
-  if (yMissing > 0 || yInvalid > 0) {
-    warnings.push('Null and non-finite y values are rendered as line gaps where sampled.');
-  }
+  return { points, droppedX, yMissing, yInvalid };
+}
 
-  if (points.length === 0) {
-    throw new ChartDataError('No rows have a plottable x value.');
+function appendCollectedWarnings(
+  warnings: string[],
+  collected: CollectedChartPoints,
+  xKind: ChartColumnKind,
+  yWarning: string
+): void {
+  if (collected.droppedX > 0) {
+    warnings.push(`${collected.droppedX} row${collected.droppedX === 1 ? '' : 's'} dropped because x was null, non-finite, or not ${xKind}.`);
   }
-  if (!hasAnyFiniteY(points)) {
-    throw new ChartDataError('No selected y column has finite numeric values.');
+  if (collected.yMissing > 0 || collected.yInvalid > 0) {
+    warnings.push(yWarning);
   }
+}
 
+function sortChartPoints(points: ChartPoint[], warnings: string[]): boolean {
   const sorted = !isSortedByX(points);
   if (sorted) {
     points.sort((left, right) => {
@@ -197,37 +383,39 @@ export function buildLineChartData(table: ColumnarPanelResult, request: LineChar
     });
     warnings.push('x values were sorted for this chart; table order was not changed.');
   }
-
-  const maxSampledPoints = chartTargetPointCount(request.width, request.maxSampledPoints);
-  const sampled = downsampleMinMax(points, yColumnNames.length, maxSampledPoints);
-  const series = yColumnNames.map((columnName, seriesIndex) => {
-    return {
-      columnName,
-      values: sampled.points.map(point => point.y[seriesIndex]),
-    };
-  });
-
-  return {
-    version: request.version,
-    requestId: request.requestId,
-    xColumn: request.xColumn,
-    xKind: xOption.kind,
-    x: sampled.points.map(point => point.x),
-    xText: sampled.points.map(point => point.xText),
-    series,
-    sourceRowCount: table.rowCount,
-    eligibleRowCount: points.length,
-    sampledPointCount: sampled.points.length,
-    algorithm: sampled.algorithm,
-    sorted,
-    warnings,
-  };
+  return sorted;
 }
 
 export function chartTargetPointCount(width: number, maxSampledPoints = CHART_MAX_SAMPLED_POINTS): number {
   const pixelWidth = Math.max(1, Math.floor(Number(width) || 0));
   const target = Math.max(200, pixelWidth * CHART_POINTS_PER_PIXEL);
   return Math.min(positiveInteger(maxSampledPoints, CHART_MAX_SAMPLED_POINTS), target);
+}
+
+export function boxChartTargetGroupCount(
+  eligibleRows: number,
+  seriesCount: number,
+  width: number,
+  maxSampledPoints = CHART_MAX_SAMPLED_POINTS
+): number {
+  const target = chartTargetPointCount(width, maxSampledPoints);
+  const maxBySeries = Math.max(8, Math.floor(target / Math.max(1, seriesCount * 8)));
+  return Math.max(1, Math.min(Math.max(1, Math.floor(eligibleRows)), CHART_MAX_BOX_GROUPS, maxBySeries));
+}
+
+export function boxStats(values: number[]): BoxChartStats | null {
+  const finite = values.filter(Number.isFinite).sort((left, right) => left - right);
+  if (finite.length === 0) {
+    return null;
+  }
+  return {
+    count: finite.length,
+    min: finite[0],
+    q1: quantile(finite, 0.25),
+    median: quantile(finite, 0.5),
+    q3: quantile(finite, 0.75),
+    max: finite[finite.length - 1],
+  };
 }
 
 export function inferColumn(
@@ -271,6 +459,90 @@ export function inferColumn(
     missing,
     invalid,
   };
+}
+
+function buildBoxChartBins(points: ChartPoint[], seriesCount: number, maxGroups: number): BoxChartBin[] {
+  if (points.length === 0) {
+    return [];
+  }
+
+  const uniqueCount = distinctXCount(points);
+  if (uniqueCount <= maxGroups) {
+    const bins: BoxChartBin[] = [];
+    let start = 0;
+    while (start < points.length) {
+      let end = start + 1;
+      while (end < points.length && points[end].x === points[start].x) {
+        end += 1;
+      }
+      const group = points.slice(start, end);
+      bins.push({
+        x: points[start].x,
+        xText: points[start].xText,
+        stats: boxStatsForPoints(group, seriesCount),
+      });
+      start = end;
+    }
+    return bins;
+  }
+
+  const groupCount = Math.max(1, Math.min(maxGroups, points.length));
+  const bins: BoxChartBin[] = [];
+  for (let groupIndex = 0; groupIndex < groupCount; groupIndex++) {
+    const start = Math.floor(groupIndex * points.length / groupCount);
+    const end = Math.floor((groupIndex + 1) * points.length / groupCount);
+    const group = points.slice(start, Math.max(start + 1, end));
+    const first = group[0];
+    const last = group[group.length - 1];
+    bins.push({
+      x: (first.x + last.x) / 2,
+      xText: first.x === last.x ? first.xText : `${first.xText}..${last.xText}`,
+      stats: boxStatsForPoints(group, seriesCount),
+    });
+  }
+  return bins;
+}
+
+function boxStatsForPoints(points: ChartPoint[], seriesCount: number): Array<BoxChartStats | null> {
+  const stats: Array<BoxChartStats | null> = [];
+  for (let seriesIndex = 0; seriesIndex < seriesCount; seriesIndex++) {
+    const values: number[] = [];
+    points.forEach(point => {
+      const value = point.y[seriesIndex];
+      if (Number.isFinite(value)) {
+        values.push(value as number);
+      }
+    });
+    stats.push(boxStats(values));
+  }
+  return stats;
+}
+
+function distinctXCount(points: ChartPoint[]): number {
+  if (points.length === 0) {
+    return 0;
+  }
+  let count = 1;
+  for (let index = 1; index < points.length; index++) {
+    if (points[index].x !== points[index - 1].x) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function quantile(sortedValues: number[], fraction: number): number {
+  if (sortedValues.length === 1) {
+    return sortedValues[0];
+  }
+  const position = (sortedValues.length - 1) * fraction;
+  const lower = Math.floor(position);
+  const upper = Math.ceil(position);
+  if (lower === upper) {
+    return sortedValues[lower];
+  }
+  const weight = position - lower;
+  return sortedValues[lower] * (1 - weight) + sortedValues[upper] * weight;
 }
 
 function optionLookup(options: ChartColumnOption[]): { [columnName: string]: ChartColumnOption } {
