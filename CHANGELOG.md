@@ -1,5 +1,13 @@
 # Change Log
 
+## 0.3.7
+
+- Made copy/export confirmation cell threshold configurable from Settings -> Preferences and VS Code settings.
+- Made local data server full-result `current.csv`, `current.json`, and `current.ndjson` cell limit configurable from Settings -> Preferences and VS Code settings.
+- Added Data server guidance for very large full-result exports.
+- Made Settings sections collapsible with Preferences open and Data server collapsed by default.
+- Moved Auto-fit into Preferences and enabled it by default.
+
 ## 0.3.5
 
 - Chart x-axis labels are dynamically thinned based on chart width and label length.

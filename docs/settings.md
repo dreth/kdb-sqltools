@@ -57,6 +57,8 @@ Very large values can make chart rendering slow or temporarily block the extensi
 | `kdb-sqltools.results.includeRowIndex` | `true` | Include 1-based row numbers by default when copying or exporting. |
 | `kdb-sqltools.results.hideLargeResultWarnings` | `false` | Hide large-result guardrail messages in the panel. |
 | `kdb-sqltools.results.hideLargeSortWarnings` | `false` | Skip large-result sort confirmation warnings. |
+| `kdb-sqltools.results.copyExportConfirmCellThreshold` | `1000000` | Selected-cell threshold that triggers copy/export confirmation. Minimum `1`; no hard upper bound. |
+| `kdb-sqltools.results.localDataServerFullExportCellLimit` | `1000000` | Visible-cell limit for local data server full-result `current.csv`, `current.json`, and `current.ndjson` exports. Minimum `1`; no hard upper bound. |
 | `kdb-sqltools.results.elapsedTimeDisplay` | `auto` | Use `auto` or `milliseconds` for elapsed time display. |
 
 ## Example
@@ -67,6 +69,8 @@ Very large values can make chart rendering slow or temporarily block the extensi
   "kdb-sqltools.results.kdbPanel.defaultRunMode": "replace",
   "kdb-sqltools.results.kdbPanel.arrayDisplayFormat": "space",
   "kdb-sqltools.results.includeHeaders": true,
-  "kdb-sqltools.results.includeRowIndex": true
+  "kdb-sqltools.results.includeRowIndex": true,
+  "kdb-sqltools.results.copyExportConfirmCellThreshold": 1000000,
+  "kdb-sqltools.results.localDataServerFullExportCellLimit": 1000000
 }
 ```

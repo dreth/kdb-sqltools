@@ -27,10 +27,12 @@ import {
   validateXlsxSheetLimits,
 } from './kdb-results';
 import {
+  LOCAL_DATA_SERVER_FULL_EXPORT_CELL_LIMIT,
   LocalDataServer,
   LocalDataServerEndpoint,
   LocalDataServerInfo,
   LocalDataServerSnapshot,
+  localDataServerFullExportCellLimitValue,
 } from './local-data-server';
 import { endPerfSpan, isPerfTraceEnabled, perfSpan } from './perf';
 
@@ -87,6 +89,8 @@ interface KdbPanelSettings {
   includeRowIndex: boolean;
   hideLargeResultWarnings: boolean;
   hideLargeSortWarnings: boolean;
+  copyExportConfirmCellThreshold: number;
+  localDataServerFullExportCellLimit: number;
   elapsedTimeDisplay: KdbPanelElapsedTimeDisplay;
   arrayDisplayFormat: ArrayDisplayFormat;
 }
@@ -127,6 +131,8 @@ const DEFAULT_PANEL_SETTINGS: KdbPanelSettings = {
   includeRowIndex: true,
   hideLargeResultWarnings: false,
   hideLargeSortWarnings: false,
+  copyExportConfirmCellThreshold: COPY_EXPORT_CONFIRM_CELL_THRESHOLD,
+  localDataServerFullExportCellLimit: LOCAL_DATA_SERVER_FULL_EXPORT_CELL_LIMIT,
   elapsedTimeDisplay: 'auto',
   arrayDisplayFormat: 'commaSpace',
 };
@@ -580,6 +586,7 @@ export class KdbResultsPanel {
 
     if (!this.localDataServer) {
       this.localDataServer = new LocalDataServer({
+        fullExportCellLimit: () => panelSettings().localDataServerFullExportCellLimit,
         provider: {
           current: () => this.localDataServerSnapshot(),
         },
@@ -1297,7 +1304,7 @@ export class KdbResultsPanel {
     format: ExportFormat,
     estimate: CopyExportEstimate
   ): Promise<boolean> {
-    const message = largeCopyExportConfirmationMessage(action, format, estimate);
+    const message = largeCopyExportConfirmationMessage(action, format, estimate, panelSettings().copyExportConfirmCellThreshold);
     if (!message) {
       return true;
     }
@@ -2110,9 +2117,12 @@ export class KdbResultsPanel {
     <details id="settingsMenu" class="settings">
       <summary id="settingsSummary" aria-label="Settings menu">Settings</summary>
       <div class="settings-panel" role="group" aria-label="Settings controls">
-        <div class="settings-section">
-          <div class="settings-heading"><span>View</span><span id="sortStatus" class="tool-menu-note">Sort: none</span></div>
-          <label class="checkbox"><input id="autoFit" type="checkbox" disabled>Auto-fit</label>
+        <div class="settings-compact-actions">
+          <button id="expandSettingsSections" type="button">Expand all</button>
+          <button id="collapseSettingsSections" type="button">Collapse all</button>
+        </div>
+        <details class="settings-section">
+          <summary class="settings-heading"><span>View</span><span id="sortStatus" class="tool-menu-note">Sort: none</span></summary>
           <label class="settings-row"><span>Header mode</span><select id="interactionMode" aria-label="Header mode">
             <option value="drag">Drag</option>
             <option value="select">Select</option>
@@ -2124,25 +2134,29 @@ export class KdbResultsPanel {
             <button id="searchNext" disabled>Next</button>
             <span id="searchStatus" class="search-status"></span>
           </span>
-        </div>
-        <div class="settings-section">
-          <div class="settings-heading"><span>Data server</span><span id="localDataServerBadge" class="tool-summary-status">Stopped</span></div>
+        </details>
+        <details class="settings-section" id="dataServerSection">
+          <summary class="settings-heading"><span>Data server</span><span id="localDataServerBadge" class="tool-summary-status">Stopped</span></summary>
           <div id="localDataServerStatus" class="tool-menu-status">Server stopped</div>
           <div id="localDataServerBaseUrl" class="tool-menu-note" hidden></div>
+          <div id="localDataServerHelp" class="tool-menu-note">For very large current.csv/json/ndjson exports, raise the local data server full-export cell limit. Panel Copy/Export prompts use a separate confirmation threshold.</div>
           <div class="tool-actions">
             <button id="startLocalDataServer" disabled>Start server</button>
             <button id="stopLocalDataServer" disabled>Stop server</button>
             <button id="copyCurrentCsvUrl" disabled>Copy current.csv URL</button>
             <button id="copyMetadataUrl" disabled>Copy metadata URL</button>
           </div>
-        </div>
-        <div class="settings-section">
-          <div class="settings-heading"><span>Preferences</span></div>
+        </details>
+        <details class="settings-section" open>
+          <summary class="settings-heading"><span>Preferences</span></summary>
+          <label class="checkbox"><input id="autoFit" type="checkbox" disabled>Auto-fit</label>
           <label class="checkbox"><input id="settingsShowRowIndex" type="checkbox">Show row #</label>
           <label class="checkbox"><input id="settingsIncludeHeaders" type="checkbox">Include headers</label>
           <label class="checkbox"><input id="settingsIncludeRowIndex" type="checkbox">Include row #</label>
           <label class="checkbox"><input id="settingsHideLargeResultWarnings" type="checkbox">Hide large-result warnings</label>
           <label class="checkbox"><input id="settingsHideLargeSortWarnings" type="checkbox">Hide large-sort warnings</label>
+          <label class="settings-row"><span>Copy/export confirm cells</span><input id="settingsCopyExportConfirmCellThreshold" type="number" min="1" step="1"></label>
+          <label class="settings-row"><span>Local server current.* cell limit</span><input id="settingsLocalDataServerFullExportCellLimit" type="number" min="1" step="1"></label>
           <label class="settings-row"><span>Elapsed time</span><select id="settingsElapsedTimeDisplay">
             <option value="auto">Auto</option>
             <option value="milliseconds">Milliseconds</option>
@@ -2160,9 +2174,9 @@ export class KdbResultsPanel {
           <label class="settings-row"><span>Cell width</span><input id="settingsCellWidth" type="number" min="80" max="600" step="1"></label>
           <label class="settings-row"><span>Row height</span><input id="settingsRowHeight" type="number" min="20" max="80" step="1"></label>
           <label class="settings-row"><span>Font size</span><input id="settingsFontSize" type="number" min="0" max="32" step="1"></label>
-        </div>
-        <div class="settings-section">
-          <div class="settings-heading"><span>Columns</span><span id="hiddenColumns">All visible</span></div>
+        </details>
+        <details class="settings-section">
+          <summary class="settings-heading"><span>Columns</span><span id="hiddenColumns">All visible</span></summary>
           <div class="settings-actions">
             <button id="selectAllColumns" type="button">Select all</button>
             <button id="deselectAllColumns" type="button">Deselect all</button>
@@ -2170,7 +2184,7 @@ export class KdbResultsPanel {
           <div id="columnList" class="column-list" role="list"></div>
           <button id="resetColumns" class="reset-columns" disabled>Reset hidden columns</button>
           <button id="resetColumnWidths" class="reset-columns" disabled>Reset column widths</button>
-        </div>
+        </details>
       </div>
     </details>
     <button id="cancelQuery" class="cancel-query" title="Cancel running q query" aria-label="Cancel running q query" hidden disabled>Cancel</button>
@@ -2235,6 +2249,8 @@ export class KdbResultsPanel {
         includeRowIndex: true,
         hideLargeResultWarnings: false,
         hideLargeSortWarnings: false,
+        copyExportConfirmCellThreshold: 1000000,
+        localDataServerFullExportCellLimit: 1000000,
         elapsedTimeDisplay: 'auto',
         arrayDisplayFormat: 'commaSpace'
       };
@@ -2255,11 +2271,15 @@ export class KdbResultsPanel {
       const searchNext = document.getElementById('searchNext');
       const searchStatus = document.getElementById('searchStatus');
       const settingsMenu = document.getElementById('settingsMenu');
+      const expandSettingsSections = document.getElementById('expandSettingsSections');
+      const collapseSettingsSections = document.getElementById('collapseSettingsSections');
       const settingsShowRowIndex = document.getElementById('settingsShowRowIndex');
       const settingsIncludeHeaders = document.getElementById('settingsIncludeHeaders');
       const settingsIncludeRowIndex = document.getElementById('settingsIncludeRowIndex');
       const settingsHideLargeResultWarnings = document.getElementById('settingsHideLargeResultWarnings');
       const settingsHideLargeSortWarnings = document.getElementById('settingsHideLargeSortWarnings');
+      const settingsCopyExportConfirmCellThreshold = document.getElementById('settingsCopyExportConfirmCellThreshold');
+      const settingsLocalDataServerFullExportCellLimit = document.getElementById('settingsLocalDataServerFullExportCellLimit');
       const settingsElapsedTimeDisplay = document.getElementById('settingsElapsedTimeDisplay');
       const settingsArrayDisplayFormat = document.getElementById('settingsArrayDisplayFormat');
       const settingsDensity = document.getElementById('settingsDensity');
@@ -2323,7 +2343,7 @@ export class KdbResultsPanel {
       let autoColumnWidths = Object.create(null);
       let columnWidthSchema = [];
       let resizeState = null;
-      let autoFitEnabled = false;
+      let autoFitEnabled = true;
       let columnDragState = null;
       let localDataServer = null;
       let latestChartRequestId = 0;
@@ -2424,6 +2444,10 @@ export class KdbResultsPanel {
       settingsIncludeRowIndex.addEventListener('change', () => updateSetting('includeRowIndex', !!settingsIncludeRowIndex.checked));
       settingsHideLargeResultWarnings.addEventListener('change', () => updateSetting('hideLargeResultWarnings', !!settingsHideLargeResultWarnings.checked));
       settingsHideLargeSortWarnings.addEventListener('change', () => updateSetting('hideLargeSortWarnings', !!settingsHideLargeSortWarnings.checked));
+      settingsCopyExportConfirmCellThreshold.addEventListener('change', () => updatePositiveIntegerSetting('copyExportConfirmCellThreshold', settingsCopyExportConfirmCellThreshold));
+      settingsLocalDataServerFullExportCellLimit.addEventListener('change', () => updatePositiveIntegerSetting('localDataServerFullExportCellLimit', settingsLocalDataServerFullExportCellLimit));
+      expandSettingsSections.addEventListener('click', () => setSettingsSectionsOpen(true));
+      collapseSettingsSections.addEventListener('click', () => setSettingsSectionsOpen(false));
       settingsElapsedTimeDisplay.addEventListener('change', () => updateSetting('elapsedTimeDisplay', String(settingsElapsedTimeDisplay.value || 'auto')));
       settingsArrayDisplayFormat.addEventListener('change', () => updateSetting('arrayDisplayFormat', normalizeArrayDisplayFormat(settingsArrayDisplayFormat.value)));
       settingsDensity.addEventListener('change', () => updateDensitySetting(String(settingsDensity.value || 'standard')));
@@ -3573,6 +3597,8 @@ export class KdbResultsPanel {
           includeRowIndex: typeof value.includeRowIndex === 'boolean' ? value.includeRowIndex : DEFAULT_SETTINGS.includeRowIndex,
           hideLargeResultWarnings: typeof value.hideLargeResultWarnings === 'boolean' ? value.hideLargeResultWarnings : DEFAULT_SETTINGS.hideLargeResultWarnings,
           hideLargeSortWarnings: typeof value.hideLargeSortWarnings === 'boolean' ? value.hideLargeSortWarnings : DEFAULT_SETTINGS.hideLargeSortWarnings,
+          copyExportConfirmCellThreshold: positiveIntegerSetting(value.copyExportConfirmCellThreshold, DEFAULT_SETTINGS.copyExportConfirmCellThreshold),
+          localDataServerFullExportCellLimit: positiveIntegerSetting(value.localDataServerFullExportCellLimit, DEFAULT_SETTINGS.localDataServerFullExportCellLimit),
           elapsedTimeDisplay: normalizeElapsedTimeDisplay(value.elapsedTimeDisplay),
           arrayDisplayFormat: normalizeArrayDisplayFormat(value.arrayDisplayFormat)
         };
@@ -3586,6 +3612,8 @@ export class KdbResultsPanel {
         settingsIncludeRowIndex.checked = settings.includeRowIndex;
         settingsHideLargeResultWarnings.checked = settings.hideLargeResultWarnings;
         settingsHideLargeSortWarnings.checked = settings.hideLargeSortWarnings;
+        settingsCopyExportConfirmCellThreshold.value = String(settings.copyExportConfirmCellThreshold);
+        settingsLocalDataServerFullExportCellLimit.value = String(settings.localDataServerFullExportCellLimit);
         settingsElapsedTimeDisplay.value = settings.elapsedTimeDisplay;
         settingsArrayDisplayFormat.value = settings.arrayDisplayFormat;
         settingsDensity.value = settings.density;
@@ -3605,6 +3633,8 @@ export class KdbResultsPanel {
           includeRowIndex: settings.includeRowIndex,
           hideLargeResultWarnings: settings.hideLargeResultWarnings,
           hideLargeSortWarnings: settings.hideLargeSortWarnings,
+          copyExportConfirmCellThreshold: settings.copyExportConfirmCellThreshold,
+          localDataServerFullExportCellLimit: settings.localDataServerFullExportCellLimit,
           elapsedTimeDisplay: settings.elapsedTimeDisplay,
           arrayDisplayFormat: settings.arrayDisplayFormat
         };
@@ -3638,6 +3668,30 @@ export class KdbResultsPanel {
           return;
         }
         updateSetting(key, clampInteger(value, min, max));
+      }
+
+      function updatePositiveIntegerSetting(key, input) {
+        const value = Number(input.value);
+        if (!Number.isFinite(value) || value < 1) {
+          syncSettingsControls();
+          return;
+        }
+        updateSetting(key, Math.floor(value));
+      }
+
+      function positiveIntegerSetting(value, fallback) {
+        const number = Number(value);
+        if (!Number.isFinite(number)) {
+          return fallback;
+        }
+        const integer = Math.floor(number);
+        return integer >= 1 ? integer : fallback;
+      }
+
+      function setSettingsSectionsOpen(open) {
+        settingsMenu.querySelectorAll('.settings-section').forEach(section => {
+          section.open = open;
+        });
       }
 
       function renderColumnSettings() {
@@ -4760,6 +4814,14 @@ function panelSettings(): KdbPanelSettings {
       config.get<boolean>('hideLargeSortWarnings'),
       DEFAULT_PANEL_SETTINGS.hideLargeSortWarnings
     ),
+    copyExportConfirmCellThreshold: positiveIntegerConfigSetting(
+      config.get<number>('copyExportConfirmCellThreshold'),
+      DEFAULT_PANEL_SETTINGS.copyExportConfirmCellThreshold
+    ),
+    localDataServerFullExportCellLimit: localDataServerFullExportCellLimitValue(
+      config.get<number>('localDataServerFullExportCellLimit'),
+      DEFAULT_PANEL_SETTINGS.localDataServerFullExportCellLimit
+    ),
     elapsedTimeDisplay: panelElapsedTimeDisplay(config.get<string>('elapsedTimeDisplay')),
     arrayDisplayFormat: panelArrayDisplayFormat(config.get<string>('kdbPanel.arrayDisplayFormat')),
   };
@@ -4892,6 +4954,8 @@ const RESULT_SETTING_UPDATE_ALLOWLIST: { [key: string]: PanelSettingUpdateValida
   includeRowIndex: booleanSettingUpdate,
   hideLargeResultWarnings: booleanSettingUpdate,
   hideLargeSortWarnings: booleanSettingUpdate,
+  copyExportConfirmCellThreshold: positiveIntegerSettingUpdate,
+  localDataServerFullExportCellLimit: positiveIntegerSettingUpdate,
   elapsedTimeDisplay: elapsedTimeDisplaySettingUpdate,
   arrayDisplayFormat: arrayDisplayFormatSettingUpdate,
 };
@@ -4924,6 +4988,15 @@ function booleanSetting(value: any, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback;
 }
 
+function positiveIntegerConfigSetting(value: any, fallback: number): number {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return fallback;
+  }
+  const integer = Math.floor(number);
+  return integer >= 1 ? integer : fallback;
+}
+
 function panelDensity(value: any): KdbPanelDensity {
   return value === 'compact' || value === 'comfortable' ? value : 'standard';
 }
@@ -4943,6 +5016,15 @@ function numberSettingUpdate(value: any, min: number, max: number): number | nul
   }
 
   return Math.min(Math.max(Math.floor(number), min), max);
+}
+
+function positiveIntegerSettingUpdate(value: any): number | null {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return null;
+  }
+  const integer = Math.floor(number);
+  return integer >= 1 ? integer : null;
 }
 
 function densitySettingUpdate(value: any): string | null {
@@ -5228,10 +5310,11 @@ function estimateCopyExport(
 function largeCopyExportConfirmationMessage(
   action: 'copy' | 'export',
   format: ExportFormat,
-  estimate: CopyExportEstimate
+  estimate: CopyExportEstimate,
+  confirmCellThreshold = COPY_EXPORT_CONFIRM_CELL_THRESHOLD
 ): string | undefined {
   if (
-    estimate.selectedCells < COPY_EXPORT_CONFIRM_CELL_THRESHOLD &&
+    estimate.selectedCells < confirmCellThreshold &&
     estimate.estimatedBytes < COPY_EXPORT_CONFIRM_BYTES
   ) {
     return undefined;

@@ -2,7 +2,7 @@
   "name": "kdb-sqltools",
   "displayName": "SQLTools kdb Driver",
   "description": "SQLTools driver for kdb+/q using q IPC over TCP",
-  "version": "0.3.5",
+  "version": "0.3.7",
   "engines": {
     "vscode": "^1.42.0"
   },
@@ -530,6 +530,18 @@
             "Always show raw elapsed milliseconds."
           ],
           "description": "Elapsed time display format in the kdb results panel."
+        },
+        "kdb-sqltools.results.copyExportConfirmCellThreshold": {
+          "type": "integer",
+          "default": 1000000,
+          "minimum": 1,
+          "description": "Selected-cell threshold that triggers copy/export confirmation in the kdb results panel. There is no hard upper bound; higher values can make very large copy/export actions run without prompting and may temporarily block the extension host."
+        },
+        "kdb-sqltools.results.localDataServerFullExportCellLimit": {
+          "type": "integer",
+          "default": 1000000,
+          "minimum": 1,
+          "description": "Visible-cell limit for local data server full-result current.csv, current.json, and current.ndjson exports. There is no hard upper bound; higher values can make very large local HTTP exports materialize in the extension host."
         }
       }
     }

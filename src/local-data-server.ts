@@ -46,6 +46,7 @@ export interface LocalDataServerProvider {
 }
 
 export interface LocalDataServerOptions {
+  fullExportCellLimit?: () => number;
   preferredPort?: number;
   provider: LocalDataServerProvider;
 }
@@ -62,12 +63,14 @@ interface HttpErrorResponse {
 }
 
 export class LocalDataServer {
+  private readonly fullExportCellLimitValue: () => number;
   private readonly provider: LocalDataServerProvider;
   private readonly preferredPort: number;
   private server: http.Server | undefined;
   private infoValue: LocalDataServerInfo | undefined;
 
   public constructor(options: LocalDataServerOptions) {
+    this.fullExportCellLimitValue = options.fullExportCellLimit || (() => LOCAL_DATA_SERVER_FULL_EXPORT_CELL_LIMIT);
     this.provider = options.provider;
     this.preferredPort = preferredPort(options.preferredPort);
   }
@@ -159,30 +162,34 @@ export class LocalDataServer {
   ): void {
     switch (route.endpoint) {
       case 'metadata.json':
-        writeJson(response, 200, metadataBody(snapshot));
+        writeJson(response, 200, metadataBody(snapshot, this.fullExportCellLimit()));
         return;
       case 'current.csv':
-        writeTable(response, snapshot, allCellsRange(snapshot.table.rowCount, snapshot.table.columns.length), 'csv', true);
+        writeTable(response, snapshot, allCellsRange(snapshot.table.rowCount, snapshot.table.columns.length), 'csv', true, this.fullExportCellLimit());
         return;
       case 'current.json':
-        writeTable(response, snapshot, allCellsRange(snapshot.table.rowCount, snapshot.table.columns.length), 'json', true);
+        writeTable(response, snapshot, allCellsRange(snapshot.table.rowCount, snapshot.table.columns.length), 'json', true, this.fullExportCellLimit());
         return;
       case 'current.ndjson':
-        writeTable(response, snapshot, allCellsRange(snapshot.table.rowCount, snapshot.table.columns.length), 'ndjson', true);
+        writeTable(response, snapshot, allCellsRange(snapshot.table.rowCount, snapshot.table.columns.length), 'ndjson', true, this.fullExportCellLimit());
         return;
       case 'slice.csv':
-        writeTable(response, snapshot, sliceRange(snapshot.table, route.params), 'csv', false);
+        writeTable(response, snapshot, sliceRange(snapshot.table, route.params), 'csv', false, this.fullExportCellLimit());
         return;
       case 'slice.json':
-        writeTable(response, snapshot, sliceRange(snapshot.table, route.params), 'json', false);
+        writeTable(response, snapshot, sliceRange(snapshot.table, route.params), 'json', false, this.fullExportCellLimit());
         return;
       case 'selection.csv':
-        writeSelection(response, snapshot, 'csv');
+        writeSelection(response, snapshot, 'csv', this.fullExportCellLimit());
         return;
       case 'selection.json':
-        writeSelection(response, snapshot, 'json');
+        writeSelection(response, snapshot, 'json', this.fullExportCellLimit());
         return;
     }
+  }
+
+  private fullExportCellLimit(): number {
+    return localDataServerFullExportCellLimitValue(this.fullExportCellLimitValue());
   }
 }
 
@@ -293,7 +300,19 @@ function isHttpError(value: LocalDataServerRoute | HttpErrorResponse): value is 
   return typeof (value as HttpErrorResponse).status === 'number';
 }
 
-function metadataBody(snapshot: LocalDataServerSnapshot): any {
+export function localDataServerFullExportCellLimitValue(
+  value: any,
+  fallback = LOCAL_DATA_SERVER_FULL_EXPORT_CELL_LIMIT
+): number {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return fallback;
+  }
+  const integer = Math.floor(number);
+  return integer >= 1 ? integer : fallback;
+}
+
+function metadataBody(snapshot: LocalDataServerSnapshot, fullExportCellLimit: number): any {
   return {
     ...snapshot.metadata,
     visibleColumns: snapshot.table.columns.slice(),
@@ -309,7 +328,7 @@ function metadataBody(snapshot: LocalDataServerSnapshot): any {
         'selection.csv',
         'selection.json',
       ],
-      fullExportCellLimit: LOCAL_DATA_SERVER_FULL_EXPORT_CELL_LIMIT,
+      fullExportCellLimit,
       sliceCellLimit: LOCAL_DATA_SERVER_SLICE_CELL_LIMIT,
     },
   };
@@ -318,7 +337,8 @@ function metadataBody(snapshot: LocalDataServerSnapshot): any {
 function writeSelection(
   response: http.ServerResponse,
   snapshot: LocalDataServerSnapshot,
-  format: TextExportFormat
+  format: TextExportFormat,
+  fullExportCellLimit: number
 ): void {
   if (!snapshot.selectionRange) {
     writeJson(response, 400, errorBody('no_selection', 'No current webview selection has been sent to the extension.'));
@@ -329,7 +349,7 @@ function writeSelection(
     writeJson(response, 400, errorBody('empty_selection', 'The current webview selection is empty.'));
     return;
   }
-  writeTable(response, snapshot, range, format, false);
+  writeTable(response, snapshot, range, format, false, fullExportCellLimit);
 }
 
 function writeTable(
@@ -337,21 +357,22 @@ function writeTable(
   snapshot: LocalDataServerSnapshot,
   range: CellRange,
   format: TextExportFormat,
-  fullExport: boolean
+  fullExport: boolean,
+  fullExportCellLimit: number
 ): void {
   const clamped = clampCellRange(range, snapshot.table.rowCount, snapshot.table.columns.length);
   const selectedCells = clamped
     ? (clamped.endRow - clamped.startRow + 1) * (clamped.endColumn - clamped.startColumn + 1)
     : 0;
   const limit = fullExport
-    ? LOCAL_DATA_SERVER_FULL_EXPORT_CELL_LIMIT
+    ? fullExportCellLimit
     : LOCAL_DATA_SERVER_SLICE_CELL_LIMIT;
-  if ((fullExport && selectedCells >= limit) || (!fullExport && selectedCells > limit)) {
+  if (selectedCells > limit) {
     throw {
       status: fullExport ? 413 : 400,
       code: fullExport ? 'full_export_too_large' : 'slice_too_large',
       message: fullExport
-        ? `Full export has ${selectedCells} visible cells; use slice endpoints for ${limit} or more cells.`
+        ? `Full export has ${selectedCells} visible cells; raise the local data server full-export cell limit or use slice endpoints for more than ${limit} cells.`
         : `Slice has ${selectedCells} visible cells; request at most ${limit} cells.`,
     };
   }
