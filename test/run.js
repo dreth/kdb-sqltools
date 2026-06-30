@@ -991,6 +991,9 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('localResourceRoots: [uplotDistRoot]'), true);
   assert.strictEqual(resultsPanelSource.includes('script-src ${cspSource}'), true);
   assert.strictEqual(resultsPanelSource.includes('new window.uPlot(chartUPlotOptions(dimensions), chartAlignedData(), chartPlot)'), true);
+  assert.strictEqual(resultsPanelSource.includes('function chartThinnedXAxisLabels(self, splits)'), true);
+  assert.strictEqual(resultsPanelSource.includes('function chartMaxVisibleXAxisLabels(self, labels)'), true);
+  assert.strictEqual(resultsPanelSource.includes('values: (self, splits) => chartThinnedXAxisLabels(self, splits)'), true);
   assert.strictEqual(resultsPanelSource.includes('drag: { setScale: true, x: true, y: false, dist: 5 }'), true);
   assert.strictEqual(resultsPanelSource.includes('function resetChartZoom()'), true);
   assert.strictEqual(resultsPanelSource.includes("chartUPlot.root.querySelector('canvas')"), true);
@@ -1373,6 +1376,10 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(readmeSource.includes('The top toolbar is a single compact line'), true);
   assert.strictEqual(readmeSource.includes('`Settings` contains view controls, search, hidden columns, output defaults, and `Data server` controls'), true);
   assert.strictEqual(chartingDocsSource.includes('PNG export saves the rendered uPlot canvas'), true);
+  assert.strictEqual(chartingDocsSource.includes('X-axis labels are auto-thinned'), true);
+  assert.strictEqual(chartingDocsSource.includes('dense numeric and timestamp axes readable'), true);
+  assert.strictEqual(readmeSource.includes('auto-thinned readable x-axis labels'), true);
+  assert.strictEqual(resultsDocsSource.includes('auto-thinned readable x-axis labels'), true);
   assert.strictEqual(chartingDocsSource.includes('uPlot powers the built-in chart'), true);
   assert.strictEqual(chartingDocsSource.includes('cursor/crosshair tooltip'), true);
   assert.strictEqual(chartingDocsSource.includes('drag-select zoom'), true);

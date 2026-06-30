@@ -55,7 +55,7 @@ Output: [format] [Headers] [Row #] [Copy] [Export] [Chart] [Settings] [Cancel] [
 
 | Tool | Behavior |
 | --- | --- |
-| Chart menu | Top-level dropdown that opens the uPlot-powered line chart UI for the current visible result. After the chart panel is open, it provides x/y controls, cursor tooltip, drag zoom, reset zoom, legend toggling, and PNG export after render. |
+| Chart menu | Top-level dropdown that opens the uPlot-powered line chart UI for the current visible result. After the chart panel is open, it provides x/y controls, auto-thinned readable x-axis labels, cursor tooltip, drag zoom, reset zoom, legend toggling, and PNG export after render. |
 | Settings menu | Contains view controls, search, hidden columns, output defaults, and the local data server controls. The data server subgroup starts or stops the opt-in `127.0.0.1` server and copies current-result URLs. The base URL is shown only there when running. |
 
 The local data server and chart both use the extension-side current result. Hidden, reordered, and sorted visible columns are honored where they apply.

@@ -3288,7 +3288,7 @@ export class KdbResultsPanel {
               stroke: axisColor,
               grid: { stroke: gridColor, width: 1 },
               ticks: { stroke: gridColor, width: 1 },
-              values: (_self, splits) => splits.map(value => chartXAxisLabel(value))
+              values: (self, splits) => chartThinnedXAxisLabels(self, splits)
             },
             {
               scale: 'y',
@@ -3419,6 +3419,52 @@ export class KdbResultsPanel {
         }
         const index = nearestChartXIndex(value);
         return chartData.xText[index] || formatChartNumber(chartData.x[index]);
+      }
+
+      function chartThinnedXAxisLabels(self, splits) {
+        if (!Array.isArray(splits) || splits.length === 0) {
+          return [];
+        }
+        const labels = splits.map(value => chartXAxisLabel(value));
+        const maxLabels = chartMaxVisibleXAxisLabels(self, labels);
+        if (splits.length <= maxLabels) {
+          return labels;
+        }
+        const visibleIndexes = new Set([0, splits.length - 1]);
+        const step = Math.max(1, Math.ceil((splits.length - 1) / Math.max(1, maxLabels - 1)));
+        for (let index = 0; index < splits.length; index += step) {
+          visibleIndexes.add(index);
+        }
+        return labels.map((label, index) => visibleIndexes.has(index) ? label : '');
+      }
+
+      function chartMaxVisibleXAxisLabels(self, labels) {
+        const plotWidth = chartXAxisPlotWidth(self);
+        const maxLabelChars = labels.reduce((max, label) => Math.max(max, String(label || '').length), 1);
+        const temporal = !!chartData && chartData.xKind === 'temporal';
+        const charWidth = temporal ? 7.5 : 7;
+        const padding = temporal ? 36 : 24;
+        const minSpacing = Math.min(
+          temporal ? 220 : 160,
+          Math.max(temporal ? 110 : 60, Math.ceil(maxLabelChars * charWidth + padding))
+        );
+        return clampInteger(Math.floor(plotWidth / minSpacing), 2, Math.max(2, labels.length));
+      }
+
+      function chartXAxisPlotWidth(self) {
+        if (self && self.over && typeof self.over.getBoundingClientRect === 'function') {
+          const rect = self.over.getBoundingClientRect();
+          if (Number.isFinite(rect.width) && rect.width > 0) {
+            return rect.width;
+          }
+        }
+        if (self && self.bbox && Number.isFinite(self.bbox.width) && self.bbox.width > 0) {
+          return self.bbox.width;
+        }
+        if (chartCanvasWrap && Number.isFinite(chartCanvasWrap.clientWidth) && chartCanvasWrap.clientWidth > 0) {
+          return Math.max(0, chartCanvasWrap.clientWidth - 80);
+        }
+        return 320;
       }
 
       function nearestChartXIndex(value) {
