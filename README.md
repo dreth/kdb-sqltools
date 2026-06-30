@@ -111,17 +111,17 @@ Selection supports individual ranges, whole rows, whole columns, and all cells. 
 
 Columns can be hidden from the panel settings menu for the current panel session. Select all and Deselect all controls are available; deselecting all data columns leaves the row-number column and a clear empty state. Hidden columns stay hidden for later results in that panel only when the full column list matches, and reset restores all columns. Hidden-column choices are not saved globally.
 
-The Settings menu Auto-fit checkbox sizes visible columns from headers plus the currently rendered cells as you scroll. Column widths can still be dragged per session, and Reset column widths clears manual overrides.
+The Settings -> Preferences Auto-fit checkbox is enabled by default and sizes visible columns from headers plus the currently rendered cells as you scroll. Column widths can still be dragged per session, and Reset column widths clears manual overrides.
 
 Header mode defaults to Drag. Drag column headers to reorder visible columns for the current panel session; copy, export, search, and sort use that visible order. Change the Settings menu mode to Select for whole-column selection or Sort to sort visible columns in the extension; repeated sort clicks cycle ascending, descending, and original order. Sorting uses the panel's visible cell text, warns before sorting very large row counts, and resets on the third click.
 
 Settings menu search runs in the extension against visible columns only. It returns capped row-match metadata to the webview instead of transferring all result cells, and the status marks capped or partial scans.
 
-The top toolbar is a single compact line: `Output`, copy/export controls, a top-level `Chart` dropdown, `Settings`, and the short loading-only `Cancel` button. `Settings` contains view controls, search, hidden columns, output defaults, and `Data server` controls. The data server can start a tokenized local server for the current panel result and copy current-result URLs; its base URL is shown only in the Settings data-server section. `Chart` opens a uPlot-powered line/time-series chart panel. The local server never starts automatically, binds only to `127.0.0.1`, and falls forward from port `7742` if needed. The built-in chart supports one numeric/temporal x column and one or more numeric y columns from visible columns, with extension-side min/max downsampling before data reaches the webview, auto-thinned readable x-axis labels for dense timestamp or numeric axes, cursor tooltips, drag zoom, reset zoom, legend toggling, and PNG export after render.
+The top toolbar is a single compact line: `Output`, copy/export controls, a top-level `Chart` dropdown, `Settings`, and the short loading-only `Cancel` button. `Settings` contains collapsible sections for view controls, search, hidden columns, output defaults, and `Data server` controls. The data server can start a tokenized local server for the current panel result and copy current-result URLs; its base URL is shown only in the Settings data-server section. `Chart` opens a uPlot-powered line/time-series chart panel. The local server never starts automatically, binds only to `127.0.0.1`, and falls forward from port `7742` if needed. The built-in chart supports one numeric/temporal x column and one or more numeric y columns from visible columns, with extension-side min/max downsampling before data reaches the webview, auto-thinned readable x-axis labels for dense timestamp or numeric axes, cursor tooltips, drag zoom, reset zoom, legend toggling, and PNG export after render.
 
 Normal successful result messages stay hidden because the top summary already shows row count and elapsed time; errors remain visible in the message area.
 
-Copy formats: CSV, TSV, JSON, NDJSON, HTML, Markdown. Right-click Copy in the table viewport uses the same selected range and copy settings as `Ctrl+C` / `Cmd+C`. Export formats: CSV, XLSX, TSV, JSON, NDJSON, HTML, Markdown. XLSX export writes a real `.xlsx` workbook and rejects output beyond Excel's sheet limits; XLSX remains export-only and cannot be copied. Large copy/export actions prompt before materializing output. The row-number/header copy and export options are enabled by default and persist globally from the panel settings menu.
+Copy formats: CSV, TSV, JSON, NDJSON, HTML, Markdown. Right-click Copy in the table viewport uses the same selected range and copy settings as `Ctrl+C` / `Cmd+C`. Export formats: CSV, XLSX, TSV, JSON, NDJSON, HTML, Markdown. XLSX export writes a real `.xlsx` workbook and rejects output beyond Excel's sheet limits; XLSX remains export-only and cannot be copied. Large copy/export actions prompt before materializing output; the confirmation cell threshold is configurable from Settings -> Preferences or `kdb-sqltools.results.copyExportConfirmCellThreshold`. The row-number/header copy and export options are enabled by default and persist globally from the panel settings menu.
 
 kdb panel settings:
 
@@ -148,11 +148,13 @@ kdb panel settings:
   "kdb-sqltools.results.includeRowIndex": true,
   "kdb-sqltools.results.hideLargeResultWarnings": false,
   "kdb-sqltools.results.hideLargeSortWarnings": false,
+  "kdb-sqltools.results.copyExportConfirmCellThreshold": 1000000,
+  "kdb-sqltools.results.localDataServerFullExportCellLimit": 1000000,
   "kdb-sqltools.results.elapsedTimeDisplay": "auto"
 }
 ```
 
-`fontSize: 0` uses the VS Code default. Density can be `compact`, `standard`, or `comfortable`; each density has its own saved `cellWidth`, `rowHeight`, and `fontSize`. The legacy top-level size settings remain as fallbacks for existing user configuration. `elapsedTimeDisplay` can be `auto` or `milliseconds`. `arrayDisplayFormat` can be `commaSpace` (`1, 2, 3`), `space` (`1 2 3`), or `raw` (`[1 2 3]` where q-ish bracketed display is supported). `showRowIndex` controls the visible left row-number column; `includeHeaders` and `includeRowIndex` control default copy/export output. Text copy/export formats use display text; JSON and NDJSON keep structured values. Large-result and large-sort warnings can be suppressed from the panel or these settings.
+`fontSize: 0` uses the VS Code default. Density can be `compact`, `standard`, or `comfortable`; each density has its own saved `cellWidth`, `rowHeight`, and `fontSize`. The legacy top-level size settings remain as fallbacks for existing user configuration. `elapsedTimeDisplay` can be `auto` or `milliseconds`. `arrayDisplayFormat` can be `commaSpace` (`1, 2, 3`), `space` (`1 2 3`), or `raw` (`[1 2 3]` where q-ish bracketed display is supported). `showRowIndex` controls the visible left row-number column; `includeHeaders` and `includeRowIndex` control default copy/export output. Text copy/export formats use display text; JSON and NDJSON keep structured values. Large-result and large-sort warnings can be suppressed from the panel or these settings. `copyExportConfirmCellThreshold` controls when panel copy/export asks for confirmation; `localDataServerFullExportCellLimit` controls the local data server hard limit for full `current.*` exports.
 
 ## Performance Trace
 

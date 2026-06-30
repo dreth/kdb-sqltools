@@ -10,11 +10,11 @@ Start it from the kdb results panel:
 
 1. Run q into a kdb results panel.
 2. Open `Settings`.
-3. Find the `Data server` section.
+3. Expand the collapsed `Data server` section.
 4. Use `Start server`.
 5. Use `Copy current.csv URL` or `Copy metadata URL`.
 
-When the server is running, the `Data server` section shows a short `host:port` badge. The tokenized base URL is shown only inside that Settings section.
+When the server is running, the collapsed `Data server` section shows a short `host:port` badge. The tokenized base URL is shown only inside that Settings section.
 
 Command Palette commands are also available:
 
@@ -53,7 +53,15 @@ Selection endpoints return a JSON `400` error until the webview has sent a curre
 
 ## Guardrails
 
-Full-result endpoints reject very large visible results. Use `slice.csv` or `slice.json` for large tables.
+Full-result endpoints reject visible results above `kdb-sqltools.results.localDataServerFullExportCellLimit`, which defaults to `1000000` cells and can be changed from `Settings` -> `Preferences` or VS Code settings. The copy/export confirmation threshold does not raise this server hard limit. Use `slice.csv` or `slice.json` for large tables.
+
+```json
+{
+  "kdb-sqltools.results.localDataServerFullExportCellLimit": 1000000
+}
+```
+
+The setting has a minimum of `1` and no hard upper bound. Raising it can make a large HTTP response materialize in the extension host.
 
 Slice requests validate row and column bounds and are limited to a fixed cell count. Errors are returned as JSON with an `error.code` and `error.message`.
 

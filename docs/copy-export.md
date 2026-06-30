@@ -37,7 +37,17 @@ JSON and NDJSON keep structured values where the driver has structured values av
 
 ## Guardrails
 
-Large copy and export actions prompt before materializing output.
+Large copy and export actions prompt before materializing output. The selected-cell confirmation threshold defaults to `1000000` and can be changed in the panel `Settings` -> `Preferences` section or with:
+
+```json
+{
+  "kdb-sqltools.results.copyExportConfirmCellThreshold": 1000000
+}
+```
+
+The setting has a minimum of `1` and no hard upper bound. Raising it can make very large copy/export actions run without prompting and may temporarily block the extension host.
+
+Local data server full-result `current.csv`, `current.json`, and `current.ndjson` exports use a separate configurable limit: `kdb-sqltools.results.localDataServerFullExportCellLimit`. The Data server section shows a reminder because raising the copy/export confirmation threshold does not raise the local server hard limit.
 
 XLSX export rejects output beyond Excel worksheet limits:
 

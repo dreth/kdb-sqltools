@@ -37,7 +37,7 @@ Server-side interruption is best-effort. If the q process or gateway has already
 | Feature | Behavior |
 | --- | --- |
 | Resize | Drag column edges to set widths for the current panel session. |
-| Auto-fit | Enable from `Settings`. It sizes visible columns from headers and currently rendered cells as you scroll. |
+| Auto-fit | Enabled by default from `Settings` -> `Preferences`. It sizes visible columns from headers and currently rendered cells as you scroll. |
 | Reorder | `Settings` -> header mode `Drag` lets you drag headers to reorder visible columns. A drag cue marks the insertion position. |
 | Select columns | `Settings` -> header mode `Select` turns header clicks into whole-column selection. |
 | Sort | `Settings` -> header mode `Sort` cycles ascending, descending, and original order. Sorting uses visible cell text. |
@@ -56,7 +56,7 @@ Output: [format] [Headers] [Row #] [Copy] [Export] [Chart] [Settings] [Cancel] [
 | Tool | Behavior |
 | --- | --- |
 | Chart menu | Top-level dropdown that opens the uPlot-powered line chart UI for the current visible result. After the chart panel is open, it provides x/y controls, auto-thinned readable x-axis labels, cursor tooltip, drag zoom, reset zoom, legend toggling, and PNG export after render. |
-| Settings menu | Contains view controls, search, hidden columns, output defaults, and the local data server controls. The data server subgroup starts or stops the opt-in `127.0.0.1` server and copies current-result URLs. The base URL is shown only there when running. |
+| Settings menu | Contains collapsible sections for view controls, search, hidden columns, output defaults, and local data server controls. Preferences opens by default; Data server is collapsed by default. The Data server section starts or stops the opt-in `127.0.0.1` server, copies current-result URLs, and reminds users that very large current.* exports may need a higher local server cell limit. |
 
 The local data server and chart both use the extension-side current result. Hidden, reordered, and sorted visible columns are honored where they apply.
 
