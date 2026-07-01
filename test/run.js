@@ -670,6 +670,7 @@ function panelFormatElapsedMs(milliseconds, display) {
     'size:numeric',
   ]);
   assert.deepStrictEqual(chartOptions.yColumns.map(option => option.columnName), ['price', 'size']);
+  assert.deepStrictEqual(chartOptions.groupColumns.map(option => `${option.columnName}:${option.kind}`), ['sym:categorical']);
   const unsortedChart = buildLineChartData(chartTable, {
     version: 2,
     requestId: 3,
@@ -693,6 +694,48 @@ function panelFormatElapsedMs(milliseconds, display) {
   });
   assert.strictEqual(scatterChart.chartType, 'scatter');
   assert.deepStrictEqual(scatterChart.series.map(series => series.columnName), ['price', 'size']);
+  const groupedChart = buildChartData(chartTable, {
+    chartType: 'line',
+    version: 2,
+    requestId: 5,
+    xColumn: 'ts',
+    yColumns: ['size'],
+    groupByColumn: 'sym',
+    width: 800,
+  });
+  assert.strictEqual(groupedChart.groupByColumn, 'sym');
+  assert.deepStrictEqual(groupedChart.series.map(series => series.columnName), [
+    'size [B]',
+    'size [C]',
+    'size [A]',
+    'size [D]',
+  ]);
+  assert.deepStrictEqual(groupedChart.series[0].values, [200, null, null, null]);
+  assert.deepStrictEqual(groupedChart.series[2].values, [null, null, 100, null]);
+  const zoomRangeChart = buildChartData(chartTable, {
+    chartType: 'line',
+    version: 2,
+    requestId: 6,
+    xColumn: 'ts',
+    yColumns: ['size'],
+    xMin: Date.parse('2024-01-02'),
+    xMax: Date.parse('2024-01-03'),
+    width: 800,
+  });
+  assert.deepStrictEqual(zoomRangeChart.xText, ['2024-01-02', '2024-01-03']);
+  assert.ok(zoomRangeChart.warnings.some(warning => /outside the selected x range/.test(warning)));
+  assert.throws(
+    () => buildChartData(chartTable, {
+      chartType: 'box',
+      version: 2,
+      requestId: 7,
+      xColumn: 'ts',
+      yColumns: ['size'],
+      groupByColumn: 'sym',
+      width: 800,
+    }),
+    /Group by is not supported/
+  );
 
   const spikeTable = createColumnarPanelResult(['x', 'y'], 100, (rowIndex, columnIndex) => {
     if (columnIndex === 0) {
@@ -984,6 +1027,9 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="searchInput"'), 1);
   assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="interactionMode"'), 1);
   assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="chartType"'), 1);
+  assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="chartGroupColumn"'), 1);
+  assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="refineChartZoom"'), 1);
+  assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="chartSplitter"'), 1);
   assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="cancelQuery"'), 1);
   assert.ok(toolbarSource.indexOf('id="outputControls"') < toolbarSource.indexOf('id="chartMenu"'));
   assert.ok(toolbarSource.indexOf('id="chartMenu"') < toolbarSource.indexOf('id="settingsMenu"'));
@@ -1057,7 +1103,12 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('id="chartPanel"'), true);
   assert.strictEqual(resultsPanelSource.includes('id="exportChart" hidden disabled'), true);
   assert.strictEqual(resultsPanelSource.includes('id="resetChartZoom" disabled'), true);
+  assert.strictEqual(resultsPanelSource.includes('id="refineChartZoom" disabled'), true);
+  assert.strictEqual(resultsPanelSource.includes('role="separator" aria-orientation="horizontal"'), true);
   assert.strictEqual(resultsPanelSource.includes('function chartCanExport()'), true);
+  assert.strictEqual(resultsPanelSource.includes('function chartCanRefineZoom()'), true);
+  assert.strictEqual(resultsPanelSource.includes('function currentChartZoomRange()'), true);
+  assert.strictEqual(resultsPanelSource.includes('function startChartResize(event)'), true);
   assert.strictEqual(resultsPanelSource.includes('exportChart.hidden = !canExport;'), true);
   assert.strictEqual(resultsPanelSource.includes('uPlot.iife.min.js'), true);
   assert.strictEqual(resultsPanelSource.includes('uPlot.min.css'), true);
@@ -1067,11 +1118,16 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('new window.uPlot(chartUPlotOptions(dimensions), chartAlignedData(), chartPlot)'), true);
   assert.strictEqual(resultsPanelSource.includes('function selectedChartType()'), true);
   assert.strictEqual(resultsPanelSource.includes('chartType: selectedChartType()'), true);
+  assert.strictEqual(resultsPanelSource.includes('groupByColumn: selectedChartGroupColumn()'), true);
+  assert.strictEqual(resultsPanelSource.includes('message.xMin = xRange.min;'), true);
+  assert.strictEqual(resultsPanelSource.includes('Chart settings changed — Render to update.'), true);
   assert.strictEqual(resultsPanelSource.includes("chartData.chartType === 'box'"), true);
+  assert.strictEqual(resultsPanelSource.includes("Group by is not supported for box charts."), true);
   assert.strictEqual(resultsPanelSource.includes('window.uPlot.paths.stepped'), true);
   assert.strictEqual(resultsPanelSource.includes('window.uPlot.paths.bars'), true);
   assert.strictEqual(resultsPanelSource.includes('function drawChartBoxes(self)'), true);
   assert.strictEqual(resultsPanelSource.includes('function chartThinnedXAxisLabels(self, splits)'), true);
+  assert.strictEqual(resultsPanelSource.includes('function chartTemporalTickLabel(self, value)'), true);
   assert.strictEqual(resultsPanelSource.includes('function chartMaxVisibleXAxisLabels(self, labels)'), true);
   assert.strictEqual(resultsPanelSource.includes('values: (self, splits) => chartThinnedXAxisLabels(self, splits)'), true);
   assert.strictEqual(resultsPanelSource.includes('drag: { setScale: true, x: true, y: false, dist: 5 }'), true);
@@ -1087,6 +1143,8 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes("type: 'requestChart'"), true);
   assert.strictEqual(resultsPanelSource.includes('buildChartData(table'), true);
   assert.strictEqual(chartingSource.includes("export type ChartType = 'line' | 'scatter' | 'step' | 'bar' | 'box';"), true);
+  assert.strictEqual(chartingSource.includes("export type ChartGroupColumnKind = 'categorical';"), true);
+  assert.strictEqual(chartingSource.includes('export const CHART_MAX_GROUPS = 12;'), true);
   assert.strictEqual(chartingSource.includes('export function boxStats'), true);
   assert.strictEqual(chartingSource.includes('export function boxChartTargetGroupCount'), true);
   assert.strictEqual(resultsPanelSource.includes('function chartMaxSourceRowsSetting()'), true);

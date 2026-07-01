@@ -1,6 +1,7 @@
 import { ColumnarPanelResult } from './kdb-results';
 
 export type ChartColumnKind = 'numeric' | 'temporal';
+export type ChartGroupColumnKind = 'categorical';
 export type ChartType = 'line' | 'scatter' | 'step' | 'bar' | 'box';
 
 export interface ChartColumnOption {
@@ -9,9 +10,16 @@ export interface ChartColumnOption {
   kind: ChartColumnKind;
 }
 
+export interface ChartGroupColumnOption {
+  columnName: string;
+  columnIndex: number;
+  kind: ChartGroupColumnKind;
+}
+
 export interface ChartColumnOptions {
   xColumns: ChartColumnOption[];
   yColumns: ChartColumnOption[];
+  groupColumns: ChartGroupColumnOption[];
   warnings: string[];
 }
 
@@ -19,6 +27,9 @@ export interface LineChartRequest {
   chartType?: ChartType;
   xColumn: string;
   yColumns: string[];
+  groupByColumn?: string;
+  xMin?: number;
+  xMax?: number;
   width: number;
   version: number;
   requestId: number;
@@ -28,6 +39,8 @@ export interface LineChartRequest {
 
 export interface LineChartSeries {
   columnName: string;
+  sourceColumnName?: string;
+  groupValue?: string;
   values: Array<number | null>;
 }
 
@@ -50,6 +63,7 @@ export interface LineChartData {
   requestId: number;
   chartType: ChartType;
   xColumn: string;
+  groupByColumn?: string;
   xKind: ChartColumnKind;
   x: number[];
   xText: string[];
@@ -67,6 +81,7 @@ interface ChartPoint {
   rowIndex: number;
   x: number;
   xText: string;
+  group?: string;
   y: Array<number | null>;
 }
 
@@ -78,6 +93,7 @@ interface NormalizedValue {
 interface ColumnInference {
   numeric: boolean;
   temporal: boolean;
+  categorical: boolean;
   sampled: number;
   missing: number;
   invalid: number;
@@ -87,12 +103,16 @@ interface PreparedChartSource {
   xOption: ChartColumnOption;
   yColumnNames: string[];
   yColumnIndexes: number[];
+  groupColumnName?: string;
+  groupColumnIndex?: number;
   warnings: string[];
 }
 
 interface CollectedChartPoints {
   points: ChartPoint[];
   droppedX: number;
+  droppedGroup: number;
+  rangeExcluded: number;
   yMissing: number;
   yInvalid: number;
 }
@@ -101,6 +121,17 @@ interface BoxChartBin {
   x: number;
   xText: string;
   stats: Array<BoxChartStats | null>;
+}
+
+interface ChartXRange {
+  min: number;
+  max: number;
+}
+
+interface ChartSeriesDefinition {
+  columnName: string;
+  sourceColumnName?: string;
+  groupValue?: string;
 }
 
 export class ChartDataError extends Error {
@@ -116,10 +147,13 @@ export const CHART_MAX_SOURCE_ROWS = 2000000;
 export const CHART_MAX_SAMPLED_POINTS = 12000;
 export const CHART_POINTS_PER_PIXEL = 3;
 export const CHART_MAX_BOX_GROUPS = 120;
+export const CHART_MAX_GROUPS = 12;
+export const CHART_MAX_GROUPED_SERIES = 36;
 
 export function chartColumnOptions(table: ColumnarPanelResult, sampleSize = CHART_INFERENCE_SAMPLE_SIZE): ChartColumnOptions {
   const xColumns: ChartColumnOption[] = [];
   const yColumns: ChartColumnOption[] = [];
+  const groupColumns: ChartGroupColumnOption[] = [];
   const warnings: string[] = [];
 
   table.columns.forEach((columnName, columnIndex) => {
@@ -129,6 +163,9 @@ export function chartColumnOptions(table: ColumnarPanelResult, sampleSize = CHAR
       yColumns.push({ columnName, columnIndex, kind: 'numeric' });
     } else if (inference.temporal) {
       xColumns.push({ columnName, columnIndex, kind: 'temporal' });
+    }
+    if (inference.categorical) {
+      groupColumns.push({ columnName, columnIndex, kind: 'categorical' });
     }
 
     if (inference.sampled === 0 && table.rowCount > 0) {
@@ -143,7 +180,7 @@ export function chartColumnOptions(table: ColumnarPanelResult, sampleSize = CHAR
     warnings.push('No numeric y columns were detected in the visible columns.');
   }
 
-  return { xColumns, yColumns, warnings };
+  return { xColumns, yColumns, groupColumns, warnings };
 }
 
 export function buildLineChartData(table: ColumnarPanelResult, request: LineChartRequest): LineChartData {
@@ -175,26 +212,30 @@ export function normalizeChartType(value: unknown): ChartType {
 
 function buildXyChartData(table: ColumnarPanelResult, request: LineChartRequest, chartType: ChartType): LineChartData {
   const source = prepareChartSource(table, request);
+  const xRange = normalizedChartXRange(request);
   const warnings = source.warnings.slice();
-  const collected = collectChartPoints(table, source.xOption, source.yColumnIndexes);
+  const collected = collectChartPoints(table, source.xOption, source.yColumnIndexes, source.groupColumnIndex, xRange);
   appendCollectedWarnings(warnings, collected, source.xOption.kind, chartType === 'line' || chartType === 'step'
     ? 'Null and non-finite y values are rendered as gaps where sampled.'
-    : 'Null and non-finite y values are skipped where sampled.');
+    : 'Null and non-finite y values are skipped where sampled.', source.groupColumnName);
 
   const points = collected.points;
   if (points.length === 0) {
-    throw new ChartDataError('No rows have a plottable x value.');
+    throw new ChartDataError(xRange ? 'No rows have a plottable x value in the selected x range.' : 'No rows have a plottable x value.');
   }
-  if (!hasAnyFiniteY(points)) {
+  const sorted = sortChartPoints(points, warnings);
+  const grouped = source.groupColumnName
+    ? groupedChartPoints(points, source.yColumnNames, source.groupColumnName, warnings)
+    : ungroupedChartPoints(points, source.yColumnNames);
+  if (!hasAnyFiniteY(grouped.points)) {
     throw new ChartDataError('No selected y column has finite numeric values.');
   }
 
-  const sorted = sortChartPoints(points, warnings);
   const maxSampledPoints = chartTargetPointCount(request.width, request.maxSampledPoints);
-  const sampled = downsampleMinMax(points, source.yColumnNames.length, maxSampledPoints);
-  const series = source.yColumnNames.map((columnName, seriesIndex) => {
+  const sampled = downsampleMinMax(grouped.points, grouped.series.length, maxSampledPoints);
+  const series = grouped.series.map((definition, seriesIndex) => {
     return {
-      columnName,
+      ...definition,
       values: sampled.points.map(point => point.y[seriesIndex]),
     };
   });
@@ -204,6 +245,7 @@ function buildXyChartData(table: ColumnarPanelResult, request: LineChartRequest,
     requestId: request.requestId,
     chartType,
     xColumn: request.xColumn,
+    groupByColumn: source.groupColumnName,
     xKind: source.xOption.kind,
     x: sampled.points.map(point => point.x),
     xText: sampled.points.map(point => point.xText),
@@ -218,14 +260,18 @@ function buildXyChartData(table: ColumnarPanelResult, request: LineChartRequest,
 }
 
 function buildBoxChartData(table: ColumnarPanelResult, request: LineChartRequest): LineChartData {
+  if (String(request.groupByColumn || '')) {
+    throw new ChartDataError('Group by is not supported for box charts.');
+  }
   const source = prepareChartSource(table, request);
+  const xRange = normalizedChartXRange(request);
   const warnings = source.warnings.slice();
-  const collected = collectChartPoints(table, source.xOption, source.yColumnIndexes);
+  const collected = collectChartPoints(table, source.xOption, source.yColumnIndexes, undefined, xRange);
   appendCollectedWarnings(warnings, collected, source.xOption.kind, 'Null and non-finite y values are skipped for box statistics.');
 
   const points = collected.points;
   if (points.length === 0) {
-    throw new ChartDataError('No rows have a plottable x value.');
+    throw new ChartDataError(xRange ? 'No rows have a plottable x value in the selected x range.' : 'No rows have a plottable x value.');
   }
   if (!hasAnyFiniteY(points)) {
     throw new ChartDataError('No selected y column has finite numeric values.');
@@ -253,6 +299,7 @@ function buildBoxChartData(table: ColumnarPanelResult, request: LineChartRequest
     requestId: request.requestId,
     chartType: 'box',
     xColumn: request.xColumn,
+    groupByColumn: undefined,
     xKind: source.xOption.kind,
     x: bins.map(bin => bin.x),
     xText: bins.map(bin => bin.xText),
@@ -313,10 +360,19 @@ function prepareChartSource(table: ColumnarPanelResult, request: LineChartReques
     warnings.push('Chart source exceeds the default row guard. Very large chartMaxSourceRows values can make rendering slow or temporarily block the extension host, especially with multiple y columns.');
   }
 
+  const groupByColumn = String(request.groupByColumn || '');
+  const groupOptionsByName = groupOptionLookup(options.groupColumns);
+  const groupOption = groupByColumn ? groupOptionsByName[groupByColumn] : undefined;
+  if (groupByColumn && !groupOption) {
+    throw new ChartDataError(`${groupByColumn} is not eligible as a categorical group-by column.`);
+  }
+
   return {
     xOption,
     yColumnNames,
     yColumnIndexes,
+    groupColumnName: groupOption ? groupOption.columnName : undefined,
+    groupColumnIndex: groupOption ? groupOption.columnIndex : undefined,
     warnings,
   };
 }
@@ -324,10 +380,14 @@ function prepareChartSource(table: ColumnarPanelResult, request: LineChartReques
 function collectChartPoints(
   table: ColumnarPanelResult,
   xOption: ChartColumnOption,
-  yColumnIndexes: number[]
+  yColumnIndexes: number[],
+  groupColumnIndex?: number,
+  xRange?: ChartXRange
 ): CollectedChartPoints {
   const points: ChartPoint[] = [];
   let droppedX = 0;
+  let droppedGroup = 0;
+  let rangeExcluded = 0;
   let yMissing = 0;
   let yInvalid = 0;
   for (let rowIndex = 0; rowIndex < table.rowCount; rowIndex++) {
@@ -335,6 +395,20 @@ function collectChartPoints(
     if (!x) {
       droppedX += 1;
       continue;
+    }
+    if (xRange && (x.value < xRange.min || x.value > xRange.max)) {
+      rangeExcluded += 1;
+      continue;
+    }
+
+    let group: string | undefined;
+    if (groupColumnIndex !== undefined) {
+      const groupValue = normalizeCategoricalValue(table.cellValue(rowIndex, groupColumnIndex));
+      if (groupValue === null) {
+        droppedGroup += 1;
+        continue;
+      }
+      group = groupValue;
     }
 
     const yValues = yColumnIndexes.map(columnIndex => {
@@ -349,24 +423,102 @@ function collectChartPoints(
       }
       return y;
     });
-    points.push({ rowIndex, x: x.value, xText: x.text, y: yValues });
+    points.push({ rowIndex, x: x.value, xText: x.text, group, y: yValues });
   }
 
-  return { points, droppedX, yMissing, yInvalid };
+  return { points, droppedX, droppedGroup, rangeExcluded, yMissing, yInvalid };
 }
 
 function appendCollectedWarnings(
   warnings: string[],
   collected: CollectedChartPoints,
   xKind: ChartColumnKind,
-  yWarning: string
+  yWarning: string,
+  groupColumnName?: string
 ): void {
   if (collected.droppedX > 0) {
     warnings.push(`${collected.droppedX} row${collected.droppedX === 1 ? '' : 's'} dropped because x was null, non-finite, or not ${xKind}.`);
   }
+  if (collected.rangeExcluded > 0) {
+    warnings.push(`${collected.rangeExcluded} row${collected.rangeExcluded === 1 ? '' : 's'} outside the selected x range were skipped.`);
+  }
+  if (groupColumnName && collected.droppedGroup > 0) {
+    warnings.push(`${collected.droppedGroup} row${collected.droppedGroup === 1 ? '' : 's'} dropped because ${groupColumnName} was empty or not scalar.`);
+  }
   if (collected.yMissing > 0 || collected.yInvalid > 0) {
     warnings.push(yWarning);
   }
+}
+
+function ungroupedChartPoints(points: ChartPoint[], yColumnNames: string[]): { points: ChartPoint[]; series: ChartSeriesDefinition[] } {
+  return {
+    points,
+    series: yColumnNames.map(columnName => ({ columnName, sourceColumnName: columnName })),
+  };
+}
+
+function groupedChartPoints(
+  points: ChartPoint[],
+  yColumnNames: string[],
+  groupColumnName: string,
+  warnings: string[]
+): { points: ChartPoint[]; series: ChartSeriesDefinition[] } {
+  const groups = retainedChartGroups(points, yColumnNames.length, groupColumnName, warnings);
+  if (groups.length === 0) {
+    throw new ChartDataError(`No rows have a usable group value for ${groupColumnName}.`);
+  }
+  const groupIndexes: { [group: string]: number } = Object.create(null);
+  groups.forEach((group, index) => {
+    groupIndexes[group] = index;
+  });
+  const series: ChartSeriesDefinition[] = [];
+  groups.forEach(group => {
+    yColumnNames.forEach(columnName => {
+      series.push({
+        columnName: `${columnName} [${group}]`,
+        sourceColumnName: columnName,
+        groupValue: group,
+      });
+    });
+  });
+  const expandedPoints: ChartPoint[] = [];
+  points.forEach(point => {
+    const group = point.group || '';
+    const groupIndex = groupIndexes[group];
+    if (groupIndex === undefined) {
+      return;
+    }
+    const y = series.map(() => null as number | null);
+    yColumnNames.forEach((_columnName, yIndex) => {
+      y[groupIndex * yColumnNames.length + yIndex] = point.y[yIndex];
+    });
+    expandedPoints.push({ ...point, y });
+  });
+  return { points: expandedPoints, series };
+}
+
+function retainedChartGroups(points: ChartPoint[], yColumnCount: number, groupColumnName: string, warnings: string[]): string[] {
+  const groups: string[] = [];
+  const seen: { [group: string]: boolean } = Object.create(null);
+  const hasFiniteY: { [group: string]: boolean } = Object.create(null);
+  points.forEach(point => {
+    const group = point.group || '';
+    if (group && !seen[group]) {
+      seen[group] = true;
+      groups.push(group);
+    }
+    if (group && point.y.some(value => Number.isFinite(value))) {
+      hasFiniteY[group] = true;
+    }
+  });
+  const maxGroups = Math.max(1, Math.min(CHART_MAX_GROUPS, Math.floor(CHART_MAX_GROUPED_SERIES / Math.max(1, yColumnCount))));
+  if (groups.length > maxGroups) {
+    warnings.push(`Group by ${groupColumnName} has ${groups.length} categories; showing first ${maxGroups}.`);
+  }
+  return groups
+    .filter(group => hasFiniteY[group])
+    .concat(groups.filter(group => !hasFiniteY[group]))
+    .slice(0, maxGroups);
 }
 
 function sortChartPoints(points: ChartPoint[], warnings: string[]): boolean {
@@ -427,9 +579,10 @@ export function inferColumn(
   let missing = 0;
   let numeric = 0;
   let temporal = 0;
+  let categorical = 0;
   let invalid = 0;
   if (columnIndex < 0 || columnIndex >= table.columns.length || table.rowCount <= 0) {
-    return { numeric: false, temporal: false, sampled, missing, invalid };
+    return { numeric: false, temporal: false, categorical: false, sampled, missing, invalid };
   }
 
   const targetSamples = Math.max(1, Math.floor(sampleSize));
@@ -449,12 +602,17 @@ export function inferColumn(
       temporal += 1;
       continue;
     }
+    if (normalizeCategoricalValue(value) !== null) {
+      categorical += 1;
+      continue;
+    }
     invalid += 1;
   }
 
   return {
     numeric: sampled > 0 && numeric === sampled,
     temporal: sampled > 0 && temporal === sampled,
+    categorical: sampled > 0 && categorical === sampled,
     sampled,
     missing,
     invalid,
@@ -555,6 +713,16 @@ function optionLookup(options: ChartColumnOption[]): { [columnName: string]: Cha
   return lookup;
 }
 
+function groupOptionLookup(options: ChartGroupColumnOption[]): { [columnName: string]: ChartGroupColumnOption } {
+  const lookup: { [columnName: string]: ChartGroupColumnOption } = Object.create(null);
+  options.forEach(option => {
+    if (!lookup[option.columnName]) {
+      lookup[option.columnName] = option;
+    }
+  });
+  return lookup;
+}
+
 function uniqueStrings(values: string[]): string[] {
   const seen: { [value: string]: boolean } = Object.create(null);
   const result: string[] = [];
@@ -637,6 +805,38 @@ function normalizeTemporalValue(value: unknown): NormalizedValue | null {
   }
 
   return null;
+}
+
+function normalizeCategoricalValue(value: unknown): string | null {
+  if (isMissing(value) || isNonFiniteScalar(value)) {
+    return null;
+  }
+  let text = '';
+  if (typeof value === 'string') {
+    text = value.trim();
+  } else if (typeof value === 'boolean' || typeof value === 'number' || typeof value === 'bigint') {
+    text = String(value);
+  } else if (value instanceof Date) {
+    text = value.toISOString();
+  }
+  if (!text) {
+    return null;
+  }
+  return text.length > 80 ? `${text.slice(0, 77)}...` : text;
+}
+
+function normalizedChartXRange(request: LineChartRequest): ChartXRange | undefined {
+  const hasMin = request.xMin !== undefined && request.xMin !== null;
+  const hasMax = request.xMax !== undefined && request.xMax !== null;
+  if (!hasMin && !hasMax) {
+    return undefined;
+  }
+  const min = Number(request.xMin);
+  const max = Number(request.xMax);
+  if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) {
+    throw new ChartDataError('Refine zoom needs a valid x range.');
+  }
+  return { min, max };
 }
 
 function isMissing(value: unknown): boolean {
