@@ -1133,6 +1133,23 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('values: (self, splits) => chartThinnedXAxisLabels(self, splits)'), true);
   assert.strictEqual(resultsPanelSource.includes('drag: { setScale: true, x: true, y: false, dist: 5 }'), true);
   assert.strictEqual(resultsPanelSource.includes('function resetChartZoom()'), true);
+  const resetChartZoomSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function resetChartZoom()'),
+    resultsPanelSource.indexOf('function updateChartZoomState')
+  );
+  assert.strictEqual(resetChartZoomSource.includes('const xRange = chartInitialXRange();'), true);
+  assert.strictEqual(resetChartZoomSource.includes("chartUPlot.setScale('x', { min: xRange.min, max: xRange.max });"), true);
+  assert.strictEqual(resetChartZoomSource.includes("chartUPlot.setScale('x', { min: null, max: null });"), false);
+  assert.strictEqual(resetChartZoomSource.includes('clearChartSelection();'), true);
+  assert.strictEqual(resetChartZoomSource.includes('vscode.postMessage'), false);
+  assert.strictEqual(resultsPanelSource.includes('function formatChartNumber(value)'), true);
+  assert.strictEqual(resultsPanelSource.includes('const places = clampInteger(settings.chartDecimalPlaces, 0, 12);'), true);
+  assert.strictEqual(resultsPanelSource.includes('normalized.toExponential(places)'), true);
+  assert.strictEqual(resultsPanelSource.includes('minimumFractionDigits: places'), true);
+  assert.strictEqual(resultsPanelSource.includes('maximumFractionDigits: places'), true);
+  assert.strictEqual(resultsPanelSource.includes('function formatChartTemporalValue(value)'), true);
+  assert.strictEqual(resultsPanelSource.includes("chartData.xKind === 'temporal'"), true);
+  assert.strictEqual(resultsPanelSource.includes('refreshChartFormatting();'), true);
   assert.strictEqual(resultsPanelSource.includes("chartUPlot.root.querySelector('canvas')"), true);
   assert.strictEqual(resultsPanelSource.includes("canvas.toDataURL('image/png')"), true);
   assert.strictEqual(resultsPanelSource.includes("type: 'exportChartPng'"), true);
@@ -1360,6 +1377,12 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(Object.prototype.hasOwnProperty.call(chartMaxSourceRowsSetting, 'maximum'), false);
   assert.strictEqual(/no hard upper bound/i.test(chartMaxSourceRowsSetting.description), true);
   assert.strictEqual(/temporarily block the extension host/i.test(chartMaxSourceRowsSetting.description), true);
+  const chartDecimalPlacesSetting = resultSettings['kdb-sqltools.results.kdbPanel.chartDecimalPlaces'];
+  assert.strictEqual(chartDecimalPlacesSetting.type, 'integer');
+  assert.strictEqual(chartDecimalPlacesSetting.default, 4);
+  assert.strictEqual(chartDecimalPlacesSetting.minimum, 0);
+  assert.strictEqual(chartDecimalPlacesSetting.maximum, 12);
+  assert.strictEqual(/axis ticks, tooltips, legend\/live values, and box statistics/i.test(chartDecimalPlacesSetting.description), true);
   assert.strictEqual(resultSettings['kdb-sqltools.performance.trace'].type, 'boolean');
   assert.strictEqual(resultSettings['kdb-sqltools.performance.trace'].default, false);
   assert.strictEqual(/extension host console/i.test(resultSettings['kdb-sqltools.performance.trace'].description), true);
@@ -1391,6 +1414,7 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.deepStrictEqual(resultSettings['kdb-sqltools.results.elapsedTimeDisplay'].enum, ['auto', 'milliseconds']);
   assert.strictEqual(resultsPanelSource.includes('settingsHideLargeResultWarnings'), true);
   assert.strictEqual(resultsPanelSource.includes('settingsHideLargeSortWarnings'), true);
+  assert.strictEqual(resultsPanelSource.includes('settingsChartDecimalPlaces'), true);
   assert.strictEqual(resultsPanelSource.includes('settingsElapsedTimeDisplay'), true);
   assert.strictEqual(resultsPanelSource.includes('settingsArrayDisplayFormat'), true);
   assert.strictEqual(resultsPanelSource.includes('settingsFunctionDisplayStrategy'), true);
@@ -1440,6 +1464,11 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelInternals.chartMaxSourceRowsSettingValue(0), CHART_MAX_SOURCE_ROWS);
   assert.strictEqual(resultsPanelInternals.chartMaxSourceRowsSettingValue(1.9), 1);
   assert.strictEqual(resultsPanelInternals.chartMaxSourceRowsSettingValue(1000000000000), 1000000000000);
+  assert.strictEqual(resultsPanelInternals.chartDecimalPlacesSettingValue(undefined), 4);
+  assert.strictEqual(resultsPanelInternals.chartDecimalPlacesSettingValue('abc'), 4);
+  assert.strictEqual(resultsPanelInternals.chartDecimalPlacesSettingValue(-1), 0);
+  assert.strictEqual(resultsPanelInternals.chartDecimalPlacesSettingValue(3.9), 3);
+  assert.strictEqual(resultsPanelInternals.chartDecimalPlacesSettingValue(13), 12);
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('cellWidth', '1000.9'), { key: 'cellWidth', value: 600 });
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('rowHeight', 19), { key: 'rowHeight', value: 20 });
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('fontSize', 'abc'), null);
@@ -1452,6 +1481,8 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('copyExportConfirmCellThreshold', 1000000000000), { key: 'copyExportConfirmCellThreshold', value: 1000000000000 });
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('localDataServerFullExportCellLimit', 1.9), { key: 'localDataServerFullExportCellLimit', value: 1 });
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('localDataServerFullExportCellLimit', 0), null);
+  assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('chartDecimalPlaces', '13.9'), { key: 'chartDecimalPlaces', value: 12 });
+  assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('chartDecimalPlaces', 'abc'), null);
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('elapsedTimeDisplay', 'milliseconds'), { key: 'elapsedTimeDisplay', value: 'milliseconds' });
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('elapsedTimeDisplay', 'seconds'), null);
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('arrayDisplayFormat', 'space'), { key: 'arrayDisplayFormat', value: 'space' });
@@ -1580,11 +1611,15 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(chartingDocsSource.includes('cursor/crosshair tooltip'), true);
   assert.strictEqual(chartingDocsSource.includes('drag-select zoom'), true);
   assert.strictEqual(chartingDocsSource.includes('Reset zoom'), true);
+  assert.strictEqual(chartingDocsSource.includes('restores the full rendered x domain'), true);
+  assert.strictEqual(chartingDocsSource.includes('kdb-sqltools.results.kdbPanel.chartDecimalPlaces'), true);
+  assert.strictEqual(chartingDocsSource.includes('Temporal timestamp labels do not use this numeric decimal formatting.'), true);
   assert.strictEqual(chartingDocsSource.includes('small built-in canvas renderer'), false);
   assert.strictEqual(chartingDocsSource.includes('basic canvas renderer'), false);
   assert.strictEqual(/cdn\.jsdelivr|unpkg|cdnjs|https:\/\/cdn/i.test(chartingDocsSource), false);
   assert.strictEqual(chartingDocsSource.includes('kdb-sqltools.results.kdbPanel.chartMaxSourceRows'), true);
   assert.strictEqual(settingsDocsSource.includes('kdb-sqltools.results.kdbPanel.chartMaxSourceRows'), true);
+  assert.strictEqual(settingsDocsSource.includes('kdb-sqltools.results.kdbPanel.chartDecimalPlaces'), true);
   assert.strictEqual(resultsDocsSource.includes('## Non-table q result display'), true);
   assert.strictEqual(resultsDocsSource.includes('kdb-sqltools.results.kdbPanel.dictionaryDisplayStrategy'), true);
   assert.strictEqual(settingsDocsSource.includes('kdb-sqltools.results.kdbPanel.functionDisplayStrategy'), true);
@@ -2337,7 +2372,7 @@ function panelFormatElapsedMs(milliseconds, display) {
 function loadResultsPanelInternals() {
   const filename = path.join(__dirname, '..', 'out', 'results-panel.js');
   const source = fs.readFileSync(filename, 'utf8') +
-    '\nmodule.exports.__test = { chartMaxSourceRowsSettingValue, chartPngBytesFromDataUrl, columnarToXlsx, normalizePanelSettingUpdate, panelSettingConfigKey, panelSizeSettingValue };';
+    '\nmodule.exports.__test = { chartDecimalPlacesSettingValue, chartMaxSourceRowsSettingValue, chartPngBytesFromDataUrl, columnarToXlsx, normalizePanelSettingUpdate, panelSettingConfigKey, panelSizeSettingValue };';
   const testModule = new Module(filename, module);
   testModule.filename = filename;
   testModule.paths = Module._nodeModulePaths(path.dirname(filename));

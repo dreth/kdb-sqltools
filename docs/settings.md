@@ -42,6 +42,7 @@ True q tables and keyed tables always use the grid. Function source is shown onl
 | Setting | Default | Use |
 | --- | --- | --- |
 | `kdb-sqltools.results.kdbPanel.chartMaxSourceRows` | `2000000` | Maximum source rows scanned for built-in charting before rejecting a chart request. The minimum is `1`; there is no hard upper bound. |
+| `kdb-sqltools.results.kdbPanel.chartDecimalPlaces` | `4` | Decimal places for chart numeric axis ticks, tooltips, legend/live values, and box statistics. Values are clamped to `0` through `12`; very large or very small nonzero numbers use scientific notation with this precision. |
 
 Very large values can make chart rendering slow or temporarily block the extension host, especially with multiple y columns. For very large data, prefer the local data server or sliced results.
 

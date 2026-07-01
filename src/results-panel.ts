@@ -94,6 +94,7 @@ interface KdbPanelSettings {
   copyExportConfirmCellThreshold: number;
   localDataServerFullExportCellLimit: number;
   elapsedTimeDisplay: KdbPanelElapsedTimeDisplay;
+  chartDecimalPlaces: number;
   arrayDisplayFormat: ArrayDisplayFormat;
   functionDisplayStrategy: KdbPanelQResultDisplayStrategy;
   dictionaryDisplayStrategy: KdbPanelQResultDisplayStrategy;
@@ -126,6 +127,9 @@ const SEARCH_SCAN_CELL_LIMIT = 2000000;
 const SEARCH_SCAN_MS_LIMIT = 1500;
 const CHART_PNG_DATA_URL_PREFIX = 'data:image/png;base64,';
 const CHART_EXPORT_MAX_BYTES = 50 * 1024 * 1024;
+const CHART_DECIMAL_PLACES_DEFAULT = 4;
+const CHART_DECIMAL_PLACES_MIN = 0;
+const CHART_DECIMAL_PLACES_MAX = 12;
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const DEFAULT_PANEL_SETTINGS: KdbPanelSettings = {
   cellWidth: 160,
@@ -140,6 +144,7 @@ const DEFAULT_PANEL_SETTINGS: KdbPanelSettings = {
   copyExportConfirmCellThreshold: COPY_EXPORT_CONFIRM_CELL_THRESHOLD,
   localDataServerFullExportCellLimit: LOCAL_DATA_SERVER_FULL_EXPORT_CELL_LIMIT,
   elapsedTimeDisplay: 'auto',
+  chartDecimalPlaces: CHART_DECIMAL_PLACES_DEFAULT,
   arrayDisplayFormat: 'commaSpace',
   functionDisplayStrategy: 'qText',
   dictionaryDisplayStrategy: 'grid',
@@ -2194,6 +2199,7 @@ export class KdbResultsPanel {
           <label class="checkbox"><input id="settingsHideLargeSortWarnings" type="checkbox">Hide large-sort warnings</label>
           <label class="settings-row"><span>Copy/export confirm cells</span><input id="settingsCopyExportConfirmCellThreshold" type="number" min="1" step="1"></label>
           <label class="settings-row"><span>Local server current.* cell limit</span><input id="settingsLocalDataServerFullExportCellLimit" type="number" min="1" step="1"></label>
+          <label class="settings-row"><span>Chart decimals</span><input id="settingsChartDecimalPlaces" type="number" min="0" max="12" step="1" title="Decimal places for chart numeric labels, 0-12"></label>
           <label class="settings-row"><span>Elapsed time</span><select id="settingsElapsedTimeDisplay">
             <option value="auto">Auto</option>
             <option value="milliseconds">Milliseconds</option>
@@ -2317,6 +2323,7 @@ export class KdbResultsPanel {
         copyExportConfirmCellThreshold: 1000000,
         localDataServerFullExportCellLimit: 1000000,
         elapsedTimeDisplay: 'auto',
+        chartDecimalPlaces: 4,
         arrayDisplayFormat: 'commaSpace',
         functionDisplayStrategy: 'qText',
         dictionaryDisplayStrategy: 'grid',
@@ -2349,6 +2356,7 @@ export class KdbResultsPanel {
       const settingsHideLargeSortWarnings = document.getElementById('settingsHideLargeSortWarnings');
       const settingsCopyExportConfirmCellThreshold = document.getElementById('settingsCopyExportConfirmCellThreshold');
       const settingsLocalDataServerFullExportCellLimit = document.getElementById('settingsLocalDataServerFullExportCellLimit');
+      const settingsChartDecimalPlaces = document.getElementById('settingsChartDecimalPlaces');
       const settingsElapsedTimeDisplay = document.getElementById('settingsElapsedTimeDisplay');
       const settingsArrayDisplayFormat = document.getElementById('settingsArrayDisplayFormat');
       const settingsFunctionDisplayStrategy = document.getElementById('settingsFunctionDisplayStrategy');
@@ -2528,6 +2536,7 @@ export class KdbResultsPanel {
       settingsHideLargeSortWarnings.addEventListener('change', () => updateSetting('hideLargeSortWarnings', !!settingsHideLargeSortWarnings.checked));
       settingsCopyExportConfirmCellThreshold.addEventListener('change', () => updatePositiveIntegerSetting('copyExportConfirmCellThreshold', settingsCopyExportConfirmCellThreshold));
       settingsLocalDataServerFullExportCellLimit.addEventListener('change', () => updatePositiveIntegerSetting('localDataServerFullExportCellLimit', settingsLocalDataServerFullExportCellLimit));
+      settingsChartDecimalPlaces.addEventListener('change', () => updateNumberSetting('chartDecimalPlaces', settingsChartDecimalPlaces, 0, 12));
       expandSettingsSections.addEventListener('click', () => setSettingsSectionsOpen(true));
       collapseSettingsSections.addEventListener('click', () => setSettingsSectionsOpen(false));
       settingsElapsedTimeDisplay.addEventListener('change', () => updateSetting('elapsedTimeDisplay', String(settingsElapsedTimeDisplay.value || 'auto')));
@@ -3946,16 +3955,28 @@ export class KdbResultsPanel {
         if (!chartUPlot) {
           return;
         }
+        const xRange = chartInitialXRange();
+        if (!xRange) {
+          chartZoomed = false;
+          clearChartSelection();
+          hideChartTooltip();
+          updateChartControls();
+          return;
+        }
         chartUPlot.batch(() => {
-          chartUPlot.setScale('x', { min: null, max: null });
+          chartUPlot.setScale('x', { min: xRange.min, max: xRange.max });
           chartUPlot.setScale('y', { min: null, max: null });
         });
-        if (typeof chartUPlot.setSelect === 'function') {
-          chartUPlot.setSelect({ left: 0, top: 0, width: 0, height: 0 }, false);
-        }
         chartZoomed = false;
+        clearChartSelection();
         hideChartTooltip();
         updateChartControls();
+      }
+
+      function clearChartSelection() {
+        if (chartUPlot && typeof chartUPlot.setSelect === 'function') {
+          chartUPlot.setSelect({ left: 0, top: 0, width: 0, height: 0 }, false);
+        }
       }
 
       function updateChartZoomState(self) {
@@ -4021,7 +4042,7 @@ export class KdbResultsPanel {
           return formatChartNumber(value);
         }
         const index = nearestChartXIndex(value);
-        return chartData.xText[index] || formatChartNumber(chartData.x[index]);
+        return chartData.xText[index] || formatChartTemporalValue(chartData.x[index]);
       }
 
       function chartThinnedXAxisLabels(self, splits) {
@@ -4174,7 +4195,9 @@ export class KdbResultsPanel {
           return '';
         }
         const bounded = clampInteger(index, 0, chartData.x.length - 1);
-        return chartData.xText[bounded] || formatChartNumber(chartData.x[bounded]);
+        return chartData.xKind === 'temporal'
+          ? (chartData.xText[bounded] || formatChartTemporalValue(chartData.x[bounded]))
+          : formatChartNumber(chartData.x[bounded]);
       }
 
       function finiteRange(values) {
@@ -4203,17 +4226,45 @@ export class KdbResultsPanel {
         if (!Number.isFinite(value)) {
           return '';
         }
-        const abs = Math.abs(value);
+        const normalized = Object.is(value, -0) ? 0 : value;
+        const places = clampInteger(settings.chartDecimalPlaces, 0, 12);
+        const abs = Math.abs(normalized);
         if (abs !== 0 && (abs >= 1000000 || abs < 0.001)) {
-          return value.toExponential(2);
+          return normalized.toExponential(places);
         }
-        if (abs >= 1000) {
-          return Math.round(value).toLocaleString();
+        return normalized.toLocaleString(undefined, {
+          minimumFractionDigits: places,
+          maximumFractionDigits: places
+        });
+      }
+
+      function formatChartTemporalValue(value) {
+        const date = new Date(value);
+        if (!Number.isFinite(date.getTime())) {
+          return '';
         }
-        return String(Number(value.toFixed(4)));
+        return date.toISOString();
+      }
+
+      function refreshChartFormatting() {
+        if (!chartUPlot || !chartRendered) {
+          return;
+        }
+        if (typeof chartUPlot.redraw === 'function') {
+          chartUPlot.redraw(true, true);
+        }
+        if (typeof chartUPlot.setCursor === 'function' && chartUPlot.cursor) {
+          const left = Number(chartUPlot.cursor.left);
+          const top = Number(chartUPlot.cursor.top);
+          if (Number.isFinite(left) && Number.isFinite(top)) {
+            chartUPlot.setCursor({ left, top }, false);
+          }
+        }
+        updateChartTooltipFromUPlot(chartUPlot);
       }
 
       function applySettings(value) {
+        const previousChartDecimalPlaces = settings.chartDecimalPlaces;
         settings = normalizeSettings(value || {});
         layout = layoutFromSettings(settings);
         syncSettingsControls();
@@ -4223,6 +4274,9 @@ export class KdbResultsPanel {
         root.style.setProperty('--header-height', layout.headerHeight + 'px');
         root.style.setProperty('--cell-padding-x', layout.cellPaddingX + 'px');
         root.style.setProperty('--panel-font-size', settings.fontSize > 0 ? settings.fontSize + 'px' : 'var(--vscode-font-size)');
+        if (settings.chartDecimalPlaces !== previousChartDecimalPlaces) {
+          refreshChartFormatting();
+        }
       }
 
       function layoutFromSettings(settings) {
@@ -4252,6 +4306,7 @@ export class KdbResultsPanel {
           copyExportConfirmCellThreshold: positiveIntegerSetting(value.copyExportConfirmCellThreshold, DEFAULT_SETTINGS.copyExportConfirmCellThreshold),
           localDataServerFullExportCellLimit: positiveIntegerSetting(value.localDataServerFullExportCellLimit, DEFAULT_SETTINGS.localDataServerFullExportCellLimit),
           elapsedTimeDisplay: normalizeElapsedTimeDisplay(value.elapsedTimeDisplay),
+          chartDecimalPlaces: boundedSetting(value.chartDecimalPlaces, DEFAULT_SETTINGS.chartDecimalPlaces, 0, 12),
           arrayDisplayFormat: normalizeArrayDisplayFormat(value.arrayDisplayFormat),
           functionDisplayStrategy: normalizeQResultDisplayStrategy(value.functionDisplayStrategy, DEFAULT_SETTINGS.functionDisplayStrategy),
           dictionaryDisplayStrategy: normalizeQResultDisplayStrategy(value.dictionaryDisplayStrategy, DEFAULT_SETTINGS.dictionaryDisplayStrategy),
@@ -4270,6 +4325,7 @@ export class KdbResultsPanel {
         settingsHideLargeSortWarnings.checked = settings.hideLargeSortWarnings;
         settingsCopyExportConfirmCellThreshold.value = String(settings.copyExportConfirmCellThreshold);
         settingsLocalDataServerFullExportCellLimit.value = String(settings.localDataServerFullExportCellLimit);
+        settingsChartDecimalPlaces.value = String(settings.chartDecimalPlaces);
         settingsElapsedTimeDisplay.value = settings.elapsedTimeDisplay;
         settingsArrayDisplayFormat.value = settings.arrayDisplayFormat;
         settingsFunctionDisplayStrategy.value = settings.functionDisplayStrategy;
@@ -4296,6 +4352,7 @@ export class KdbResultsPanel {
           copyExportConfirmCellThreshold: settings.copyExportConfirmCellThreshold,
           localDataServerFullExportCellLimit: settings.localDataServerFullExportCellLimit,
           elapsedTimeDisplay: settings.elapsedTimeDisplay,
+          chartDecimalPlaces: settings.chartDecimalPlaces,
           arrayDisplayFormat: settings.arrayDisplayFormat,
           functionDisplayStrategy: settings.functionDisplayStrategy,
           dictionaryDisplayStrategy: settings.dictionaryDisplayStrategy,
@@ -5497,6 +5554,7 @@ function panelSettings(): KdbPanelSettings {
       DEFAULT_PANEL_SETTINGS.localDataServerFullExportCellLimit
     ),
     elapsedTimeDisplay: panelElapsedTimeDisplay(config.get<string>('elapsedTimeDisplay')),
+    chartDecimalPlaces: chartDecimalPlacesSettingValue(config.get<number>('kdbPanel.chartDecimalPlaces')),
     arrayDisplayFormat: panelArrayDisplayFormat(config.get<string>('kdbPanel.arrayDisplayFormat')),
     functionDisplayStrategy: panelQResultDisplayStrategy(config.get<string>('kdbPanel.functionDisplayStrategy'), 'qText'),
     dictionaryDisplayStrategy: panelQResultDisplayStrategy(config.get<string>('kdbPanel.dictionaryDisplayStrategy'), 'grid'),
@@ -5524,6 +5582,10 @@ function chartMaxSourceRowsSettingValue(value: any, fallback = CHART_MAX_SOURCE_
 
   const integer = Math.floor(number);
   return integer >= 1 ? integer : fallback;
+}
+
+function chartDecimalPlacesSettingValue(value: any, fallback = CHART_DECIMAL_PLACES_DEFAULT): number {
+  return boundedSettingNumber(value, fallback, CHART_DECIMAL_PLACES_MIN, CHART_DECIMAL_PLACES_MAX);
 }
 
 function panelSizeSettings(
@@ -5595,6 +5657,7 @@ function panelSettingConfigKey(key: string, density: KdbPanelDensity): string {
   }
   if (
     key === 'arrayDisplayFormat' ||
+    key === 'chartDecimalPlaces' ||
     key === 'functionDisplayStrategy' ||
     key === 'dictionaryDisplayStrategy' ||
     key === 'listDisplayStrategy' ||
@@ -5644,6 +5707,7 @@ const RESULT_SETTING_UPDATE_ALLOWLIST: { [key: string]: PanelSettingUpdateValida
   copyExportConfirmCellThreshold: positiveIntegerSettingUpdate,
   localDataServerFullExportCellLimit: positiveIntegerSettingUpdate,
   elapsedTimeDisplay: elapsedTimeDisplaySettingUpdate,
+  chartDecimalPlaces: value => numberSettingUpdate(value, CHART_DECIMAL_PLACES_MIN, CHART_DECIMAL_PLACES_MAX),
   arrayDisplayFormat: arrayDisplayFormatSettingUpdate,
   functionDisplayStrategy: value => qResultDisplayStrategySettingUpdate(value, 'qText'),
   dictionaryDisplayStrategy: value => qResultDisplayStrategySettingUpdate(value, 'grid'),
