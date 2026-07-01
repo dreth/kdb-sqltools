@@ -457,6 +457,13 @@
           "minimum": 1,
           "description": "Maximum source rows scanned for built-in charting before rejecting a chart request. There is no hard upper bound; higher values can slow or temporarily block the extension host, especially with multiple y columns. Raise it for large kdb workflows; use the local data server or slices for very large data."
         },
+        "kdb-sqltools.results.kdbPanel.chartDecimalPlaces": {
+          "type": "integer",
+          "default": 4,
+          "minimum": 0,
+          "maximum": 12,
+          "description": "Decimal places for chart numeric labels, including numeric axis ticks, tooltips, legend/live values, and box statistics. Very large or very small nonzero values use scientific notation with this precision."
+        },
         "kdb-sqltools.performance.trace": {
           "type": "boolean",
           "default": false,

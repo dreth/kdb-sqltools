@@ -17,9 +17,11 @@ SQLTools remains required for connections and q execution. Charting uses the cur
 
 Changing chart settings does not remove the currently rendered chart. The panel shows `Chart settings changed — Render to update` until you press `Render`; export still applies to the rendered chart.
 
-uPlot powers the built-in chart. Supported interactions are cursor/crosshair tooltip values, drag-select zoom, explicit zoom refinement, reset zoom, legend labels with live values, legend series toggling, splitter resizing between chart and table, and PNG export.
+uPlot powers the built-in chart. Supported interactions are cursor/crosshair tooltip values, drag-select zoom, explicit zoom refinement, reset zoom, legend labels with live values, legend series toggling, splitter resizing between chart and table, and PNG export. `Reset zoom` restores the full rendered x domain immediately from the data already in the webview; it does not rescan or re-request chart data.
 
 X-axis labels are auto-thinned to keep dense numeric and timestamp axes readable while preserving useful grid lines where possible. Timestamp labels use shorter adaptive formats after zoom, and edge labels may be suppressed to avoid clipping. Hover and cursor/crosshair tooltip values still show the precise x value for the selected point.
+
+`kdb-sqltools.results.kdbPanel.chartDecimalPlaces` controls chart numeric precision for numeric x/y tick labels, tooltip values, legend/live values, and box-stat labels. It defaults to `4` and accepts `0` through `12`. Very large or very small nonzero values use scientific notation with the configured precision so they do not silently round to `0`. Temporal timestamp labels do not use this numeric decimal formatting.
 
 Supported chart types are intentionally compact: line, scatter, step, bar, and box. Scatter uses points without line clutter. Step uses stepped lines. Bar uses uPlot bar paths. Box plots compute per-x/bucket min, quartiles, median, and max for selected numeric y columns and draw those summaries over the sampled x axis. Pie, heatmap, dashboard, streaming, and pan features are not implemented. Zoom is applied locally until you press `Refine zoom`; refinement scans the same guarded source result and resamples only the selected x range.
 
