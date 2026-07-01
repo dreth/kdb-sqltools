@@ -1161,6 +1161,11 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(packageJson.contributes.commands.some(command => /Run q Block|Run block/.test(command.title)), false);
   assert.strictEqual(commandTitle('kdb-sqltools.runFile'), 'Run q Script');
   assert.strictEqual(commandTitle('kdb-sqltools.runSelectionOrBlock'), 'Run Selection');
+  assert.ok(packageJson.contributes.menus['editor/title'].some(menu =>
+    menu.command === 'kdb-sqltools.runSelectionOrBlock' &&
+      menu.when === 'editorLangId == q || resourceExtname == .q'
+  ));
+  assert.strictEqual(packageJson.contributes.menus['editor/title'].some(menu => menu.command === 'kdb-sqltools.runFile'), false);
   assert.strictEqual(commandTitle('kdb-sqltools.runFileInSqltools'), 'Run q Script in SQLTools Results');
   assert.strictEqual(commandTitle('kdb-sqltools.runSelectionOrBlockInSqltools'), 'Run Selection in SQLTools Results');
   assert.strictEqual(commandTitle('kdb-sqltools.runFileInKdbPanel'), 'Run q Script in kdb Panel');
