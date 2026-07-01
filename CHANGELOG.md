@@ -1,5 +1,13 @@
 # Change Log
 
+## 0.3.9
+
+- Kept rendered charts visible when chart settings change and added a `Render to update` stale-settings notice.
+- Added compact `Group by` chart splitting for categorical columns on line, scatter, step, and bar charts.
+- Added a draggable splitter between the chart panel and table.
+- Added explicit `Refine zoom` resampling for the current x-range after zooming.
+- Shortened/adapted temporal x-axis labels and suppressed edge labels to reduce timestamp overlap and clipping.
+
 ## 0.3.8
 
 - Added a compact Chart type selector with line, scatter, step, bar, and box chart modes.

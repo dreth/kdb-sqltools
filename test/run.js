@@ -1528,7 +1528,7 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('id="settingsLocalDataServerFullExportCellLimit"'), true);
   assert.strictEqual(packageJson.contributes.configuration.properties['kdb-sqltools.results.copyExportConfirmCellThreshold'].minimum, 1);
   assert.strictEqual(packageJson.contributes.configuration.properties['kdb-sqltools.results.localDataServerFullExportCellLimit'].minimum, 1);
-  assert.strictEqual(packageJson.version, '0.3.8');
+  assert.strictEqual(packageJson.version, '0.3.9');
   assert.strictEqual(chartingDocsSource.includes('Open the top-level `Chart` dropdown menu.'), true);
   assert.strictEqual(readmeSource.includes('The top toolbar is a single compact line'), true);
   assert.strictEqual(readmeSource.includes('`Settings` contains collapsible sections for view controls, search, hidden columns, output defaults, and `Data server` controls'), true);
