@@ -4,7 +4,10 @@ import * as vscode from 'vscode';
 import JSZip = require('jszip');
 import {
   CHART_MAX_SOURCE_ROWS,
+  CHART_ZOOM_MAX_SAMPLED_POINTS,
+  CHART_ZOOM_MIN_SAMPLED_POINTS,
   ChartDataError,
+  ChartType,
   buildChartData,
   chartColumnOptions,
   normalizeChartType,
@@ -68,6 +71,7 @@ interface KdbPanelMetadata {
   settings: KdbPanelSettings;
   sort: KdbPanelSortState | null;
   guardrailMessage?: string;
+  chartAutoOpen?: boolean;
 }
 
 type KdbPanelDensity = 'compact' | 'standard' | 'comfortable';
@@ -95,11 +99,24 @@ interface KdbPanelSettings {
   localDataServerFullExportCellLimit: number;
   elapsedTimeDisplay: KdbPanelElapsedTimeDisplay;
   chartDecimalPlaces: number;
+  chartZoomMinSampledPoints: number;
+  chartZoomMaxSampledPoints: number;
   arrayDisplayFormat: ArrayDisplayFormat;
   functionDisplayStrategy: KdbPanelQResultDisplayStrategy;
   dictionaryDisplayStrategy: KdbPanelQResultDisplayStrategy;
   listDisplayStrategy: KdbPanelQResultDisplayStrategy;
   objectDisplayStrategy: KdbPanelQResultDisplayStrategy;
+}
+
+interface SavedChartSelection {
+  chartType: ChartType;
+  xColumn: string;
+  yColumns: string[];
+  groupByColumn?: string;
+}
+
+interface KdbPanelShowOptions {
+  autoChart?: boolean;
 }
 
 interface CopyExportEstimate {
@@ -130,6 +147,7 @@ const CHART_EXPORT_MAX_BYTES = 50 * 1024 * 1024;
 const CHART_DECIMAL_PLACES_DEFAULT = 4;
 const CHART_DECIMAL_PLACES_MIN = 0;
 const CHART_DECIMAL_PLACES_MAX = 12;
+const CHART_SELECTION_STATE_PREFIX = 'kdb-sqltools.results.kdbPanel.chartSelection.v1.';
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const DEFAULT_PANEL_SETTINGS: KdbPanelSettings = {
   cellWidth: 160,
@@ -145,6 +163,8 @@ const DEFAULT_PANEL_SETTINGS: KdbPanelSettings = {
   localDataServerFullExportCellLimit: LOCAL_DATA_SERVER_FULL_EXPORT_CELL_LIMIT,
   elapsedTimeDisplay: 'auto',
   chartDecimalPlaces: CHART_DECIMAL_PLACES_DEFAULT,
+  chartZoomMinSampledPoints: CHART_ZOOM_MIN_SAMPLED_POINTS,
+  chartZoomMaxSampledPoints: CHART_ZOOM_MAX_SAMPLED_POINTS,
   arrayDisplayFormat: 'commaSpace',
   functionDisplayStrategy: 'qText',
   dictionaryDisplayStrategy: 'grid',
@@ -173,6 +193,7 @@ export class KdbResultsPanel {
   private static panels: KdbResultsPanel[] = [];
   private static lastActivePanel: KdbResultsPanel | undefined;
   private static nextPanelNumber = 1;
+  private readonly context: vscode.ExtensionContext;
   private readonly disposables: vscode.Disposable[] = [];
   private panel: vscode.WebviewPanel;
   private disposed = false;
@@ -196,14 +217,19 @@ export class KdbResultsPanel {
   private selectionRange: CellRange | undefined;
   private selectionVersion = 0;
   private activeChartRequestId = 0;
+  private chartPanelOpen = false;
+  private chartPanelRendered = false;
+  private pendingAutoChart = false;
   private runningQueryCancel: { version: number; cancel(): void } | undefined;
 
   public static showLoading(
     context: vscode.ExtensionContext,
     state: LoadingState,
-    mode: KdbResultsPanelRunMode = 'replace'
+    mode: KdbResultsPanelRunMode = 'replace',
+    options: KdbPanelShowOptions = {}
   ): KdbResultsPanel {
     const panel = KdbResultsPanel.ensure(context, mode);
+    const autoChart = options.autoChart === true || (mode === 'replace' && panel.chartPanelRendered);
     panel.cancelRunningQuery();
     panel.version += 1;
     panel.firstSliceVersion = 0;
@@ -215,6 +241,8 @@ export class KdbResultsPanel {
     panel.selectionRange = undefined;
     panel.selectionVersion = panel.version;
     panel.activeChartRequestId += 1;
+    panel.chartPanelRendered = false;
+    panel.pendingAutoChart = autoChart;
     panel.loading = state;
     panel.result = undefined;
     panel.revealExisting();
@@ -226,9 +254,11 @@ export class KdbResultsPanel {
   public static showResult(
     context: vscode.ExtensionContext,
     result: KdbPanelResult,
-    mode: KdbResultsPanelRunMode = 'replace'
+    mode: KdbResultsPanelRunMode = 'replace',
+    options: KdbPanelShowOptions = {}
   ): KdbResultsPanel {
     const panel = KdbResultsPanel.ensure(context, mode);
+    panel.pendingAutoChart = options.autoChart === true || (mode === 'replace' && panel.chartPanelRendered);
     panel.showResult(result);
     return panel;
   }
@@ -248,6 +278,7 @@ export class KdbResultsPanel {
     this.selectionRange = undefined;
     this.selectionVersion = this.version;
     this.activeChartRequestId += 1;
+    this.chartPanelRendered = false;
     this.loading = undefined;
     this.hiddenColumnNames = this.hiddenColumnNamesForNewResult(result.table.columns);
     this.hiddenColumnSchema = result.table.columns.slice();
@@ -350,6 +381,7 @@ export class KdbResultsPanel {
   }
 
   private constructor(context: vscode.ExtensionContext, viewColumn: vscode.ViewColumn = initialResultViewColumn()) {
+    this.context = context;
     const panelNumber = KdbResultsPanel.nextPanelNumber++;
     const uplotDistRoot = vscode.Uri.file(path.join(context.extensionPath, 'node_modules', 'uplot', 'dist'));
     this.panel = vscode.window.createWebviewPanel(
@@ -401,6 +433,9 @@ export class KdbResultsPanel {
     this.visibleTableCache = undefined;
     this.activeSearchId += 1;
     this.activeChartRequestId += 1;
+    this.chartPanelOpen = false;
+    this.chartPanelRendered = false;
+    this.pendingAutoChart = false;
     this.selectionRange = undefined;
     this.selectionVersion = 0;
     this.disposables.splice(0).forEach(disposable => disposable.dispose());
@@ -467,6 +502,16 @@ export class KdbResultsPanel {
 
     if (message.type === 'requestChart') {
       await this.postChartData(message);
+      return;
+    }
+
+    if (message.type === 'chartPanelState') {
+      this.updateChartPanelState(message);
+      return;
+    }
+
+    if (message.type === 'chartRendered') {
+      await this.saveRenderedChartSelection(message);
       return;
     }
 
@@ -582,6 +627,7 @@ export class KdbResultsPanel {
       version: this.version,
       settings,
       sort: this.visibleSortState(result),
+      chartAutoOpen: this.pendingAutoChart,
       guardrailMessage: settings.hideLargeResultWarnings || this.hideLargeResultWarningOnce
         ? undefined
         : resultSizeGuardrailMessage(result.table.rowCount, result.table.columns.length),
@@ -723,6 +769,8 @@ export class KdbResultsPanel {
       version: requestVersion,
       requestId,
       options,
+      savedSelection: this.savedChartSelection(table, options),
+      autoChart: this.consumePendingAutoChart(),
     });
   }
 
@@ -740,6 +788,9 @@ export class KdbResultsPanel {
     this.activeChartRequestId = requestId;
     try {
       await yieldToEventLoop();
+      const xMin = Number.isFinite(Number(message.xMin)) ? Number(message.xMin) : undefined;
+      const xMax = Number.isFinite(Number(message.xMax)) ? Number(message.xMax) : undefined;
+      const zoomSamplePoints = xMin !== undefined && xMax !== undefined ? chartZoomSamplePointSettings() : null;
       const data = buildChartData(table, {
         chartType: normalizeChartType(message.chartType),
         version: requestVersion,
@@ -747,10 +798,12 @@ export class KdbResultsPanel {
         xColumn: typeof message.xColumn === 'string' ? message.xColumn : '',
         yColumns: Array.isArray(message.yColumns) ? message.yColumns.map(String) : [],
         groupByColumn: typeof message.groupByColumn === 'string' ? message.groupByColumn : '',
-        xMin: Number.isFinite(Number(message.xMin)) ? Number(message.xMin) : undefined,
-        xMax: Number.isFinite(Number(message.xMax)) ? Number(message.xMax) : undefined,
+        xMin,
+        xMax,
         width: Number(message.width) || 0,
         maxSourceRows: chartMaxSourceRowsSetting(),
+        maxSampledPoints: zoomSamplePoints ? zoomSamplePoints.chartZoomMaxSampledPoints : undefined,
+        minSampledPoints: zoomSamplePoints ? zoomSamplePoints.chartZoomMinSampledPoints : undefined,
       });
       if (this.version !== requestVersion || this.activeChartRequestId !== requestId) {
         return;
@@ -768,6 +821,48 @@ export class KdbResultsPanel {
         message: error instanceof ChartDataError ? err.message : `Chart failed: ${err.message}`,
       });
     }
+  }
+
+  private updateChartPanelState(message: any): void {
+    const requestVersion = integerOrNull(message.version);
+    if (requestVersion === null || requestVersion !== this.version) {
+      return;
+    }
+    this.chartPanelOpen = message.open === true;
+    this.chartPanelRendered = this.chartPanelOpen && message.rendered === true;
+  }
+
+  private async saveRenderedChartSelection(message: any): Promise<void> {
+    const requestVersion = integerOrNull(message.version);
+    const requestId = integerOrNull(message.requestId);
+    if (requestVersion === null || requestId === null ||
+      requestVersion !== this.version || requestId !== this.activeChartRequestId) {
+      return;
+    }
+    const table = this.visibleTable();
+    if (!table) {
+      return;
+    }
+    const options = chartColumnOptions(table);
+    const selection = normalizeSavedChartSelection(message.selection);
+    const compatible = selection ? compatibleChartSelection(selection, options) : null;
+    if (!compatible) {
+      return;
+    }
+    this.chartPanelOpen = true;
+    this.chartPanelRendered = true;
+    await this.context.globalState.update(chartSelectionStorageKey(table.columns), compatible);
+  }
+
+  private savedChartSelection(table: ColumnarPanelResult, options = chartColumnOptions(table)): SavedChartSelection | null {
+    const saved = normalizeSavedChartSelection(this.context.globalState.get(chartSelectionStorageKey(table.columns)));
+    return saved ? compatibleChartSelection(saved, options) : null;
+  }
+
+  private consumePendingAutoChart(): boolean {
+    const value = this.pendingAutoChart;
+    this.pendingAutoChart = false;
+    return value;
   }
 
   private async exportChartPng(message: any): Promise<void> {
@@ -2318,6 +2413,8 @@ export class KdbResultsPanel {
         localDataServerFullExportCellLimit: 1000000,
         elapsedTimeDisplay: 'auto',
         chartDecimalPlaces: 4,
+        chartZoomMinSampledPoints: ${CHART_ZOOM_MIN_SAMPLED_POINTS},
+        chartZoomMaxSampledPoints: ${CHART_ZOOM_MAX_SAMPLED_POINTS},
         arrayDisplayFormat: 'commaSpace',
         functionDisplayStrategy: 'qText',
         dictionaryDisplayStrategy: 'grid',
@@ -2433,9 +2530,13 @@ export class KdbResultsPanel {
       let chartControlsDirty = false;
       let chartResizeState = null;
       let chartHeight = 280;
+      let chartAutoRenderPending = false;
+      let chartAutoRefineTimer = 0;
+      let chartLastAutoRefineKey = '';
       const CHART_PNG_DATA_URL_PREFIX = 'data:image/png;base64,';
       const CHART_MIN_HEIGHT = 180;
       const CHART_MAX_HEIGHT = 720;
+      const CHART_AUTO_REFINE_DELAY_MS = 450;
       window.addEventListener('message', event => {
         const msg = event.data || {};
         if (msg.type === 'loading') {
@@ -2727,6 +2828,7 @@ export class KdbResultsPanel {
         }
         applySettings(settings);
         resetWindowState();
+        chartAutoRenderPending = result.chartAutoOpen === true;
         updateSummary();
         status.textContent = '';
         updateSortStatus();
@@ -2743,6 +2845,9 @@ export class KdbResultsPanel {
         showMessage(resultMessageText(data), data.error);
         updateLargeResultWarning();
         renderNow();
+        if (chartAutoRenderPending && hasTableCells() && !data.error && !data.canceled) {
+          openChartPanel();
+        }
         if (String(searchInput.value || '').length > 0) {
           queueSearchRows();
         }
@@ -3045,6 +3150,7 @@ export class KdbResultsPanel {
         }
         chartPanel.hidden = false;
         chartSplitter.hidden = false;
+        notifyChartPanelState(false);
         setChartHeight(chartHeight);
         settingsMenu.open = false;
         chartStatus.textContent = 'Detecting chart columns...';
@@ -3072,6 +3178,9 @@ export class KdbResultsPanel {
         hideChartTooltip();
         chartStatus.textContent = '';
         chartLegend.textContent = '';
+        chartAutoRenderPending = false;
+        clearChartAutoRefineTimer();
+        notifyChartPanelState(false);
         updateChartControls();
       }
 
@@ -3082,6 +3191,9 @@ export class KdbResultsPanel {
         chartData = null;
         chartRendered = null;
         chartControlsDirty = false;
+        chartAutoRenderPending = false;
+        chartLastAutoRefineKey = '';
+        clearChartAutoRefineTimer();
         destroyChartPlot();
         chartPanel.hidden = true;
         chartSplitter.hidden = true;
@@ -3113,6 +3225,17 @@ export class KdbResultsPanel {
         }
         chartOptions = normalizeChartOptions(msg.options || {});
         renderChartOptions();
+        const restored = applySavedChartSelection(msg.savedSelection);
+        const shouldAutoRender = msg.autoChart === true || chartAutoRenderPending;
+        chartAutoRenderPending = false;
+        if (restored) {
+          chartStatus.textContent = shouldAutoRender ? 'Rendering restored chart settings...' : 'Restored chart settings for these columns.';
+        }
+        if (shouldAutoRender && chartCanRender()) {
+          requestChartDataForRange(null, restored ? 'Rendering restored chart settings...' : 'Rendering chart...');
+          return;
+        }
+        updateChartControls();
       }
 
       function normalizeChartOptions(value) {
@@ -3207,6 +3330,35 @@ export class KdbResultsPanel {
         }
         chartControlsDirty = false;
         updateChartControls();
+      }
+
+      function applySavedChartSelection(value) {
+        if (!value || typeof value !== 'object') {
+          return false;
+        }
+        const type = normalizeChartType(value.chartType);
+        const xColumn = String(value.xColumn || '');
+        const yColumns = Array.isArray(value.yColumns) ? value.yColumns.map(String).filter(Boolean) : [];
+        if (!chartOptions.xColumns.some(option => option.columnName === xColumn) || yColumns.length === 0) {
+          return false;
+        }
+        const yLookup = columnNameLookup(chartOptions.yColumns.map(option => option.columnName));
+        const retainedY = yColumns.filter(column => yLookup[column]);
+        if (retainedY.length === 0) {
+          return false;
+        }
+
+        chartType.value = type;
+        chartXColumn.value = xColumn;
+        const groupByColumn = type === 'box' ? '' : String(value.groupByColumn || '');
+        const hasGroup = groupByColumn && chartOptions.groupColumns.some(option => option.columnName === groupByColumn);
+        chartGroupColumn.value = hasGroup ? groupByColumn : '';
+        chartYColumns.querySelectorAll('input[type="checkbox"]').forEach(input => {
+          input.checked = retainedY.indexOf(String(input.value || '')) !== -1;
+        });
+        chartControlsDirty = false;
+        updateChartControls();
+        return true;
       }
 
       function defaultChartYColumns() {
@@ -3313,6 +3465,8 @@ export class KdbResultsPanel {
         latestChartRequestId += 1;
         chartRendered = null;
         chartControlsDirty = false;
+        clearChartAutoRefineTimer();
+        chartLastAutoRefineKey = xRange ? chartZoomRangeKey(xRange) : '';
         updateChartControls();
         chartStatus.textContent = messageText;
         const message = {
@@ -3328,6 +3482,8 @@ export class KdbResultsPanel {
         if (xRange) {
           message.xMin = xRange.min;
           message.xMax = xRange.max;
+          message.minSampledPoints = chartZoomMinSampledPoints();
+          message.maxSampledPoints = chartZoomMaxSampledPoints();
         }
         vscode.postMessage(message);
       }
@@ -3388,8 +3544,8 @@ export class KdbResultsPanel {
             ' box groups from ' + formatUiCount(chartData.eligibleRowCount) +
             ' eligible rows (' + chartData.algorithm + ').' + warnings
           : 'Showing ' + formatUiCount(chartData.sampledPointCount) +
-            ' of ' + formatUiCount(chartData.sourceRowCount) +
-            ' rows' + grouped + ' (' + chartData.algorithm + ').' + warnings;
+            ' of ' + formatUiCount(chartData.eligibleRowCount) +
+            ' eligible rows' + grouped + ' (' + chartData.algorithm + ').' + warnings;
         drawChart();
       }
 
@@ -3460,6 +3616,8 @@ export class KdbResultsPanel {
         chartRendered = null;
         chartControlsDirty = false;
         chartLegend.textContent = '';
+        clearChartAutoRefineTimer();
+        notifyChartPanelState(false);
         drawChart();
       }
 
@@ -3499,6 +3657,7 @@ export class KdbResultsPanel {
           chartRendered = { version: chartData.version, requestId: chartData.requestId };
           chartZoomed = false;
           updateChartZoomState(chartUPlot);
+          notifyChartRendered();
           updateChartControls();
         } catch (error) {
           destroyChartPlot();
@@ -3936,6 +4095,7 @@ export class KdbResultsPanel {
           chartZoomed = false;
           clearChartSelection();
           hideChartTooltip();
+          clearChartAutoRefineTimer();
           updateChartControls();
           return;
         }
@@ -3946,6 +4106,7 @@ export class KdbResultsPanel {
         chartZoomed = false;
         clearChartSelection();
         hideChartTooltip();
+        clearChartAutoRefineTimer();
         updateChartControls();
       }
 
@@ -3960,11 +4121,17 @@ export class KdbResultsPanel {
         const scale = self && self.scales && self.scales.x;
         if (!xRange || !scale || !Number.isFinite(scale.min) || !Number.isFinite(scale.max)) {
           chartZoomed = false;
+          clearChartAutoRefineTimer();
           updateChartControls();
           return;
         }
         const tolerance = Math.max(1e-9, Math.abs(xRange.max - xRange.min) * 1e-9);
         chartZoomed = Math.abs(scale.min - xRange.min) > tolerance || Math.abs(scale.max - xRange.max) > tolerance;
+        if (chartZoomed) {
+          queueChartAutoRefine();
+        } else {
+          clearChartAutoRefineTimer();
+        }
         updateChartControls();
       }
 
@@ -3986,6 +4153,98 @@ export class KdbResultsPanel {
         return max > min ? { min, max } : null;
       }
 
+      function queueChartAutoRefine() {
+        const range = currentChartZoomRange();
+        if (!range || !chartCanExport() || chartControlsDirty) {
+          clearChartAutoRefineTimer();
+          return;
+        }
+        const visiblePoints = chartVisibleSamplePointCount(range);
+        if (visiblePoints >= chartZoomMinSampledPoints() || chartData.eligibleRowCount <= visiblePoints) {
+          clearChartAutoRefineTimer();
+          return;
+        }
+        const key = chartZoomRangeKey(range);
+        if (key === chartLastAutoRefineKey) {
+          return;
+        }
+        if (chartAutoRefineTimer) {
+          clearTimeout(chartAutoRefineTimer);
+        }
+        chartAutoRefineTimer = setTimeout(() => {
+          chartAutoRefineTimer = 0;
+          const current = currentChartZoomRange();
+          if (!current || chartZoomRangeKey(current) !== key || !chartCanExport() || chartControlsDirty) {
+            return;
+          }
+          chartLastAutoRefineKey = key;
+          requestChartDataForRange(current, 'Auto-refining zoom range...');
+        }, CHART_AUTO_REFINE_DELAY_MS);
+      }
+
+      function clearChartAutoRefineTimer() {
+        if (chartAutoRefineTimer) {
+          clearTimeout(chartAutoRefineTimer);
+          chartAutoRefineTimer = 0;
+        }
+      }
+
+      function chartVisibleSamplePointCount(range) {
+        if (!chartData || !Array.isArray(chartData.x)) {
+          return 0;
+        }
+        let count = 0;
+        chartData.x.forEach(value => {
+          if (value >= range.min && value <= range.max) {
+            count += 1;
+          }
+        });
+        return count;
+      }
+
+      function chartZoomRangeKey(range) {
+        return Number(range.min).toPrecision(12) + ':' + Number(range.max).toPrecision(12);
+      }
+
+      function chartZoomMinSampledPoints() {
+        return positiveIntegerSetting(settings.chartZoomMinSampledPoints, DEFAULT_SETTINGS.chartZoomMinSampledPoints);
+      }
+
+      function chartZoomMaxSampledPoints() {
+        return Math.max(
+          chartZoomMinSampledPoints(),
+          positiveIntegerSetting(settings.chartZoomMaxSampledPoints, DEFAULT_SETTINGS.chartZoomMaxSampledPoints)
+        );
+      }
+
+      function notifyChartPanelState(rendered) {
+        vscode.postMessage({
+          type: 'chartPanelState',
+          version: data.version,
+          open: !chartPanel.hidden,
+          rendered: rendered === true
+        });
+      }
+
+      function notifyChartRendered() {
+        notifyChartPanelState(true);
+        vscode.postMessage({
+          type: 'chartRendered',
+          version: data.version,
+          requestId: latestChartRequestId,
+          selection: currentChartSelection()
+        });
+      }
+
+      function currentChartSelection() {
+        return {
+          chartType: selectedChartType(),
+          xColumn: String(chartXColumn.value || ''),
+          yColumns: selectedChartYColumns(),
+          groupByColumn: selectedChartGroupColumn()
+        };
+      }
+
       function renderedChartCanvas() {
         if (chartUPlot && chartUPlot.root && typeof chartUPlot.root.querySelector === 'function') {
           return chartUPlot.root.querySelector('canvas');
@@ -4003,6 +4262,7 @@ export class KdbResultsPanel {
         }
         chartUPlot = null;
         chartZoomed = false;
+        clearChartAutoRefineTimer();
         if (chartPlot) {
           chartPlot.textContent = '';
         }
@@ -4269,6 +4529,11 @@ export class KdbResultsPanel {
       }
 
       function normalizeSettings(value) {
+        const chartZoomMinSampledPoints = positiveIntegerSetting(value.chartZoomMinSampledPoints, DEFAULT_SETTINGS.chartZoomMinSampledPoints);
+        const chartZoomMaxSampledPoints = Math.max(
+          chartZoomMinSampledPoints,
+          positiveIntegerSetting(value.chartZoomMaxSampledPoints, DEFAULT_SETTINGS.chartZoomMaxSampledPoints)
+        );
         return {
           cellWidth: boundedSetting(value.cellWidth, DEFAULT_SETTINGS.cellWidth, 80, 600),
           rowHeight: boundedSetting(value.rowHeight, DEFAULT_SETTINGS.rowHeight, 20, 80),
@@ -4283,6 +4548,8 @@ export class KdbResultsPanel {
           localDataServerFullExportCellLimit: positiveIntegerSetting(value.localDataServerFullExportCellLimit, DEFAULT_SETTINGS.localDataServerFullExportCellLimit),
           elapsedTimeDisplay: normalizeElapsedTimeDisplay(value.elapsedTimeDisplay),
           chartDecimalPlaces: boundedSetting(value.chartDecimalPlaces, DEFAULT_SETTINGS.chartDecimalPlaces, 0, 12),
+          chartZoomMinSampledPoints,
+          chartZoomMaxSampledPoints,
           arrayDisplayFormat: normalizeArrayDisplayFormat(value.arrayDisplayFormat),
           functionDisplayStrategy: normalizeQResultDisplayStrategy(value.functionDisplayStrategy, DEFAULT_SETTINGS.functionDisplayStrategy),
           dictionaryDisplayStrategy: normalizeQResultDisplayStrategy(value.dictionaryDisplayStrategy, DEFAULT_SETTINGS.dictionaryDisplayStrategy),
@@ -4329,6 +4596,8 @@ export class KdbResultsPanel {
           localDataServerFullExportCellLimit: settings.localDataServerFullExportCellLimit,
           elapsedTimeDisplay: settings.elapsedTimeDisplay,
           chartDecimalPlaces: settings.chartDecimalPlaces,
+          chartZoomMinSampledPoints: settings.chartZoomMinSampledPoints,
+          chartZoomMaxSampledPoints: settings.chartZoomMaxSampledPoints,
           arrayDisplayFormat: settings.arrayDisplayFormat,
           functionDisplayStrategy: settings.functionDisplayStrategy,
           dictionaryDisplayStrategy: settings.dictionaryDisplayStrategy,
@@ -5531,6 +5800,7 @@ function panelSettings(): KdbPanelSettings {
     ),
     elapsedTimeDisplay: panelElapsedTimeDisplay(config.get<string>('elapsedTimeDisplay')),
     chartDecimalPlaces: chartDecimalPlacesSettingValue(config.get<number>('kdbPanel.chartDecimalPlaces')),
+    ...chartZoomSamplePointSettings(config),
     arrayDisplayFormat: panelArrayDisplayFormat(config.get<string>('kdbPanel.arrayDisplayFormat')),
     functionDisplayStrategy: panelQResultDisplayStrategy(config.get<string>('kdbPanel.functionDisplayStrategy'), 'qText'),
     dictionaryDisplayStrategy: panelQResultDisplayStrategy(config.get<string>('kdbPanel.dictionaryDisplayStrategy'), 'grid'),
@@ -5562,6 +5832,35 @@ function chartMaxSourceRowsSettingValue(value: any, fallback = CHART_MAX_SOURCE_
 
 function chartDecimalPlacesSettingValue(value: any, fallback = CHART_DECIMAL_PLACES_DEFAULT): number {
   return boundedSettingNumber(value, fallback, CHART_DECIMAL_PLACES_MIN, CHART_DECIMAL_PLACES_MAX);
+}
+
+function chartZoomSamplePointSettings(config = vscode.workspace.getConfiguration('kdb-sqltools.results')): Pick<KdbPanelSettings, 'chartZoomMinSampledPoints' | 'chartZoomMaxSampledPoints'> {
+  const min = chartZoomMinSampledPointsSettingValue(config.get<number>('kdbPanel.chartZoomMinSampledPoints'));
+  const max = chartZoomMaxSampledPointsSettingValue(config.get<number>('kdbPanel.chartZoomMaxSampledPoints'), min);
+  return {
+    chartZoomMinSampledPoints: min,
+    chartZoomMaxSampledPoints: max,
+  };
+}
+
+function chartZoomMinSampledPointsSettingValue(value: any, fallback = CHART_ZOOM_MIN_SAMPLED_POINTS): number {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return fallback;
+  }
+  const integer = Math.floor(number);
+  return integer >= 1 ? integer : fallback;
+}
+
+function chartZoomMaxSampledPointsSettingValue(
+  value: any,
+  minSampledPoints = CHART_ZOOM_MIN_SAMPLED_POINTS,
+  fallback = CHART_ZOOM_MAX_SAMPLED_POINTS
+): number {
+  const min = chartZoomMinSampledPointsSettingValue(minSampledPoints);
+  const number = Number(value);
+  const integer = Number.isFinite(number) ? Math.floor(number) : fallback;
+  return integer >= min ? integer : min;
 }
 
 function panelSizeSettings(
@@ -5810,6 +6109,78 @@ function sameColumnNames(left: string[] | undefined, right: string[]): boolean {
     }
   }
   return true;
+}
+
+function chartSelectionStorageKey(columns: string[]): string {
+  return `${CHART_SELECTION_STATE_PREFIX}${stableStringHash(chartColumnSignature(columns))}`;
+}
+
+function chartColumnSignature(columns: string[]): string {
+  return JSON.stringify(columns.map(column => String(column || '')));
+}
+
+function stableStringHash(value: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index++) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function normalizeSavedChartSelection(value: any): SavedChartSelection | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const chartType = normalizeChartType(value.chartType);
+  const xColumn = typeof value.xColumn === 'string' ? value.xColumn : '';
+  const yColumns = uniqueChartColumnNames(Array.isArray(value.yColumns) ? value.yColumns.map(String) : []);
+  const groupByColumn = typeof value.groupByColumn === 'string' ? value.groupByColumn : '';
+  if (!xColumn || yColumns.length === 0) {
+    return null;
+  }
+  return {
+    chartType,
+    xColumn,
+    yColumns,
+    groupByColumn: groupByColumn || undefined,
+  };
+}
+
+function compatibleChartSelection(selection: SavedChartSelection, options: ReturnType<typeof chartColumnOptions>): SavedChartSelection | null {
+  const xOption = options.xColumns.find(option => option.columnName === selection.xColumn);
+  if (!xOption) {
+    return null;
+  }
+  const yLookup = columnNameLookup(options.yColumns.map(option => option.columnName));
+  const yColumns = uniqueChartColumnNames(selection.yColumns).filter(column => yLookup[column]);
+  if (yColumns.length === 0) {
+    return null;
+  }
+  const chartType = normalizeChartType(selection.chartType);
+  const groupLookup = columnNameLookup(options.groupColumns.map(option => option.columnName));
+  const groupByColumn = chartType === 'box' ? '' : (selection.groupByColumn && groupLookup[selection.groupByColumn]
+    ? selection.groupByColumn
+    : '');
+  return {
+    chartType,
+    xColumn: xOption.columnName,
+    yColumns,
+    groupByColumn: groupByColumn || undefined,
+  };
+}
+
+function uniqueChartColumnNames(values: string[]): string[] {
+  const seen: { [value: string]: boolean } = Object.create(null);
+  const result: string[] = [];
+  values.forEach(value => {
+    const text = String(value || '');
+    if (text && !seen[text]) {
+      seen[text] = true;
+      result.push(text);
+    }
+  });
+  return result;
 }
 
 function moveColumnName(columns: string[], sourceColumnName: string, targetColumnName: string): string[] {

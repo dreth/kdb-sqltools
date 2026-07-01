@@ -19,6 +19,8 @@ const perfModule = require('../out/perf');
 const queriesModule = require('../out/ls/queries');
 const {
   CHART_MAX_SOURCE_ROWS,
+  CHART_ZOOM_MAX_SAMPLED_POINTS,
+  CHART_ZOOM_MIN_SAMPLED_POINTS,
   ChartDataError,
   boxChartTargetGroupCount,
   boxStats,
@@ -756,6 +758,37 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.ok(sampledChart.sampledPointCount <= 10);
   assert.ok(sampledChart.series[0].values.includes(999), 'min/max chart sampling should preserve spikes');
   assert.ok(chartTargetPointCount(1000) < 1000000, 'chart target should not send million-point series by default');
+  const zoomAllRowsTable = createColumnarPanelResult(['x', 'y'], 5000, (rowIndex, columnIndex) => {
+    return columnIndex === 0 ? rowIndex : rowIndex * 2;
+  });
+  const zoomAllRowsChart = buildLineChartData(zoomAllRowsTable, {
+    version: 1,
+    requestId: 3,
+    xColumn: 'x',
+    yColumns: ['y'],
+    xMin: 0,
+    xMax: 4999,
+    width: 10,
+    maxSampledPoints: CHART_ZOOM_MAX_SAMPLED_POINTS,
+  });
+  assert.strictEqual(zoomAllRowsChart.algorithm, 'none');
+  assert.strictEqual(zoomAllRowsChart.sampledPointCount, 5000);
+  const zoomSampledRowsTable = createColumnarPanelResult(['x', 'y'], 9000, (rowIndex, columnIndex) => {
+    return columnIndex === 0 ? rowIndex : (rowIndex === 4500 ? 999 : rowIndex);
+  });
+  const zoomSampledRowsChart = buildLineChartData(zoomSampledRowsTable, {
+    version: 1,
+    requestId: 4,
+    xColumn: 'x',
+    yColumns: ['y'],
+    xMin: 0,
+    xMax: 8999,
+    width: 10,
+    maxSampledPoints: CHART_ZOOM_MAX_SAMPLED_POINTS,
+  });
+  assert.strictEqual(zoomSampledRowsChart.algorithm, `minmax-bucket/${CHART_ZOOM_MAX_SAMPLED_POINTS}`);
+  assert.ok(zoomSampledRowsChart.sampledPointCount <= CHART_ZOOM_MAX_SAMPLED_POINTS);
+  assert.ok(zoomSampledRowsChart.series[0].values.includes(999), 'zoom min/max sampling should preserve spikes');
   assert.throws(
     () => buildLineChartData(spikeTable, {
       version: 1,
@@ -1154,6 +1187,19 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes("type: 'exportChartPng'"), true);
   assert.strictEqual(resultsPanelSource.includes('dataUrl'), true);
   assert.strictEqual(resultsPanelSource.includes('chartRendered = { version: chartData.version, requestId: chartData.requestId };'), true);
+  assert.strictEqual(resultsPanelSource.includes("type: 'chartRendered'"), true);
+  assert.strictEqual(resultsPanelSource.includes("message.type === 'chartRendered'"), true);
+  assert.strictEqual(resultsPanelSource.includes('await this.context.globalState.update(chartSelectionStorageKey(table.columns), compatible);'), true);
+  assert.strictEqual(resultsPanelSource.includes('savedSelection: this.savedChartSelection(table, options)'), true);
+  assert.strictEqual(resultsPanelSource.includes('chartAutoOpen: this.pendingAutoChart'), true);
+  assert.strictEqual(resultsPanelSource.includes('function applySavedChartSelection(value)'), true);
+  assert.strictEqual(resultsPanelSource.includes('chartAutoRenderPending = result.chartAutoOpen === true;'), true);
+  assert.strictEqual(resultsPanelSource.includes('function queueChartAutoRefine()'), true);
+  assert.strictEqual(resultsPanelSource.includes('const CHART_AUTO_REFINE_DELAY_MS = 450;'), true);
+  assert.strictEqual(resultsPanelSource.includes('chartLastAutoRefineKey'), true);
+  assert.strictEqual(resultsPanelSource.includes('function chartVisibleSamplePointCount(range)'), true);
+  assert.strictEqual(resultsPanelSource.includes('message.minSampledPoints = chartZoomMinSampledPoints();'), true);
+  assert.strictEqual(resultsPanelSource.includes('message.maxSampledPoints = chartZoomMaxSampledPoints();'), true);
   assert.strictEqual(packageJson.dependencies.uplot, '^1.6.32');
   assert.strictEqual(/cdn\.jsdelivr|unpkg|cdnjs|https:\/\/cdn/i.test(resultsPanelSource), false);
   assert.strictEqual(resultsPanelSource.includes("vscode.postMessage({ type: 'startLocalDataServer' })"), true);
@@ -1189,6 +1235,7 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(commandTitle('kdb-sqltools.runSelectionOrBlockInKdbPanel'), 'Run Selection in kdb Panel');
   assert.strictEqual(commandTitle('kdb-sqltools.runFileInKdbPanelReplace'), 'Run q Script in kdb Panel (Replace)');
   assert.strictEqual(commandTitle('kdb-sqltools.runSelectionOrBlockInKdbPanelReplace'), 'Run Selection in kdb Panel (Replace)');
+  assert.strictEqual(commandTitle('kdb-sqltools.runSelectionOrBlockAndChart'), 'Run Selection and Chart');
   assert.strictEqual(commandTitle('kdb-sqltools.runFileInNewKdbPanel'), 'Run q Script in New kdb Panel');
   assert.strictEqual(commandTitle('kdb-sqltools.runSelectionOrBlockInNewKdbPanel'), 'Run Selection in New kdb Panel');
   assert.strictEqual(commandTitle('kdb-sqltools.openKeyboardShortcuts'), 'Open kdb Keyboard Shortcuts');
@@ -1204,8 +1251,11 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(keybinding('kdb-sqltools.runSelectionOrBlockInNewKdbPanel').key, 'ctrl+shift+enter');
   assert.strictEqual(keybinding('kdb-sqltools.runSelectionOrBlockInNewKdbPanel').mac, 'cmd+shift+enter');
   assert.strictEqual(keybinding('kdb-sqltools.runFileInKdbPanelReplace').key, 'ctrl+alt+enter');
+  assert.strictEqual(keybinding('kdb-sqltools.runSelectionOrBlockAndChart').key, 'ctrl+alt+c');
+  assert.strictEqual(keybinding('kdb-sqltools.runSelectionOrBlockAndChart').mac, 'cmd+alt+c');
   assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.runSelectionOrBlockInNewKdbPanel'));
   assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.runSelectionOrBlockInKdbPanelReplace'));
+  assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.runSelectionOrBlockAndChart'));
   assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.copyKdbPanelSelection'));
   assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.openLocalDataServer'));
   assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.stopLocalDataServer'));
@@ -1215,6 +1265,10 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.giveFeedback'));
   assert.strictEqual(extensionSource.includes("'kdb-sqltools.runSelectionOrBlockInNewKdbPanel'"), true);
   assert.strictEqual(extensionSource.includes("'kdb-sqltools.runSelectionOrBlockInKdbPanelReplace'"), true);
+  assert.strictEqual(extensionSource.includes("'kdb-sqltools.runSelectionOrBlockAndChart'"), true);
+  assert.strictEqual(extensionSource.includes('selectedTextOrCurrentBlock(editor.document.getText(), selectionText, editor.selection.active.line)'), true);
+  assert.strictEqual(extensionSource.includes("await executeQText(extContext, text, 'kdbPanel', 'replace', { autoChart: true });"), true);
+  assert.strictEqual(extensionSource.includes('{ autoChart: options.autoChart === true }'), true);
   assert.strictEqual(extensionSource.includes("'kdb-sqltools.copyKdbPanelSelection'"), true);
   assert.strictEqual(extensionSource.includes("'kdb-sqltools.openLocalDataServer'"), true);
   assert.strictEqual(extensionSource.includes("'kdb-sqltools.stopLocalDataServer'"), true);
@@ -1382,6 +1436,16 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(chartDecimalPlacesSetting.minimum, 0);
   assert.strictEqual(chartDecimalPlacesSetting.maximum, 12);
   assert.strictEqual(/axis ticks, tooltips, legend\/live values, and box statistics/i.test(chartDecimalPlacesSetting.description), true);
+  const chartZoomMinSetting = resultSettings['kdb-sqltools.results.kdbPanel.chartZoomMinSampledPoints'];
+  assert.strictEqual(chartZoomMinSetting.type, 'integer');
+  assert.strictEqual(chartZoomMinSetting.default, CHART_ZOOM_MIN_SAMPLED_POINTS);
+  assert.strictEqual(chartZoomMinSetting.minimum, 1);
+  assert.strictEqual(/auto-refines a settled zoom range/i.test(chartZoomMinSetting.description), true);
+  const chartZoomMaxSetting = resultSettings['kdb-sqltools.results.kdbPanel.chartZoomMaxSampledPoints'];
+  assert.strictEqual(chartZoomMaxSetting.type, 'integer');
+  assert.strictEqual(chartZoomMaxSetting.default, CHART_ZOOM_MAX_SAMPLED_POINTS);
+  assert.strictEqual(chartZoomMaxSetting.minimum, 1);
+  assert.strictEqual(/clamped up to that minimum/i.test(chartZoomMaxSetting.description), true);
   assert.strictEqual(resultSettings['kdb-sqltools.performance.trace'].type, 'boolean');
   assert.strictEqual(resultSettings['kdb-sqltools.performance.trace'].default, false);
   assert.strictEqual(/extension host console/i.test(resultSettings['kdb-sqltools.performance.trace'].description), true);
@@ -1468,6 +1532,18 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelInternals.chartDecimalPlacesSettingValue(-1), 0);
   assert.strictEqual(resultsPanelInternals.chartDecimalPlacesSettingValue(3.9), 3);
   assert.strictEqual(resultsPanelInternals.chartDecimalPlacesSettingValue(13), 12);
+  assert.strictEqual(resultsPanelInternals.chartZoomMinSampledPointsSettingValue(undefined), CHART_ZOOM_MIN_SAMPLED_POINTS);
+  assert.strictEqual(resultsPanelInternals.chartZoomMinSampledPointsSettingValue(0), CHART_ZOOM_MIN_SAMPLED_POINTS);
+  assert.strictEqual(resultsPanelInternals.chartZoomMinSampledPointsSettingValue(12.9), 12);
+  assert.strictEqual(resultsPanelInternals.chartZoomMaxSampledPointsSettingValue(undefined, 8000), 8000);
+  assert.strictEqual(resultsPanelInternals.chartZoomMaxSampledPointsSettingValue(10, 12), 12);
+  assert.strictEqual(resultsPanelInternals.chartZoomMaxSampledPointsSettingValue(50.9, 12), 50);
+  assert.strictEqual(resultsPanelInternals.chartColumnSignature(['time', 'sym', 'price']), '["time","sym","price"]');
+  assert.ok(resultsPanelInternals.chartSelectionStorageKey(['time', 'sym', 'price']).startsWith('kdb-sqltools.results.kdbPanel.chartSelection.v1.'));
+  assert.strictEqual(
+    resultsPanelInternals.chartSelectionStorageKey(['time', 'sym', 'price']),
+    resultsPanelInternals.chartSelectionStorageKey(['time', 'sym', 'price'])
+  );
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('cellWidth', '1000.9'), { key: 'cellWidth', value: 600 });
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('rowHeight', 19), { key: 'rowHeight', value: 20 });
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('fontSize', 'abc'), null);
@@ -1581,7 +1657,7 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsDocsSource.includes('Settings menu'), true);
   assert.strictEqual(resultsDocsSource.includes('Data server subgroup'), false);
   assert.strictEqual(resultsDocsSource.includes('Data server is collapsed by default'), true);
-  assert.strictEqual(resultsDocsSource.includes('Chart menu'), true);
+  assert.strictEqual(resultsDocsSource.includes('Chart button'), true);
   assert.strictEqual(localDataDocsSource.includes('Open `Settings`.'), true);
   assert.strictEqual(localDataDocsSource.includes('Expand the collapsed `Data server` section.'), true);
   assert.strictEqual(localDataDocsSource.includes('section shows a short `host:port` badge'), true);
@@ -1598,7 +1674,9 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(packageJson.contributes.configuration.properties['kdb-sqltools.results.copyExportConfirmCellThreshold'].minimum, 1);
   assert.strictEqual(packageJson.contributes.configuration.properties['kdb-sqltools.results.localDataServerFullExportCellLimit'].minimum, 1);
   assert.strictEqual(packageJson.version, '0.3.9');
-  assert.strictEqual(chartingDocsSource.includes('Open the top-level `Chart` dropdown menu.'), true);
+  assert.strictEqual(chartingDocsSource.includes('Press the top-level `Chart` button.'), true);
+  assert.strictEqual(chartingDocsSource.includes('kdb+: Run Selection and Chart'), true);
+  assert.strictEqual(runningDocsSource.includes('| `Ctrl+Alt+C` | `Cmd+Alt+C` | `kdb+: Run Selection and Chart`'), true);
   assert.strictEqual(readmeSource.includes('The top toolbar is a single compact line'), true);
   assert.strictEqual(readmeSource.includes('`Settings` contains collapsible sections for view controls, search, hidden columns, output defaults, and `Data server` controls'), true);
   assert.strictEqual(chartingDocsSource.includes('PNG export saves the rendered uPlot canvas'), true);
@@ -1612,6 +1690,10 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(chartingDocsSource.includes('Reset zoom'), true);
   assert.strictEqual(chartingDocsSource.includes('restores the full rendered x domain'), true);
   assert.strictEqual(chartingDocsSource.includes('kdb-sqltools.results.kdbPanel.chartDecimalPlaces'), true);
+  assert.strictEqual(chartingDocsSource.includes('kdb-sqltools.results.kdbPanel.chartZoomMinSampledPoints'), true);
+  assert.strictEqual(chartingDocsSource.includes('kdb-sqltools.results.kdbPanel.chartZoomMaxSampledPoints'), true);
+  assert.strictEqual(chartingDocsSource.includes('after about 450 ms'), true);
+  assert.strictEqual(chartingDocsSource.includes('visible column names and order as the signature'), true);
   assert.strictEqual(chartingDocsSource.includes('Temporal timestamp labels do not use this numeric decimal formatting.'), true);
   assert.strictEqual(chartingDocsSource.includes('small built-in canvas renderer'), false);
   assert.strictEqual(chartingDocsSource.includes('basic canvas renderer'), false);
@@ -1619,6 +1701,8 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(chartingDocsSource.includes('kdb-sqltools.results.kdbPanel.chartMaxSourceRows'), true);
   assert.strictEqual(settingsDocsSource.includes('kdb-sqltools.results.kdbPanel.chartMaxSourceRows'), true);
   assert.strictEqual(settingsDocsSource.includes('kdb-sqltools.results.kdbPanel.chartDecimalPlaces'), true);
+  assert.strictEqual(settingsDocsSource.includes('kdb-sqltools.results.kdbPanel.chartZoomMinSampledPoints'), true);
+  assert.strictEqual(settingsDocsSource.includes('kdb-sqltools.results.kdbPanel.chartZoomMaxSampledPoints'), true);
   assert.strictEqual(resultsDocsSource.includes('## Non-table q result display'), true);
   assert.strictEqual(resultsDocsSource.includes('kdb-sqltools.results.kdbPanel.dictionaryDisplayStrategy'), true);
   assert.strictEqual(settingsDocsSource.includes('kdb-sqltools.results.kdbPanel.functionDisplayStrategy'), true);
@@ -2371,7 +2455,7 @@ function panelFormatElapsedMs(milliseconds, display) {
 function loadResultsPanelInternals() {
   const filename = path.join(__dirname, '..', 'out', 'results-panel.js');
   const source = fs.readFileSync(filename, 'utf8') +
-    '\nmodule.exports.__test = { chartDecimalPlacesSettingValue, chartMaxSourceRowsSettingValue, chartPngBytesFromDataUrl, columnarToXlsx, normalizePanelSettingUpdate, panelSettingConfigKey, panelSizeSettingValue };';
+    '\nmodule.exports.__test = { chartColumnSignature, chartDecimalPlacesSettingValue, chartMaxSourceRowsSettingValue, chartPngBytesFromDataUrl, chartSelectionStorageKey, chartZoomMaxSampledPointsSettingValue, chartZoomMinSampledPointsSettingValue, columnarToXlsx, normalizePanelSettingUpdate, panelSettingConfigKey, panelSizeSettingValue };';
   const testModule = new Module(filename, module);
   testModule.filename = filename;
   testModule.paths = Module._nodeModulePaths(path.dirname(filename));

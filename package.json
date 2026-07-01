@@ -52,6 +52,7 @@
     "onCommand:kdb-sqltools.runSelectionOrBlockInKdbPanel",
     "onCommand:kdb-sqltools.runFileInKdbPanelReplace",
     "onCommand:kdb-sqltools.runSelectionOrBlockInKdbPanelReplace",
+    "onCommand:kdb-sqltools.runSelectionOrBlockAndChart",
     "onCommand:kdb-sqltools.runFileInNewKdbPanel",
     "onCommand:kdb-sqltools.runSelectionOrBlockInNewKdbPanel",
     "onCommand:kdb-sqltools.openKeyboardShortcuts",
@@ -127,6 +128,12 @@
         "title": "Run Selection in kdb Panel (Replace)",
         "category": "kdb+",
         "icon": "$(replace)"
+      },
+      {
+        "command": "kdb-sqltools.runSelectionOrBlockAndChart",
+        "title": "Run Selection and Chart",
+        "category": "kdb+",
+        "icon": "$(graph)"
       },
       {
         "command": "kdb-sqltools.runFileInNewKdbPanel",
@@ -213,6 +220,12 @@
         "key": "ctrl+alt+enter",
         "mac": "cmd+alt+enter",
         "when": "editorTextFocus && (editorLangId == q || resourceExtname == .q)"
+      },
+      {
+        "command": "kdb-sqltools.runSelectionOrBlockAndChart",
+        "key": "ctrl+alt+c",
+        "mac": "cmd+alt+c",
+        "when": "editorTextFocus && (editorLangId == q || resourceExtname == .q)"
       }
     ],
     "menus": {
@@ -236,6 +249,11 @@
         },
         {
           "command": "kdb-sqltools.runSelectionOrBlockInNewKdbPanel",
+          "when": "editorLangId == q || resourceExtname == .q",
+          "group": "navigation"
+        },
+        {
+          "command": "kdb-sqltools.runSelectionOrBlockAndChart",
           "when": "editorLangId == q || resourceExtname == .q",
           "group": "navigation"
         },
@@ -276,6 +294,10 @@
         },
         {
           "command": "kdb-sqltools.runSelectionOrBlockInKdbPanelReplace",
+          "when": "editorLangId == q || resourceExtname == .q"
+        },
+        {
+          "command": "kdb-sqltools.runSelectionOrBlockAndChart",
           "when": "editorLangId == q || resourceExtname == .q"
         },
         {
@@ -463,6 +485,18 @@
           "minimum": 0,
           "maximum": 12,
           "description": "Decimal places for chart numeric labels, including numeric axis ticks, tooltips, legend/live values, and box statistics. Very large or very small nonzero values use scientific notation with this precision."
+        },
+        "kdb-sqltools.results.kdbPanel.chartZoomMinSampledPoints": {
+          "type": "integer",
+          "default": 3000,
+          "minimum": 1,
+          "description": "Minimum visible sampled points before the built-in chart auto-refines a settled zoom range when more source rows may exist in that range."
+        },
+        "kdb-sqltools.results.kdbPanel.chartZoomMaxSampledPoints": {
+          "type": "integer",
+          "default": 7000,
+          "minimum": 1,
+          "description": "Maximum sampled points returned for a refined chart zoom range. Values below chartZoomMinSampledPoints are clamped up to that minimum by the extension."
         },
         "kdb-sqltools.performance.trace": {
           "type": "boolean",

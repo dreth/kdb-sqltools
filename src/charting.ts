@@ -35,6 +35,7 @@ export interface LineChartRequest {
   requestId: number;
   maxSourceRows?: number;
   maxSampledPoints?: number;
+  minSampledPoints?: number;
 }
 
 export interface LineChartSeries {
@@ -145,6 +146,8 @@ export class ChartDataError extends Error {
 export const CHART_INFERENCE_SAMPLE_SIZE = 200;
 export const CHART_MAX_SOURCE_ROWS = 2000000;
 export const CHART_MAX_SAMPLED_POINTS = 12000;
+export const CHART_ZOOM_MIN_SAMPLED_POINTS = 3000;
+export const CHART_ZOOM_MAX_SAMPLED_POINTS = 7000;
 export const CHART_POINTS_PER_PIXEL = 3;
 export const CHART_MAX_BOX_GROUPS = 120;
 export const CHART_MAX_GROUPS = 12;
@@ -231,7 +234,7 @@ function buildXyChartData(table: ColumnarPanelResult, request: LineChartRequest,
     throw new ChartDataError('No selected y column has finite numeric values.');
   }
 
-  const maxSampledPoints = chartTargetPointCount(request.width, request.maxSampledPoints);
+  const maxSampledPoints = chartRequestTargetPointCount(request, xRange);
   const sampled = downsampleMinMax(grouped.points, grouped.series.length, maxSampledPoints);
   const series = grouped.series.map((definition, seriesIndex) => {
     return {
@@ -278,7 +281,12 @@ function buildBoxChartData(table: ColumnarPanelResult, request: LineChartRequest
   }
 
   const sorted = sortChartPoints(points, warnings);
-  const maxGroups = boxChartTargetGroupCount(points.length, source.yColumnNames.length, request.width, request.maxSampledPoints);
+  const maxGroups = boxChartTargetGroupCount(
+    points.length,
+    source.yColumnNames.length,
+    request.width,
+    chartRequestTargetPointCount(request, xRange)
+  );
   const bins = buildBoxChartBins(points, source.yColumnNames.length, maxGroups);
   const boxSeries = source.yColumnNames.map((columnName, seriesIndex) => {
     return {
@@ -538,10 +546,16 @@ function sortChartPoints(points: ChartPoint[], warnings: string[]): boolean {
   return sorted;
 }
 
-export function chartTargetPointCount(width: number, maxSampledPoints = CHART_MAX_SAMPLED_POINTS): number {
+export function chartTargetPointCount(
+  width: number,
+  maxSampledPoints = CHART_MAX_SAMPLED_POINTS,
+  minSampledPoints = 0
+): number {
   const pixelWidth = Math.max(1, Math.floor(Number(width) || 0));
-  const target = Math.max(200, pixelWidth * CHART_POINTS_PER_PIXEL);
-  return Math.min(positiveInteger(maxSampledPoints, CHART_MAX_SAMPLED_POINTS), target);
+  const maxPoints = positiveInteger(maxSampledPoints, CHART_MAX_SAMPLED_POINTS);
+  const minPoints = Math.min(maxPoints, nonNegativeInteger(minSampledPoints, 0));
+  const target = Math.max(200, pixelWidth * CHART_POINTS_PER_PIXEL, minPoints);
+  return Math.min(maxPoints, target);
 }
 
 export function boxChartTargetGroupCount(
@@ -839,6 +853,13 @@ function normalizedChartXRange(request: LineChartRequest): ChartXRange | undefin
   return { min, max };
 }
 
+function chartRequestTargetPointCount(request: LineChartRequest, xRange?: ChartXRange): number {
+  if (xRange) {
+    return positiveInteger(request.maxSampledPoints, CHART_ZOOM_MAX_SAMPLED_POINTS);
+  }
+  return chartTargetPointCount(request.width, request.maxSampledPoints, request.minSampledPoints);
+}
+
 function isMissing(value: unknown): boolean {
   return value === null || value === undefined || (typeof value === 'string' && value.trim() === '');
 }
@@ -965,4 +986,9 @@ function evenlyThin(points: ChartPoint[], maxPoints: number): ChartPoint[] {
 function positiveInteger(value: number | undefined, fallback: number): number {
   const number = Math.floor(Number(value));
   return Number.isFinite(number) && number > 0 ? number : fallback;
+}
+
+function nonNegativeInteger(value: number | undefined, fallback: number): number {
+  const number = Math.floor(Number(value));
+  return Number.isFinite(number) && number >= 0 ? number : fallback;
 }

@@ -27,6 +27,7 @@ Cancellation is best-effort on the server side. Depending on the q process, gate
 | `Ctrl+Enter` | `Cmd+Enter` | `kdb+: Run Selection in kdb Panel (Replace)` | Reuse the current or first kdb result tab. |
 | `Ctrl+Shift+Enter` | `Cmd+Shift+Enter` | `kdb+: Run Selection in New kdb Panel` | Open an independent kdb result tab. |
 | `Ctrl+Alt+Enter` | `Cmd+Alt+Enter` | `kdb+: Run q Script in kdb Panel (Replace)` | Run the whole file and reuse an existing kdb result tab. |
+| `Ctrl+Alt+C` | `Cmd+Alt+C` | `kdb+: Run Selection and Chart` | Run the selection, or current q block, in replace mode and open/render the chart panel. |
 
 Use `kdb+: Open kdb Keyboard Shortcuts` to edit these bindings in VS Code. Extension settings cannot define arbitrary VS Code keybindings.
 
@@ -40,6 +41,7 @@ Use `kdb+: Open kdb Keyboard Shortcuts` to edit these bindings in VS Code. Exten
 | `kdb+: Run Selection in kdb Panel` | kdb panel, using configured default run mode. |
 | `kdb+: Run q Script in kdb Panel (Replace)` | kdb panel, replace mode. |
 | `kdb+: Run Selection in kdb Panel (Replace)` | kdb panel, replace mode. |
+| `kdb+: Run Selection and Chart` | kdb panel, replace mode, then chart restored or default eligible columns. |
 | `kdb+: Run q Script in New kdb Panel` | kdb panel, new result tab. |
 | `kdb+: Run Selection in New kdb Panel` | kdb panel, new result tab. |
 | `kdb+: Run q Script in SQLTools Results` | SQLTools result grid. |
