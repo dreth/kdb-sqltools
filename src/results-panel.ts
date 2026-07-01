@@ -2149,13 +2149,7 @@ export class KdbResultsPanel {
       <button id="copy" disabled>Copy</button>
       <button id="export" disabled>Export</button>
     </div>
-    <details id="chartMenu" class="tool-dropdown">
-      <summary id="chartSummary" aria-label="Chart menu">Chart</summary>
-      <div class="tool-dropdown-panel" role="group" aria-label="Chart controls">
-        <div id="chartMenuStatus" class="tool-menu-status">Unavailable</div>
-        <button id="openChart" disabled>Open chart</button>
-      </div>
-    </details>
+    <button id="openChart" class="chart-open-button" disabled title="Open chart" aria-label="Open chart">Chart</button>
     <details id="settingsMenu" class="settings">
       <summary id="settingsSummary" aria-label="Settings menu">Settings</summary>
       <div class="settings-panel" role="group" aria-label="Settings controls">
@@ -2380,8 +2374,6 @@ export class KdbResultsPanel {
       const localDataServerStatus = document.getElementById('localDataServerStatus');
       const localDataServerBadge = document.getElementById('localDataServerBadge');
       const localDataServerBaseUrl = document.getElementById('localDataServerBaseUrl');
-      const chartMenu = document.getElementById('chartMenu');
-      const chartMenuStatus = document.getElementById('chartMenuStatus');
       const openChart = document.getElementById('openChart');
       const spinner = document.getElementById('spinner');
       const cancelQuery = document.getElementById('cancelQuery');
@@ -2600,9 +2592,6 @@ export class KdbResultsPanel {
         if (settingsMenu.open && !settingsMenu.contains(target)) {
           settingsMenu.open = false;
         }
-        if (chartMenu.open && !chartMenu.contains(target)) {
-          chartMenu.open = false;
-        }
         if (largeResultWarning.open && !largeResultWarning.contains(target)) {
           largeResultWarning.open = false;
         }
@@ -2659,26 +2648,15 @@ export class KdbResultsPanel {
       });
       settingsMenu.addEventListener('toggle', () => {
         if (settingsMenu.open) {
-          chartMenu.open = false;
+          // Chart is a direct button, not a dropdown.
         }
       });
-      chartMenu.addEventListener('toggle', () => {
-        if (chartMenu.open) {
-          settingsMenu.open = false;
-        }
-      });
-
       function closeToolbarMenus(restoreFocus) {
         let closed = false;
         let focusTarget = null;
         if (settingsMenu.open) {
           focusTarget = settingsMenu;
           settingsMenu.open = false;
-          closed = true;
-        }
-        if (chartMenu.open) {
-          focusTarget = chartMenu;
-          chartMenu.open = false;
           closed = true;
         }
         if (largeResultWarning.open) {
@@ -3056,10 +3034,8 @@ export class KdbResultsPanel {
         exportChart.disabled = !canExport;
         resetChartZoomButton.disabled = !canExport || !chartZoomed;
         refineChartZoomButton.disabled = !chartCanRefineZoom();
-        chartMenuStatus.textContent = chartPanel.hidden
-          ? (openChart.disabled ? 'Unavailable' : 'Ready')
-          : (chartRendered ? (chartControlsDirty ? 'Stale' : 'Rendered') : 'Open');
-        chartMenuStatus.classList.toggle('is-running', !chartPanel.hidden);
+        openChart.textContent = chartPanel.hidden ? 'Chart' : (chartControlsDirty ? 'Chart*' : 'Chart');
+        openChart.title = chartPanel.hidden ? 'Open chart' : (chartControlsDirty ? 'Chart settings changed — Render to update' : 'Chart open');
         chartSplitter.hidden = chartPanel.hidden;
       }
 
@@ -3070,7 +3046,7 @@ export class KdbResultsPanel {
         chartPanel.hidden = false;
         chartSplitter.hidden = false;
         setChartHeight(chartHeight);
-        chartMenu.open = false;
+        settingsMenu.open = false;
         chartStatus.textContent = 'Detecting chart columns...';
         chartControlsDirty = false;
         if (!chartRendered || chartRendered.version !== data.version) {

@@ -1008,14 +1008,14 @@ function panelFormatElapsedMs(milliseconds, display) {
   );
   const outputControlsSource = resultsPanelSource.slice(
     resultsPanelSource.indexOf('<div id="outputControls"'),
-    resultsPanelSource.indexOf('<details id="chartMenu"')
+    resultsPanelSource.indexOf('<button id="openChart"')
   );
   const inlineOutputOptionsSource = outputControlsSource.slice(
     outputControlsSource.indexOf('<span id="inlineOutputOptions"'),
     outputControlsSource.indexOf('<button id="copy"')
   );
-  const chartMenuSource = resultsPanelSource.slice(
-    resultsPanelSource.indexOf('<details id="chartMenu"'),
+  const chartButtonSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('<button id="openChart"'),
     resultsPanelSource.indexOf('<details id="settingsMenu"')
   );
   const settingsMenuSource = resultsPanelSource.slice(
@@ -1032,8 +1032,8 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="refineChartZoom"'), 1);
   assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="chartSplitter"'), 1);
   assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="cancelQuery"'), 1);
-  assert.ok(toolbarSource.indexOf('id="outputControls"') < toolbarSource.indexOf('id="chartMenu"'));
-  assert.ok(toolbarSource.indexOf('id="chartMenu"') < toolbarSource.indexOf('id="settingsMenu"'));
+  assert.ok(toolbarSource.indexOf('id="outputControls"') < toolbarSource.indexOf('id="openChart"'));
+  assert.ok(toolbarSource.indexOf('id="openChart"') < toolbarSource.indexOf('id="settingsMenu"'));
   assert.ok(toolbarSource.indexOf('id="settingsMenu"') < toolbarSource.indexOf('id="cancelQuery"'));
   assert.ok(toolbarSource.indexOf('id="cancelQuery"') < toolbarSource.indexOf('<span id="spinner"'));
   assert.strictEqual(resultsPanelSource.includes('<button id="cancelQuery" class="cancel-query" title="Cancel running q query" aria-label="Cancel running q query" hidden disabled>Cancel</button>'), true);
@@ -1066,11 +1066,10 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(inlineOutputOptionsSource.includes('title="Include row numbers in copied/exported output"'), true);
   assert.strictEqual(resultsPanelSource.includes('function placeOutputOptions(inToolsMenu)'), false);
   assert.strictEqual(resultsPanelSource.includes('id="overflowOutputOptions"'), false);
-  assert.strictEqual(chartMenuSource.includes('<details id="chartMenu" class="tool-dropdown">'), true);
-  assert.strictEqual(chartMenuSource.includes('<summary id="chartSummary" aria-label="Chart menu">Chart</summary>'), true);
-  assert.strictEqual(chartMenuSource.includes('id="chartMenuStatus" class="tool-menu-status">Unavailable</div>'), true);
-  assert.strictEqual(chartMenuSource.includes('id="openChart"'), true);
-  assert.strictEqual(chartMenuSource.includes('Open chart'), true);
+  assert.strictEqual(resultsPanelSource.includes('<details id="chartMenu"'), false);
+  assert.strictEqual(resultsPanelSource.includes('id="chartMenuStatus"'), false);
+  assert.strictEqual(chartButtonSource.includes('<button id="openChart" class="chart-open-button" disabled title="Open chart" aria-label="Open chart">Chart</button>'), true);
+  assert.strictEqual(chartButtonSource.includes('Open chart</button>'), false);
   assert.strictEqual(toolbarSource.includes('id="chartType"'), false);
   assert.ok(resultsPanelSource.indexOf('id="chartPanel"') < resultsPanelSource.indexOf('id="chartType"'));
   assert.deepStrictEqual(htmlSelectOptions(resultsPanelSource, 'chartType'), ['line', 'scatter', 'step', 'bar', 'box']);
@@ -1099,8 +1098,8 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('id="dataServerMenu"'), false);
   assert.strictEqual(resultsPanelSource.includes("localDataServerStatus.textContent = server\n          ? 'Server: ' + server.host + ':' + server.port"), false);
   assert.strictEqual(resultsPanelSource.includes("localDataServerBaseUrl.textContent = server ? 'Base URL: ' + String(server.baseUrl || '') : '';"), true);
-  assert.strictEqual(resultsPanelSource.includes("chartMenuStatus.textContent = chartPanel.hidden"), true);
-  assert.strictEqual(resultsPanelSource.includes('chartMenu.open = false;'), true);
+  assert.strictEqual(resultsPanelSource.includes("chartMenuStatus.textContent = chartPanel.hidden"), false);
+  assert.strictEqual(resultsPanelSource.includes('chartMenu.open = false;'), false);
   assert.strictEqual(resultsPanelSource.includes('id="chartPanel"'), true);
   assert.strictEqual(resultsPanelSource.includes('id="exportChart" hidden disabled'), true);
   assert.strictEqual(resultsPanelSource.includes('id="resetChartZoom" disabled'), true);
@@ -1169,9 +1168,9 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('function chartMaxSourceRowsSettingValue'), true);
   assert.strictEqual(resultsPanelSource.includes('maxSourceRows: chartMaxSourceRowsSetting()'), true);
   assert.strictEqual(/temporarily block the extension host, especially with multiple y columns/.test(chartingSource), true);
-  assert.ok(resultsPanelSource.indexOf('id="actionFormat"') < resultsPanelSource.indexOf('id="chartMenu"'));
-  assert.ok(resultsPanelSource.indexOf('id="copy"') < resultsPanelSource.indexOf('id="chartMenu"'));
-  assert.ok(resultsPanelSource.indexOf('id="export"') < resultsPanelSource.indexOf('id="chartMenu"'));
+  assert.ok(resultsPanelSource.indexOf('id="actionFormat"') < resultsPanelSource.indexOf('id="openChart"'));
+  assert.ok(resultsPanelSource.indexOf('id="copy"') < resultsPanelSource.indexOf('id="openChart"'));
+  assert.ok(resultsPanelSource.indexOf('id="export"') < resultsPanelSource.indexOf('id="openChart"'));
   assert.strictEqual(resultsPanelSource.includes('id="copyFormat"'), false);
   assert.strictEqual(resultsPanelSource.includes('id="exportFormat"'), false);
   assert.strictEqual(resultsPanelSource.includes("format === 'xlsx'"), true);
