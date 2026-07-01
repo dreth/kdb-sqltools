@@ -1,5 +1,13 @@
 # Change Log
 
+## 0.3.10
+
+- Added configurable q result display strategies for functions, dictionaries, lists, and object/composite values, with q-text rendering where IPC supports it and clear source-unavailable guidance for functions.
+- Changed the editor title action to prefer `Run Selection` and made the kdb panel `Chart` button open the chart section directly.
+- Fixed chart reset zoom and added `chartDecimalPlaces` for numeric chart ticks, tooltips, live legend values, and box statistics.
+- Added zoom-range chart refinement settings with defaults of 3,000 minimum and 7,000 maximum sampled points.
+- Persisted chart selections by result column signature and added `Run Selection and Chart` with `Ctrl+Alt+C` / `Cmd+Alt+C`.
+
 ## 0.3.9
 
 - Kept rendered charts visible when chart settings change and added a `Render to update` stale-settings notice.
