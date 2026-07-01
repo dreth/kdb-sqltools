@@ -10,6 +10,10 @@ Set these in VS Code User or Workspace settings JSON.
 | `kdb-sqltools.results.kdbPanel.defaultRunMode` | `new` | `new`, `replace` | Whether default kdb panel runs open a new result tab or reuse an existing one. |
 | `kdb-sqltools.results.kdbPanel.initialViewColumn` | `active` | `active`, `beside`, `one`, `two`, `three` | Editor group for the first kdb result panel. Later new result tabs open beside existing kdb result tabs when possible. |
 | `kdb-sqltools.results.kdbPanel.arrayDisplayFormat` | `commaSpace` | `commaSpace`, `space`, `raw` | Array/list cell display. |
+| `kdb-sqltools.results.kdbPanel.functionDisplayStrategy` | `qText` | `grid`, `qText`, `table`, `text` | Top-level function/lambda/projection display. |
+| `kdb-sqltools.results.kdbPanel.dictionaryDisplayStrategy` | `grid` | `grid`, `qText`, `table`, `text` | Top-level dictionary display. |
+| `kdb-sqltools.results.kdbPanel.listDisplayStrategy` | `grid` | `grid`, `qText`, `table`, `text` | Top-level general/mixed/object list display. |
+| `kdb-sqltools.results.kdbPanel.objectDisplayStrategy` | `grid` | `grid`, `qText`, `table`, `text` | Top-level plain object display. |
 | `kdb-sqltools.performance.trace` | `false` | `true`, `false` | Logs query timing and memory snapshots to the extension host console with the `[kdb-sqltools:perf]` prefix. |
 
 There is no setting that auto-starts the local data server. Start it explicitly from the kdb panel `Tools` area or the Command Palette.
@@ -21,6 +25,17 @@ Array display examples:
 | `commaSpace` | `1, 2, 3` |
 | `space` | `1 2 3` |
 | `raw` | `[1 2 3]` where q-like bracketed display is available |
+
+Non-table result strategy values:
+
+| Value | Display |
+| --- | --- |
+| `grid` | Existing synthetic grid/table form. |
+| `qText` | Single text cell with deterministic q-like output. |
+| `table` | Alias for `grid`. |
+| `text` | Alias for `qText`. |
+
+True q tables and keyed tables always use the grid. Function source is shown only if it is available in the decoded IPC payload. If IPC only supplies a function marker, the panel shows a source-unavailable message; return `string f` or `.Q.s f` from q when exact source/default q text is required.
 
 ## Charting
 
@@ -68,6 +83,10 @@ Very large values can make chart rendering slow or temporarily block the extensi
   "kdb-sqltools.results.target": "kdbPanel",
   "kdb-sqltools.results.kdbPanel.defaultRunMode": "replace",
   "kdb-sqltools.results.kdbPanel.arrayDisplayFormat": "space",
+  "kdb-sqltools.results.kdbPanel.functionDisplayStrategy": "qText",
+  "kdb-sqltools.results.kdbPanel.dictionaryDisplayStrategy": "qText",
+  "kdb-sqltools.results.kdbPanel.listDisplayStrategy": "grid",
+  "kdb-sqltools.results.kdbPanel.objectDisplayStrategy": "grid",
   "kdb-sqltools.results.includeHeaders": true,
   "kdb-sqltools.results.includeRowIndex": true,
   "kdb-sqltools.results.copyExportConfirmCellThreshold": 1000000,

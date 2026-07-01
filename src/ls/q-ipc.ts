@@ -24,6 +24,14 @@ const MIN_SAFE_BIGINT = BigInt(Number.MIN_SAFE_INTEGER);
 const MAX_SAFE_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
 
 export type QCellValue = string | number | boolean | null;
+export type QFunctionType = 'lambda' | 'primitive' | 'operator' | 'iterator' | 'projection' | 'composition' | 'function';
+
+export interface QFunction {
+  qtype: 'function';
+  functionType: QFunctionType;
+  ipcType: number;
+  source?: string;
+}
 
 export interface QTable {
   qtype: 'table';
@@ -52,9 +60,38 @@ export interface QDict {
 }
 
 export type QDisplayValue = QCellValue;
-export type QValue = QCellValue | QValue[] | QTable | QKeyedTable | QDict;
+export type QValue = QCellValue | QValue[] | QTable | QKeyedTable | QDict | QFunction;
+export type QResultDisplayStrategy = 'grid' | 'qText';
+export type QResultDisplayStrategySetting = QResultDisplayStrategy | 'table' | 'text';
+
+export interface QResultDisplayOptions {
+  functionDisplayStrategy?: QResultDisplayStrategySetting | string;
+  dictionaryDisplayStrategy?: QResultDisplayStrategySetting | string;
+  listDisplayStrategy?: QResultDisplayStrategySetting | string;
+  objectDisplayStrategy?: QResultDisplayStrategySetting | string;
+}
 
 type QNestedDisplayValue = QCellValue | QNestedDisplayValue[] | { [key: string]: QNestedDisplayValue };
+
+interface NormalizedQResultDisplayOptions {
+  functionDisplayStrategy: QResultDisplayStrategy;
+  dictionaryDisplayStrategy: QResultDisplayStrategy;
+  listDisplayStrategy: QResultDisplayStrategy;
+  objectDisplayStrategy: QResultDisplayStrategy;
+}
+
+interface QTextFormatOptions {
+  maxDepth?: number;
+  maxItems?: number;
+  maxChars?: number;
+}
+
+interface NormalizedQTextFormatOptions {
+  maxDepth: number;
+  maxItems: number;
+  maxChars: number;
+  seen: Set<unknown>;
+}
 
 export interface QTabularResult {
   cols: string[];
@@ -711,6 +748,14 @@ export function qValueToTabular(value: QValue): QTabularResult {
     };
   }
 
+  if (isQFunction(value)) {
+    return {
+      cols: ['value'],
+      rows: [{ value: qFunctionDisplayText(value) }],
+      kind: 'function',
+    };
+  }
+
   if (isQDict(value)) {
     return {
       cols: ['key', 'value'],
@@ -755,7 +800,9 @@ export function qValueToTabular(value: QValue): QTabularResult {
   };
 }
 
-export function qValueToColumnarPanel(value: QValue): QColumnarPanelResult {
+export function qValueToColumnarPanel(value: QValue, options?: QResultDisplayOptions): QColumnarPanelResult {
+  const displayOptions = normalizeQResultDisplayOptions(options);
+
   if (isQTable(value)) {
     const result = qTableToColumnarPanel(value);
     return {
@@ -776,7 +823,23 @@ export function qValueToColumnarPanel(value: QValue): QColumnarPanelResult {
     };
   }
 
+  if (isQFunction(value)) {
+    if (displayOptions.functionDisplayStrategy === 'qText') {
+      return qTextColumnarPanelResult(value, 'function');
+    }
+    const result = createColumnarPanelResult(['value'], 1, () => qFunctionDisplayText(value));
+    return {
+      cols: result.columns,
+      result,
+      kind: 'function',
+      rowsMaterialized: true,
+    };
+  }
+
   if (isQDict(value)) {
+    if (displayOptions.dictionaryDisplayStrategy === 'qText') {
+      return qTextColumnarPanelResult(value, 'dictionary');
+    }
     const result = createColumnarPanelResult(['key', 'value'], value.entries.length, (rowIndex, columnIndex) => {
       const entry = value.entries[rowIndex];
       if (!entry) {
@@ -793,6 +856,9 @@ export function qValueToColumnarPanel(value: QValue): QColumnarPanelResult {
   }
 
   if (Array.isArray(value)) {
+    if (displayOptions.listDisplayStrategy === 'qText') {
+      return qTextColumnarPanelResult(value, 'list');
+    }
     if (value.length > 0 && value.every(isPlainObject)) {
       const rows = value.map(row => normalizePanelPlainObject(row as unknown as { [key: string]: QValue }));
       const cols = collectColumns(rows);
@@ -819,6 +885,9 @@ export function qValueToColumnarPanel(value: QValue): QColumnarPanelResult {
   }
 
   if (isPlainObject(value)) {
+    if (displayOptions.objectDisplayStrategy === 'qText') {
+      return qTextColumnarPanelResult(value, 'object');
+    }
     const row = normalizePanelPlainObject(value as unknown as { [key: string]: QValue });
     const cols = Object.keys(row);
     return {
@@ -838,6 +907,49 @@ export function qValueToColumnarPanel(value: QValue): QColumnarPanelResult {
   };
 }
 
+export function normalizeQResultDisplayOptions(options?: QResultDisplayOptions): NormalizedQResultDisplayOptions {
+  return {
+    functionDisplayStrategy: normalizeQResultDisplayStrategy(options && options.functionDisplayStrategy, 'qText'),
+    dictionaryDisplayStrategy: normalizeQResultDisplayStrategy(options && options.dictionaryDisplayStrategy, 'grid'),
+    listDisplayStrategy: normalizeQResultDisplayStrategy(options && options.listDisplayStrategy, 'grid'),
+    objectDisplayStrategy: normalizeQResultDisplayStrategy(options && options.objectDisplayStrategy, 'grid'),
+  };
+}
+
+export function normalizeQResultDisplayStrategy(value: any, fallback: QResultDisplayStrategy): QResultDisplayStrategy {
+  if (value === 'grid' || value === 'table') {
+    return 'grid';
+  }
+  if (value === 'qText' || value === 'text') {
+    return 'qText';
+  }
+  return fallback;
+}
+
+export function qValueToQText(value: QValue, options: QTextFormatOptions = {}): string {
+  const maxChars = positiveIntegerOption(options.maxChars, 12000);
+  const state: NormalizedQTextFormatOptions = {
+    maxDepth: positiveIntegerOption(options.maxDepth, 4),
+    maxItems: positiveIntegerOption(options.maxItems, 40),
+    maxChars,
+    seen: new Set<unknown>(),
+  };
+  const text = qTextValue(value, 0, state);
+  if (text.length <= maxChars) {
+    return text;
+  }
+  return `${text.slice(0, Math.max(0, maxChars - 16))}... [truncated]`;
+}
+
+export function qFunctionDisplayText(value: QFunction): string {
+  const source = typeof value.source === 'string' ? value.source.trim() : '';
+  if (source.length > 0) {
+    return source;
+  }
+
+  return `[${qFunctionTypeLabel(value.functionType)}: source unavailable over q IPC; return string f or .Q.s f for source text]`;
+}
+
 export function qValueRowsMaterialized(value: QValue): boolean {
   if (isQTable(value)) {
     return qTableRowsMaterialized(value);
@@ -846,6 +958,224 @@ export function qValueRowsMaterialized(value: QValue): boolean {
     return qKeyedTableRowsMaterialized(value);
   }
   return true;
+}
+
+function qTextColumnarPanelResult(value: QValue, kind: string): QColumnarPanelResult {
+  const text = qValueToQText(value);
+  const result = createColumnarPanelResult(['q'], 1, () => text);
+  return {
+    cols: result.columns,
+    result,
+    kind,
+    rowsMaterialized: true,
+  };
+}
+
+function qTextValue(value: QValue, depth: number, options: NormalizedQTextFormatOptions): string {
+  if (depth >= options.maxDepth) {
+    return qTextSummary(value);
+  }
+
+  if (value === null || value === undefined) {
+    return '0N';
+  }
+
+  if (typeof value === 'string') {
+    return qStringLiteral(value);
+  }
+
+  if (typeof value === 'number') {
+    if (value === Infinity) {
+      return '0w';
+    }
+    if (value === -Infinity) {
+      return '-0w';
+    }
+    return String(value);
+  }
+
+  if (typeof value === 'boolean') {
+    return value ? '1b' : '0b';
+  }
+
+  if (isQFunction(value)) {
+    return qFunctionDisplayText(value);
+  }
+
+  if (isQTable(value)) {
+    return `[table ${qTableRowCount(value)}x${value.columns.length}]`;
+  }
+
+  if (isQKeyedTable(value)) {
+    return `[keyed table ${qKeyedTableRowCount(value)}x${value.columns.length}]`;
+  }
+
+  if (isQDict(value)) {
+    return withQTextSeen(value, options, () => {
+      return `${qTextValue(value.keys, depth + 1, options)}!${qTextValue(value.values, depth + 1, options)}`;
+    });
+  }
+
+  if (Array.isArray(value)) {
+    return withQTextSeen(value, options, () => qTextList(value, depth, options));
+  }
+
+  if (isPlainObject(value)) {
+    return withQTextSeen(value, options, () => qTextPlainObject(value as unknown as { [key: string]: QValue }, depth, options));
+  }
+
+  return String(value);
+}
+
+function qTextList(value: QValue[], depth: number, options: NormalizedQTextFormatOptions): string {
+  if (value.length === 0) {
+    return '()';
+  }
+
+  const count = Math.min(value.length, options.maxItems);
+  const items = value.slice(0, count).map(item => qTextValue(item, depth + 1, options));
+  const omitted = value.length - count;
+  const simpleVector = value.every(isSimpleQTextVectorItem);
+  if (omitted > 0) {
+    items.push(`... ${omitted} more`);
+  }
+
+  return simpleVector ? items.join(' ') : `(${items.join(';')})`;
+}
+
+function qTextPlainObject(
+  value: { [key: string]: QValue },
+  depth: number,
+  options: NormalizedQTextFormatOptions
+): string {
+  const keys = Object.keys(value);
+  if (keys.length === 0) {
+    return '()';
+  }
+
+  const count = Math.min(keys.length, options.maxItems);
+  const parts = keys.slice(0, count).map(key => {
+    return `${qTextObjectKey(key)}:${qTextValue(value[key], depth + 1, options)}`;
+  });
+  const omitted = keys.length - count;
+  if (omitted > 0) {
+    parts.push(`... ${omitted} more`);
+  }
+  return `{${parts.join(';')}}`;
+}
+
+function qTextSummary(value: QValue): string {
+  if (isQFunction(value)) {
+    return qFunctionDisplayText(value);
+  }
+  if (isQTable(value)) {
+    return `[table ${qTableRowCount(value)}x${value.columns.length}]`;
+  }
+  if (isQKeyedTable(value)) {
+    return `[keyed table ${qKeyedTableRowCount(value)}x${value.columns.length}]`;
+  }
+  if (isQDict(value)) {
+    return `[dictionary ${value.entries.length} entries]`;
+  }
+  if (Array.isArray(value)) {
+    return `[list ${value.length} items]`;
+  }
+  if (isPlainObject(value)) {
+    return `[object ${Object.keys(value as unknown as { [key: string]: QValue }).length} fields]`;
+  }
+  return qTextValue(value, 0, { maxDepth: 1, maxItems: 1, maxChars: 256, seen: new Set<unknown>() });
+}
+
+function withQTextSeen(value: object, options: NormalizedQTextFormatOptions, render: () => string): string {
+  if (options.seen.has(value)) {
+    return '[cycle]';
+  }
+  options.seen.add(value);
+  try {
+    return render();
+  } finally {
+    options.seen.delete(value);
+  }
+}
+
+function qTextObjectKey(value: string): string {
+  return /^[A-Za-z_][A-Za-z0-9_.]*$/.test(value) ? value : qStringLiteral(value);
+}
+
+function qStringLiteral(value: string): string {
+  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\r/g, '\\r').replace(/\n/g, '\\n').replace(/\t/g, '\\t')}"`;
+}
+
+function isSimpleQTextVectorItem(value: QValue): boolean {
+  return value === null || typeof value === 'number' || typeof value === 'boolean';
+}
+
+function positiveIntegerOption(value: any, fallback: number): number {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return fallback;
+  }
+  const integer = Math.floor(number);
+  return integer >= 1 ? integer : fallback;
+}
+
+function makeQFunction(functionType: QFunctionType, ipcType: number, source?: string): QFunction {
+  const value: QFunction = {
+    qtype: 'function',
+    functionType,
+    ipcType,
+  };
+  if (source) {
+    value.source = source;
+  }
+  return value;
+}
+
+function qFunctionSourceFromPayload(value: QValue): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  const text = value.trim();
+  return text.startsWith('{') && text.endsWith('}') ? text : undefined;
+}
+
+function qFunctionTypeFromIpcType(type: number): QFunctionType {
+  switch (type) {
+    case 100:
+      return 'lambda';
+    case 101:
+      return 'primitive';
+    case 102:
+      return 'operator';
+    case 103:
+      return 'iterator';
+    case 104:
+      return 'projection';
+    case 105:
+      return 'composition';
+    default:
+      return 'function';
+  }
+}
+
+function qFunctionTypeLabel(value: QFunctionType): string {
+  switch (value) {
+    case 'lambda':
+      return 'lambda';
+    case 'primitive':
+      return 'primitive function';
+    case 'operator':
+      return 'operator';
+    case 'iterator':
+      return 'iterator';
+    case 'projection':
+      return 'projection';
+    case 'composition':
+      return 'composition';
+    case 'function':
+    default:
+      return 'function';
+  }
 }
 
 function createQueryPerf(query: string): QIpcQueryPerf | undefined {
@@ -1143,12 +1473,12 @@ class QReader {
   private readFunction(type: number): QValue {
     if (type === 100) {
       this.readSymbolAtom();
-      this.readObject();
-      return '[lambda]';
+      const payload = this.readObject();
+      return makeQFunction('lambda', type, qFunctionSourceFromPayload(payload));
     }
 
     if (type < 104) {
-      return this.readInt8() === 0 && type === 101 ? null : '[function]';
+      return this.readInt8() === 0 && type === 101 ? null : makeQFunction(qFunctionTypeFromIpcType(type), type);
     }
 
     if (type > 105) {
@@ -1163,7 +1493,7 @@ class QReader {
       }
     }
 
-    return '[function]';
+    return makeQFunction(qFunctionTypeFromIpcType(type), type);
   }
 
   private readTimestamp(): QValue {
@@ -1609,6 +1939,9 @@ function normalizePanelCell(value: QValue): unknown {
 }
 
 function normalizeNestedValue(value: QValue): QNestedDisplayValue {
+  if (isQFunction(value)) {
+    return qFunctionDisplayText(value);
+  }
   if (isQTable(value)) {
     return `[table ${qTableRowCount(value)} rows]`;
   }
@@ -1716,6 +2049,10 @@ function isQKeyedTable(value: QValue): value is QKeyedTable {
 
 function isQDict(value: QValue): value is QDict {
   return isQTyped(value, 'dict');
+}
+
+function isQFunction(value: QValue): value is QFunction {
+  return isQTyped(value, 'function');
 }
 
 function isQTyped(value: QValue, qtype: string): boolean {

@@ -88,6 +88,30 @@ Settings search runs in the extension against visible columns only. It returns c
 
 Text copy/export formats use this display text. JSON and NDJSON keep structured values.
 
+## Non-table q result display
+
+True q tables and keyed tables always open as grids. Top-level non-table composite results can be configured independently:
+
+| Setting suffix | Default | Applies to |
+| --- | --- | --- |
+| `functionDisplayStrategy` | `qText` | Functions, lambdas, projections, compositions, and unknown function-like values. |
+| `dictionaryDisplayStrategy` | `grid` | Dictionaries. |
+| `listDisplayStrategy` | `grid` | General, mixed, and object lists. |
+| `objectDisplayStrategy` | `grid` | Plain objects or nested composite values decoded as objects. |
+
+Use `grid` for the existing synthetic table form, or `qText` for one text cell with deterministic q-like output. Settings JSON also accepts `table` as an alias for `grid`, and `text` as an alias for `qText`.
+
+Example:
+
+```json
+{
+  "kdb-sqltools.results.kdbPanel.dictionaryDisplayStrategy": "qText",
+  "kdb-sqltools.results.kdbPanel.listDisplayStrategy": "qText"
+}
+```
+
+Function source is not reconstructed. If q IPC only supplies a function marker, the panel shows a source-unavailable message instead of inventing a definition. Return `string f` or `.Q.s f` from q when exact source/default q text is required.
+
 ## Local data and charting
 
 See [Local data server](local-data-server.md) for tokenized localhost endpoints and Python/pandas usage.
