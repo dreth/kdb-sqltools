@@ -383,6 +383,74 @@
           ],
           "description": "Array/list cell display format for the kdb results panel. Text copy/export formats use this display text; JSON and NDJSON keep structured values."
         },
+        "kdb-sqltools.results.kdbPanel.functionDisplayStrategy": {
+          "type": "string",
+          "default": "qText",
+          "enum": [
+            "grid",
+            "qText",
+            "table",
+            "text"
+          ],
+          "enumDescriptions": [
+            "Show a synthetic one-cell grid for function-like values.",
+            "Show q-like/default text in a single cell.",
+            "Alias for grid.",
+            "Alias for qText."
+          ],
+          "description": "Display strategy for top-level q functions, lambdas, projections, compositions, and unknown function-like values in the kdb results panel. Function source is shown only when q IPC provides it; otherwise the panel shows an explicit source-unavailable marker. Return string f or .Q.s f from q when exact function source text is required."
+        },
+        "kdb-sqltools.results.kdbPanel.dictionaryDisplayStrategy": {
+          "type": "string",
+          "default": "grid",
+          "enum": [
+            "grid",
+            "qText",
+            "table",
+            "text"
+          ],
+          "enumDescriptions": [
+            "Show dictionaries as synthetic key/value grids.",
+            "Show q-like/default text in a single cell.",
+            "Alias for grid.",
+            "Alias for qText."
+          ],
+          "description": "Display strategy for top-level q dictionaries in the kdb results panel. True q tables and keyed tables always use the grid."
+        },
+        "kdb-sqltools.results.kdbPanel.listDisplayStrategy": {
+          "type": "string",
+          "default": "grid",
+          "enum": [
+            "grid",
+            "qText",
+            "table",
+            "text"
+          ],
+          "enumDescriptions": [
+            "Show lists as synthetic index/value grids or object-list grids where applicable.",
+            "Show q-like/default text in a single cell.",
+            "Alias for grid.",
+            "Alias for qText."
+          ],
+          "description": "Display strategy for top-level general, mixed, and object lists in the kdb results panel. True q tables and keyed tables always use the grid."
+        },
+        "kdb-sqltools.results.kdbPanel.objectDisplayStrategy": {
+          "type": "string",
+          "default": "grid",
+          "enum": [
+            "grid",
+            "qText",
+            "table",
+            "text"
+          ],
+          "enumDescriptions": [
+            "Show plain objects as synthetic field grids.",
+            "Show q-like/default text in a single cell.",
+            "Alias for grid.",
+            "Alias for qText."
+          ],
+          "description": "Display strategy for top-level plain objects and nested composite values decoded as objects in the kdb results panel. True q tables and keyed tables always use the grid."
+        },
         "kdb-sqltools.results.kdbPanel.chartMaxSourceRows": {
           "type": "integer",
           "default": 2000000,

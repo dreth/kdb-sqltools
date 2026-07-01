@@ -5,7 +5,7 @@ import { DRIVER_ALIASES, DRIVER_ID, DRIVER_NAME } from './constants';
 import { selectedTextOrCurrentLine } from './q-text';
 import KdbDriver from './ls/driver';
 import { emptyColumnarPanelResult } from './kdb-results';
-import { QValue, qValueToColumnarPanel } from './ls/q-ipc';
+import { QResultDisplayOptions, QValue, qValueToColumnarPanel } from './ls/q-ipc';
 import { KdbPanelResult, KdbResultsPanel, KdbResultsPanelRunMode } from './results-panel';
 import { configurePerfTrace, endPerfSpan, perfSpan } from './perf';
 const { publisher, name, displayName } = require('../package.json');
@@ -360,7 +360,7 @@ async function executeQTextInKdbPanel(
     });
     let panelResult: KdbPanelResult | undefined;
     try {
-      const columnar = qValueToColumnarPanel(value);
+      const columnar = qValueToColumnarPanel(value, qResultDisplayOptions());
       panelResult = {
         table: columnar.result,
         query: text,
@@ -408,6 +408,16 @@ async function executeQTextInKdbPanel(
     panelCancel.dispose();
     await driver.close();
   }
+}
+
+function qResultDisplayOptions(): QResultDisplayOptions {
+  const config = vscode.workspace.getConfiguration('kdb-sqltools.results.kdbPanel');
+  return {
+    functionDisplayStrategy: config.get<string>('functionDisplayStrategy'),
+    dictionaryDisplayStrategy: config.get<string>('dictionaryDisplayStrategy'),
+    listDisplayStrategy: config.get<string>('listDisplayStrategy'),
+    objectDisplayStrategy: config.get<string>('objectDisplayStrategy'),
+  };
 }
 
 async function pickKdbConnection(extContext: ExtensionContext): Promise<IConnection<any> | undefined> {

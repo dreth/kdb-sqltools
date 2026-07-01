@@ -11,6 +11,7 @@ const {
   QIpcReceiveBuffer,
   qValueRowsMaterialized,
   qValueToColumnarPanel,
+  qValueToQText,
   qValueToTabular,
   serializeTextQuery,
 } = require('../out/ls/q-ipc');
@@ -1336,6 +1337,22 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultSettings['kdb-sqltools.results.kdbPanel.arrayDisplayFormat'].type, 'string');
   assert.strictEqual(resultSettings['kdb-sqltools.results.kdbPanel.arrayDisplayFormat'].default, 'commaSpace');
   assert.deepStrictEqual(resultSettings['kdb-sqltools.results.kdbPanel.arrayDisplayFormat'].enum, ['commaSpace', 'space', 'raw']);
+  const qDisplayStrategyEnum = ['grid', 'qText', 'table', 'text'];
+  const qDisplayStrategySettings = [
+    ['functionDisplayStrategy', 'qText'],
+    ['dictionaryDisplayStrategy', 'grid'],
+    ['listDisplayStrategy', 'grid'],
+    ['objectDisplayStrategy', 'grid'],
+  ];
+  qDisplayStrategySettings.forEach(([name, defaultValue]) => {
+    const setting = resultSettings[`kdb-sqltools.results.kdbPanel.${name}`];
+    assert.strictEqual(setting.type, 'string');
+    assert.strictEqual(setting.default, defaultValue);
+    assert.deepStrictEqual(setting.enum, qDisplayStrategyEnum);
+    assert.ok(/Display strategy/.test(setting.description));
+  });
+  assert.ok(/source-unavailable marker/.test(resultSettings['kdb-sqltools.results.kdbPanel.functionDisplayStrategy'].description));
+  assert.ok(/Return string f or \.Q\.s f/.test(resultSettings['kdb-sqltools.results.kdbPanel.functionDisplayStrategy'].description));
   const chartMaxSourceRowsSetting = resultSettings['kdb-sqltools.results.kdbPanel.chartMaxSourceRows'];
   assert.strictEqual(chartMaxSourceRowsSetting.type, 'integer');
   assert.strictEqual(chartMaxSourceRowsSetting.default, CHART_MAX_SOURCE_ROWS);
@@ -1376,7 +1393,17 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('settingsHideLargeSortWarnings'), true);
   assert.strictEqual(resultsPanelSource.includes('settingsElapsedTimeDisplay'), true);
   assert.strictEqual(resultsPanelSource.includes('settingsArrayDisplayFormat'), true);
+  assert.strictEqual(resultsPanelSource.includes('settingsFunctionDisplayStrategy'), true);
+  assert.strictEqual(resultsPanelSource.includes('settingsDictionaryDisplayStrategy'), true);
+  assert.strictEqual(resultsPanelSource.includes('settingsListDisplayStrategy'), true);
+  assert.strictEqual(resultsPanelSource.includes('settingsObjectDisplayStrategy'), true);
   assert.deepStrictEqual(htmlSelectOptions(resultsPanelSource, 'settingsArrayDisplayFormat'), ['commaSpace', 'space', 'raw']);
+  assert.deepStrictEqual(htmlSelectOptions(resultsPanelSource, 'settingsFunctionDisplayStrategy'), ['grid', 'qText']);
+  assert.deepStrictEqual(htmlSelectOptions(resultsPanelSource, 'settingsDictionaryDisplayStrategy'), ['grid', 'qText']);
+  assert.deepStrictEqual(htmlSelectOptions(resultsPanelSource, 'settingsListDisplayStrategy'), ['grid', 'qText']);
+  assert.deepStrictEqual(htmlSelectOptions(resultsPanelSource, 'settingsObjectDisplayStrategy'), ['grid', 'qText']);
+  assert.strictEqual(extensionSource.includes('qValueToColumnarPanel(value, qResultDisplayOptions())'), true);
+  assert.strictEqual(extensionSource.includes("config.get<string>('functionDisplayStrategy')"), true);
   assert.strictEqual(resultsPanelSource.includes('Hide forever'), true);
   assert.deepStrictEqual(
     [
@@ -1430,12 +1457,19 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('arrayDisplayFormat', 'space'), { key: 'arrayDisplayFormat', value: 'space' });
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('arrayDisplayFormat', 'raw'), { key: 'arrayDisplayFormat', value: 'raw' });
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('arrayDisplayFormat', 'comma'), null);
+  assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('functionDisplayStrategy', 'text'), { key: 'functionDisplayStrategy', value: 'qText' });
+  assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('functionDisplayStrategy', 'table'), { key: 'functionDisplayStrategy', value: 'grid' });
+  assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('dictionaryDisplayStrategy', 'qText'), { key: 'dictionaryDisplayStrategy', value: 'qText' });
+  assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('listDisplayStrategy', 'grid'), { key: 'listDisplayStrategy', value: 'grid' });
+  assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('objectDisplayStrategy', 'summary'), null);
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('constructor', 1), null);
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('__proto__', true), null);
   assert.strictEqual(resultsPanelInternals.panelSettingConfigKey('cellWidth', 'compact'), 'compact.cellWidth');
   assert.strictEqual(resultsPanelInternals.panelSettingConfigKey('rowHeight', 'comfortable'), 'comfortable.rowHeight');
   assert.strictEqual(resultsPanelInternals.panelSettingConfigKey('includeHeaders', 'compact'), 'includeHeaders');
   assert.strictEqual(resultsPanelInternals.panelSettingConfigKey('arrayDisplayFormat', 'compact'), 'kdbPanel.arrayDisplayFormat');
+  assert.strictEqual(resultsPanelInternals.panelSettingConfigKey('functionDisplayStrategy', 'compact'), 'kdbPanel.functionDisplayStrategy');
+  assert.strictEqual(resultsPanelInternals.panelSettingConfigKey('dictionaryDisplayStrategy', 'compact'), 'kdbPanel.dictionaryDisplayStrategy');
   assert.strictEqual(
     resultsPanelInternals.panelSizeSettingValue(140, { defaultValue: 140 }, 500, { globalValue: 500 }, 140, 160, 80, 600),
     500
@@ -1551,6 +1585,14 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(/cdn\.jsdelivr|unpkg|cdnjs|https:\/\/cdn/i.test(chartingDocsSource), false);
   assert.strictEqual(chartingDocsSource.includes('kdb-sqltools.results.kdbPanel.chartMaxSourceRows'), true);
   assert.strictEqual(settingsDocsSource.includes('kdb-sqltools.results.kdbPanel.chartMaxSourceRows'), true);
+  assert.strictEqual(resultsDocsSource.includes('## Non-table q result display'), true);
+  assert.strictEqual(resultsDocsSource.includes('kdb-sqltools.results.kdbPanel.dictionaryDisplayStrategy'), true);
+  assert.strictEqual(settingsDocsSource.includes('kdb-sqltools.results.kdbPanel.functionDisplayStrategy'), true);
+  assert.strictEqual(settingsDocsSource.includes('kdb-sqltools.results.kdbPanel.dictionaryDisplayStrategy'), true);
+  assert.strictEqual(settingsDocsSource.includes('kdb-sqltools.results.kdbPanel.listDisplayStrategy'), true);
+  assert.strictEqual(settingsDocsSource.includes('kdb-sqltools.results.kdbPanel.objectDisplayStrategy'), true);
+  assert.strictEqual(/source-unavailable message/.test(resultsDocsSource + settingsDocsSource), true);
+  assert.strictEqual((resultsDocsSource + settingsDocsSource).includes('return `string f` or `.Q.s f`'), true);
   assert.strictEqual(chartingDocsSource.includes('no hard upper bound'), true);
   assert.strictEqual(settingsDocsSource.includes('no hard upper bound'), true);
   assert.strictEqual(/temporarily block the extension host/.test(chartingDocsSource), true);
@@ -1857,6 +1899,18 @@ function panelFormatElapsedMs(milliseconds, display) {
     { key: 'b', value: 2 },
     { key: 'c', value: 3 },
   ]);
+  const dictColumnarGrid = qValueToColumnarPanel(dict);
+  assert.deepStrictEqual(dictColumnarGrid.result.columns, ['key', 'value']);
+  assert.strictEqual(dictColumnarGrid.result.rowCount, 3);
+  const dictColumnarText = qValueToColumnarPanel(dict, { dictionaryDisplayStrategy: 'qText' });
+  assert.deepStrictEqual(dictColumnarText.result.columns, ['q']);
+  assert.strictEqual(dictColumnarText.result.rowCount, 1);
+  assert.deepStrictEqual(
+    dictColumnarText.result.cellWindow({ start: 0, end: 0 }, { start: 0, end: 0 }).cells,
+    [['("a";"b";"c")!1 2 3']]
+  );
+  assert.deepStrictEqual(qValueToColumnarPanel(dict, { dictionaryDisplayStrategy: 'text' }).result.columns, ['q']);
+  assert.deepStrictEqual(qValueToColumnarPanel(dict, { dictionaryDisplayStrategy: 'table' }).result.columns, ['key', 'value']);
 
   const charDict = deserializeQMessage(hex(
     '010000001e000000630b00030000006100620063000a000300000078797a'
@@ -1902,6 +1956,14 @@ function panelFormatElapsedMs(milliseconds, display) {
       { start: 0, end: 2 }
     )
   );
+  const tableWithTextStrategies = qValueToColumnarPanel(table, {
+    dictionaryDisplayStrategy: 'qText',
+    listDisplayStrategy: 'qText',
+    objectDisplayStrategy: 'qText',
+  });
+  assert.strictEqual(tableWithTextStrategies.kind, 'table');
+  assert.deepStrictEqual(tableWithTextStrategies.result.columns, ['a', 'b', 'c']);
+  assert.strictEqual(tableWithTextStrategies.result.rowCount, 3);
 
   const nestedTablePayload = qTable(
     ['sym', 'chars', 'nums', 'dict'],
@@ -1960,6 +2022,47 @@ function panelFormatElapsedMs(milliseconds, display) {
     ['0', '9007199254740993'],
     ['1', '-9007199254740993'],
   ]);
+
+  const mixedList = [1, 'alpha', [2, 3], { beta: true }];
+  const mixedListGrid = qValueToColumnarPanel(mixedList);
+  assert.deepStrictEqual(mixedListGrid.result.columns, ['index', 'value']);
+  assert.strictEqual(mixedListGrid.result.rowCount, 4);
+  const mixedListText = qValueToColumnarPanel(mixedList, { listDisplayStrategy: 'qText' });
+  assert.deepStrictEqual(mixedListText.result.columns, ['q']);
+  assert.deepStrictEqual(
+    mixedListText.result.cellWindow({ start: 0, end: 0 }, { start: 0, end: 0 }).cells,
+    [['(1;"alpha";2 3;{beta:1b})']]
+  );
+  const plainObjectText = qValueToColumnarPanel({ alpha: 1, beta: [2, 3] }, { objectDisplayStrategy: 'text' });
+  assert.deepStrictEqual(plainObjectText.result.columns, ['q']);
+  assert.deepStrictEqual(
+    plainObjectText.result.cellWindow({ start: 0, end: 0 }, { start: 0, end: 0 }).cells,
+    [['{alpha:1;beta:2 3}']]
+  );
+  assert.strictEqual(qValueToQText([1, 2, 3], { maxItems: 2 }), '1 2 ... 1 more');
+  assert.strictEqual(qValueToQText({ a: { b: { c: 1 } } }, { maxDepth: 2 }), '{a:{b:[object 1 fields]}}');
+
+  const lambdaWithSource = deserializeQPayload(Buffer.concat([int8(100), cString(''), charVector('{x+y}')]));
+  assert.strictEqual(lambdaWithSource.qtype, 'function');
+  assert.strictEqual(lambdaWithSource.functionType, 'lambda');
+  assert.strictEqual(lambdaWithSource.source, '{x+y}');
+  const lambdaWithSourceColumnar = qValueToColumnarPanel(lambdaWithSource);
+  assert.deepStrictEqual(lambdaWithSourceColumnar.result.columns, ['q']);
+  assert.deepStrictEqual(
+    lambdaWithSourceColumnar.result.cellWindow({ start: 0, end: 0 }, { start: 0, end: 0 }).cells,
+    [['{x+y}']]
+  );
+  const lambdaWithoutSource = deserializeQPayload(Buffer.concat([int8(100), cString(''), intVector([1, 2])]));
+  const lambdaWithoutSourceColumnar = qValueToColumnarPanel(lambdaWithoutSource);
+  assert.deepStrictEqual(lambdaWithoutSourceColumnar.result.columns, ['q']);
+  assert.match(
+    lambdaWithoutSourceColumnar.result.cellText(0, 0),
+    /lambda: source unavailable over q IPC; return string f or \.Q\.s f/
+  );
+  const lambdaGrid = qValueToColumnarPanel(lambdaWithoutSource, { functionDisplayStrategy: 'grid' });
+  assert.deepStrictEqual(lambdaGrid.result.columns, ['value']);
+  assert.match(lambdaGrid.result.cellText(0, 0), /source unavailable over q IPC/);
+  assert.match(qValueToTabular(lambdaWithoutSource).rows[0].value, /source unavailable over q IPC/);
 
   assert.strictEqual(normalizeNamespace('analytics'), '.analytics');
   assert.strictEqual(normalizeNamespace('.analytics'), '.analytics');

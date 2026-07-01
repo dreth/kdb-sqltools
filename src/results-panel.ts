@@ -72,6 +72,7 @@ interface KdbPanelMetadata {
 
 type KdbPanelDensity = 'compact' | 'standard' | 'comfortable';
 type KdbPanelElapsedTimeDisplay = 'auto' | 'milliseconds';
+type KdbPanelQResultDisplayStrategy = 'grid' | 'qText';
 type KdbPanelSortDirection = 'asc' | 'desc';
 export type KdbResultsPanelRunMode = 'replace' | 'new';
 
@@ -94,6 +95,10 @@ interface KdbPanelSettings {
   localDataServerFullExportCellLimit: number;
   elapsedTimeDisplay: KdbPanelElapsedTimeDisplay;
   arrayDisplayFormat: ArrayDisplayFormat;
+  functionDisplayStrategy: KdbPanelQResultDisplayStrategy;
+  dictionaryDisplayStrategy: KdbPanelQResultDisplayStrategy;
+  listDisplayStrategy: KdbPanelQResultDisplayStrategy;
+  objectDisplayStrategy: KdbPanelQResultDisplayStrategy;
 }
 
 interface CopyExportEstimate {
@@ -136,6 +141,10 @@ const DEFAULT_PANEL_SETTINGS: KdbPanelSettings = {
   localDataServerFullExportCellLimit: LOCAL_DATA_SERVER_FULL_EXPORT_CELL_LIMIT,
   elapsedTimeDisplay: 'auto',
   arrayDisplayFormat: 'commaSpace',
+  functionDisplayStrategy: 'qText',
+  dictionaryDisplayStrategy: 'grid',
+  listDisplayStrategy: 'grid',
+  objectDisplayStrategy: 'grid',
 };
 const DEFAULT_DENSITY_SIZE_SETTINGS: { [density in KdbPanelDensity]: Pick<KdbPanelSettings, 'cellWidth' | 'rowHeight' | 'fontSize'> } = {
   compact: {
@@ -2194,6 +2203,22 @@ export class KdbResultsPanel {
             <option value="space">Spaces</option>
             <option value="raw">Raw brackets</option>
           </select></label>
+          <label class="settings-row"><span>Functions</span><select id="settingsFunctionDisplayStrategy">
+            <option value="grid">Grid</option>
+            <option value="qText">qText</option>
+          </select></label>
+          <label class="settings-row"><span>Dictionaries</span><select id="settingsDictionaryDisplayStrategy">
+            <option value="grid">Grid</option>
+            <option value="qText">qText</option>
+          </select></label>
+          <label class="settings-row"><span>Lists</span><select id="settingsListDisplayStrategy">
+            <option value="grid">Grid</option>
+            <option value="qText">qText</option>
+          </select></label>
+          <label class="settings-row"><span>Objects</span><select id="settingsObjectDisplayStrategy">
+            <option value="grid">Grid</option>
+            <option value="qText">qText</option>
+          </select></label>
           <label class="settings-row"><span>Density</span><select id="settingsDensity">
             <option value="compact">Compact</option>
             <option value="standard">Standard</option>
@@ -2292,7 +2317,11 @@ export class KdbResultsPanel {
         copyExportConfirmCellThreshold: 1000000,
         localDataServerFullExportCellLimit: 1000000,
         elapsedTimeDisplay: 'auto',
-        arrayDisplayFormat: 'commaSpace'
+        arrayDisplayFormat: 'commaSpace',
+        functionDisplayStrategy: 'qText',
+        dictionaryDisplayStrategy: 'grid',
+        listDisplayStrategy: 'grid',
+        objectDisplayStrategy: 'grid'
       };
       const viewport = document.getElementById('viewport');
       const canvas = document.getElementById('canvas');
@@ -2322,6 +2351,10 @@ export class KdbResultsPanel {
       const settingsLocalDataServerFullExportCellLimit = document.getElementById('settingsLocalDataServerFullExportCellLimit');
       const settingsElapsedTimeDisplay = document.getElementById('settingsElapsedTimeDisplay');
       const settingsArrayDisplayFormat = document.getElementById('settingsArrayDisplayFormat');
+      const settingsFunctionDisplayStrategy = document.getElementById('settingsFunctionDisplayStrategy');
+      const settingsDictionaryDisplayStrategy = document.getElementById('settingsDictionaryDisplayStrategy');
+      const settingsListDisplayStrategy = document.getElementById('settingsListDisplayStrategy');
+      const settingsObjectDisplayStrategy = document.getElementById('settingsObjectDisplayStrategy');
       const settingsDensity = document.getElementById('settingsDensity');
       const settingsCellWidth = document.getElementById('settingsCellWidth');
       const settingsRowHeight = document.getElementById('settingsRowHeight');
@@ -2499,6 +2532,10 @@ export class KdbResultsPanel {
       collapseSettingsSections.addEventListener('click', () => setSettingsSectionsOpen(false));
       settingsElapsedTimeDisplay.addEventListener('change', () => updateSetting('elapsedTimeDisplay', String(settingsElapsedTimeDisplay.value || 'auto')));
       settingsArrayDisplayFormat.addEventListener('change', () => updateSetting('arrayDisplayFormat', normalizeArrayDisplayFormat(settingsArrayDisplayFormat.value)));
+      settingsFunctionDisplayStrategy.addEventListener('change', () => updateSetting('functionDisplayStrategy', normalizeQResultDisplayStrategy(settingsFunctionDisplayStrategy.value, 'qText')));
+      settingsDictionaryDisplayStrategy.addEventListener('change', () => updateSetting('dictionaryDisplayStrategy', normalizeQResultDisplayStrategy(settingsDictionaryDisplayStrategy.value, 'grid')));
+      settingsListDisplayStrategy.addEventListener('change', () => updateSetting('listDisplayStrategy', normalizeQResultDisplayStrategy(settingsListDisplayStrategy.value, 'grid')));
+      settingsObjectDisplayStrategy.addEventListener('change', () => updateSetting('objectDisplayStrategy', normalizeQResultDisplayStrategy(settingsObjectDisplayStrategy.value, 'grid')));
       settingsDensity.addEventListener('change', () => updateDensitySetting(String(settingsDensity.value || 'standard')));
       settingsCellWidth.addEventListener('change', () => updateNumberSetting('cellWidth', settingsCellWidth, 80, 600));
       settingsRowHeight.addEventListener('change', () => updateNumberSetting('rowHeight', settingsRowHeight, 20, 80));
@@ -4215,7 +4252,11 @@ export class KdbResultsPanel {
           copyExportConfirmCellThreshold: positiveIntegerSetting(value.copyExportConfirmCellThreshold, DEFAULT_SETTINGS.copyExportConfirmCellThreshold),
           localDataServerFullExportCellLimit: positiveIntegerSetting(value.localDataServerFullExportCellLimit, DEFAULT_SETTINGS.localDataServerFullExportCellLimit),
           elapsedTimeDisplay: normalizeElapsedTimeDisplay(value.elapsedTimeDisplay),
-          arrayDisplayFormat: normalizeArrayDisplayFormat(value.arrayDisplayFormat)
+          arrayDisplayFormat: normalizeArrayDisplayFormat(value.arrayDisplayFormat),
+          functionDisplayStrategy: normalizeQResultDisplayStrategy(value.functionDisplayStrategy, DEFAULT_SETTINGS.functionDisplayStrategy),
+          dictionaryDisplayStrategy: normalizeQResultDisplayStrategy(value.dictionaryDisplayStrategy, DEFAULT_SETTINGS.dictionaryDisplayStrategy),
+          listDisplayStrategy: normalizeQResultDisplayStrategy(value.listDisplayStrategy, DEFAULT_SETTINGS.listDisplayStrategy),
+          objectDisplayStrategy: normalizeQResultDisplayStrategy(value.objectDisplayStrategy, DEFAULT_SETTINGS.objectDisplayStrategy)
         };
       }
 
@@ -4231,6 +4272,10 @@ export class KdbResultsPanel {
         settingsLocalDataServerFullExportCellLimit.value = String(settings.localDataServerFullExportCellLimit);
         settingsElapsedTimeDisplay.value = settings.elapsedTimeDisplay;
         settingsArrayDisplayFormat.value = settings.arrayDisplayFormat;
+        settingsFunctionDisplayStrategy.value = settings.functionDisplayStrategy;
+        settingsDictionaryDisplayStrategy.value = settings.dictionaryDisplayStrategy;
+        settingsListDisplayStrategy.value = settings.listDisplayStrategy;
+        settingsObjectDisplayStrategy.value = settings.objectDisplayStrategy;
         settingsDensity.value = settings.density;
         settingsCellWidth.value = String(settings.cellWidth);
         settingsRowHeight.value = String(settings.rowHeight);
@@ -4251,7 +4296,11 @@ export class KdbResultsPanel {
           copyExportConfirmCellThreshold: settings.copyExportConfirmCellThreshold,
           localDataServerFullExportCellLimit: settings.localDataServerFullExportCellLimit,
           elapsedTimeDisplay: settings.elapsedTimeDisplay,
-          arrayDisplayFormat: settings.arrayDisplayFormat
+          arrayDisplayFormat: settings.arrayDisplayFormat,
+          functionDisplayStrategy: settings.functionDisplayStrategy,
+          dictionaryDisplayStrategy: settings.dictionaryDisplayStrategy,
+          listDisplayStrategy: settings.listDisplayStrategy,
+          objectDisplayStrategy: settings.objectDisplayStrategy
         };
         next[key] = value;
         applySettings(next);
@@ -4475,6 +4524,16 @@ export class KdbResultsPanel {
 
       function normalizeArrayDisplayFormat(value) {
         return value === 'space' || value === 'raw' ? value : 'commaSpace';
+      }
+
+      function normalizeQResultDisplayStrategy(value, fallback) {
+        if (value === 'grid' || value === 'table') {
+          return 'grid';
+        }
+        if (value === 'qText' || value === 'text') {
+          return 'qText';
+        }
+        return fallback;
       }
 
       function updateSummary() {
@@ -5439,6 +5498,10 @@ function panelSettings(): KdbPanelSettings {
     ),
     elapsedTimeDisplay: panelElapsedTimeDisplay(config.get<string>('elapsedTimeDisplay')),
     arrayDisplayFormat: panelArrayDisplayFormat(config.get<string>('kdbPanel.arrayDisplayFormat')),
+    functionDisplayStrategy: panelQResultDisplayStrategy(config.get<string>('kdbPanel.functionDisplayStrategy'), 'qText'),
+    dictionaryDisplayStrategy: panelQResultDisplayStrategy(config.get<string>('kdbPanel.dictionaryDisplayStrategy'), 'grid'),
+    listDisplayStrategy: panelQResultDisplayStrategy(config.get<string>('kdbPanel.listDisplayStrategy'), 'grid'),
+    objectDisplayStrategy: panelQResultDisplayStrategy(config.get<string>('kdbPanel.objectDisplayStrategy'), 'grid'),
   };
 }
 
@@ -5530,7 +5593,16 @@ function panelSettingConfigKey(key: string, density: KdbPanelDensity): string {
   if (key === 'cellWidth' || key === 'rowHeight' || key === 'fontSize') {
     return `${density}.${key}`;
   }
-  return key === 'arrayDisplayFormat' ? 'kdbPanel.arrayDisplayFormat' : key;
+  if (
+    key === 'arrayDisplayFormat' ||
+    key === 'functionDisplayStrategy' ||
+    key === 'dictionaryDisplayStrategy' ||
+    key === 'listDisplayStrategy' ||
+    key === 'objectDisplayStrategy'
+  ) {
+    return `kdbPanel.${key}`;
+  }
+  return key;
 }
 
 function panelTitle(panelNumber: number): string {
@@ -5573,6 +5645,10 @@ const RESULT_SETTING_UPDATE_ALLOWLIST: { [key: string]: PanelSettingUpdateValida
   localDataServerFullExportCellLimit: positiveIntegerSettingUpdate,
   elapsedTimeDisplay: elapsedTimeDisplaySettingUpdate,
   arrayDisplayFormat: arrayDisplayFormatSettingUpdate,
+  functionDisplayStrategy: value => qResultDisplayStrategySettingUpdate(value, 'qText'),
+  dictionaryDisplayStrategy: value => qResultDisplayStrategySettingUpdate(value, 'grid'),
+  listDisplayStrategy: value => qResultDisplayStrategySettingUpdate(value, 'grid'),
+  objectDisplayStrategy: value => qResultDisplayStrategySettingUpdate(value, 'grid'),
 };
 
 function normalizePanelSettingUpdate(key: any, value: any): { key: string; value: PanelSettingUpdateValue } | null {
@@ -5624,6 +5700,16 @@ function panelArrayDisplayFormat(value: any): ArrayDisplayFormat {
   return value === 'space' || value === 'raw' ? value : 'commaSpace';
 }
 
+function panelQResultDisplayStrategy(value: any, fallback: KdbPanelQResultDisplayStrategy): KdbPanelQResultDisplayStrategy {
+  if (value === 'grid' || value === 'table') {
+    return 'grid';
+  }
+  if (value === 'qText' || value === 'text') {
+    return 'qText';
+  }
+  return fallback;
+}
+
 function numberSettingUpdate(value: any, min: number, max: number): number | null {
   const number = Number(value);
   if (!Number.isFinite(number)) {
@@ -5652,6 +5738,13 @@ function elapsedTimeDisplaySettingUpdate(value: any): string | null {
 
 function arrayDisplayFormatSettingUpdate(value: any): string | null {
   return value === 'commaSpace' || value === 'space' || value === 'raw' ? value : null;
+}
+
+function qResultDisplayStrategySettingUpdate(value: any, fallback: KdbPanelQResultDisplayStrategy): string | null {
+  if (value === 'grid' || value === 'table' || value === 'qText' || value === 'text') {
+    return panelQResultDisplayStrategy(value, fallback);
+  }
+  return null;
 }
 
 function booleanSettingUpdate(value: any): boolean | null {
