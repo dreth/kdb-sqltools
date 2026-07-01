@@ -83,4 +83,4 @@ url = "http://127.0.0.1:7742/<token>/slice.csv?rowStart=0&rowCount=100000&colSta
 df = pd.read_csv(url)
 ```
 
-`plotly-resampler` remains an external Python workflow: read CSV or JSON from the local server into pandas, then build a Plotly figure in Python. The built-in VS Code chart is intentionally smaller and line-chart-only.
+`plotly-resampler` remains an external Python workflow: read CSV or JSON from the local server into pandas, then build a Plotly figure in Python. The built-in VS Code chart is intentionally smaller and focused on compact result-panel charts.

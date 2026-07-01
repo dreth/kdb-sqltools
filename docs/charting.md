@@ -10,16 +10,18 @@ SQLTools remains required for connections and q execution. Charting uses the cur
 2. Open the top-level `Chart` dropdown menu.
 3. Select `Open chart`.
 4. Pick a chart type from the single `Chart type` selector: `Line`, `Scatter`, `Step`, `Bar`, or `Box`.
-5. Pick one x column and one or more y columns in the chart panel.
+5. Pick one x column, optionally pick `Group by`, and pick one or more y columns in the chart panel.
 6. Press `Render`.
-7. Use the cursor tooltip/crosshair, drag across the plot to zoom, or press `Reset zoom`.
+7. Use the cursor tooltip/crosshair, drag across the plot to zoom, press `Refine zoom` to resample the current zoom range, or press `Reset zoom`.
 8. After the chart renders, press `Export PNG` to save the chart as `kdb-chart.png` or another PNG file.
 
-uPlot powers the built-in chart. Supported interactions are cursor/crosshair tooltip values, drag-select zoom, reset zoom, legend labels with live values, legend series toggling, and PNG export.
+Changing chart settings does not remove the currently rendered chart. The panel shows `Chart settings changed — Render to update` until you press `Render`; export still applies to the rendered chart.
 
-X-axis labels are auto-thinned to keep dense numeric and timestamp axes readable while preserving useful grid lines where possible. Hover and cursor/crosshair tooltip values still show the precise x value for the selected point.
+uPlot powers the built-in chart. Supported interactions are cursor/crosshair tooltip values, drag-select zoom, explicit zoom refinement, reset zoom, legend labels with live values, legend series toggling, splitter resizing between chart and table, and PNG export.
 
-Supported chart types are intentionally compact: line, scatter, step, bar, and box. Scatter uses points without line clutter. Step uses stepped lines. Bar uses uPlot bar paths. Box plots compute per-x/bucket min, quartiles, median, and max for selected numeric y columns and draw those summaries over the sampled x axis. Pie, heatmap, dashboard, streaming, and pan features are not implemented. Zoom is applied to the sampled points already in the webview; it does not request a newly sampled viewport from the extension host yet.
+X-axis labels are auto-thinned to keep dense numeric and timestamp axes readable while preserving useful grid lines where possible. Timestamp labels use shorter adaptive formats after zoom, and edge labels may be suppressed to avoid clipping. Hover and cursor/crosshair tooltip values still show the precise x value for the selected point.
+
+Supported chart types are intentionally compact: line, scatter, step, bar, and box. Scatter uses points without line clutter. Step uses stepped lines. Bar uses uPlot bar paths. Box plots compute per-x/bucket min, quartiles, median, and max for selected numeric y columns and draw those summaries over the sampled x axis. Pie, heatmap, dashboard, streaming, and pan features are not implemented. Zoom is applied locally until you press `Refine zoom`; refinement scans the same guarded source result and resamples only the selected x range.
 
 ## Eligible columns
 
@@ -29,8 +31,11 @@ The chart tool uses visible columns only.
 | --- | --- |
 | x | Numeric values or temporal strings such as dates, timestamps, months, and times. |
 | y | Numeric values. Box plots summarize selected numeric y columns per x value/bucket. |
+| group by | Categorical scalar columns inferred from visible non-numeric, non-temporal values, such as symbols or labels. |
 
-When q type metadata is unavailable, the extension samples column values and infers eligibility. Symbol, category, nested list, object, and mixed incompatible columns are rejected for this first chart.
+When q type metadata is unavailable, the extension samples column values and infers eligibility. Symbol/category-like columns are eligible for `Group by`; nested list, object, and mixed incompatible columns are rejected.
+
+`Group by` is available for line, scatter, step, and bar charts. It splits each selected y column into per-category uPlot series, capped to a small number of categories/series with a status warning when there are too many. Box charts do not support `Group by`.
 
 If x values are unsorted, the extension sorts a chart-local copy. The table order is not changed.
 

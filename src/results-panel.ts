@@ -732,6 +732,9 @@ export class KdbResultsPanel {
         requestId,
         xColumn: typeof message.xColumn === 'string' ? message.xColumn : '',
         yColumns: Array.isArray(message.yColumns) ? message.yColumns.map(String) : [],
+        groupByColumn: typeof message.groupByColumn === 'string' ? message.groupByColumn : '',
+        xMin: Number.isFinite(Number(message.xMin)) ? Number(message.xMin) : undefined,
+        xMax: Number.isFinite(Number(message.xMax)) ? Number(message.xMax) : undefined,
         width: Number(message.width) || 0,
         maxSourceRows: chartMaxSourceRowsSetting(),
       });
@@ -1858,7 +1861,7 @@ export class KdbResultsPanel {
     .chart-panel {
       flex: 0 0 auto;
       display: grid;
-      grid-template-rows: auto minmax(180px, 280px) auto;
+      grid-template-rows: auto auto auto;
       gap: 8px;
       padding: 8px 10px 10px;
       border-bottom: 1px solid var(--vscode-panel-border);
@@ -1904,11 +1907,34 @@ export class KdbResultsPanel {
     }
     .chart-canvas-wrap {
       position: relative;
+      height: var(--chart-height, 280px);
       min-height: 180px;
       border: 1px solid var(--vscode-panel-border);
       background: var(--vscode-editor-background);
       overflow: hidden;
       box-sizing: border-box;
+    }
+    .chart-splitter {
+      flex: 0 0 7px;
+      cursor: ns-resize;
+      border-bottom: 1px solid var(--vscode-panel-border);
+      background:
+        linear-gradient(
+          to bottom,
+          transparent 0,
+          transparent 2px,
+          var(--vscode-panel-border) 2px,
+          var(--vscode-panel-border) 3px,
+          transparent 3px
+        );
+      box-sizing: border-box;
+    }
+    .chart-splitter:hover,
+    .chart-splitter.is-dragging {
+      background-color: var(--vscode-list-hoverBackground);
+    }
+    .chart-splitter[hidden] {
+      display: none;
     }
     .chart-plot,
     .chart-plot .uplot {
@@ -2216,10 +2242,14 @@ export class KdbResultsPanel {
         <option value="box">Box</option>
       </select></label>
       <label class="chart-field"><span>X</span><select id="chartXColumn" disabled></select></label>
+      <label class="chart-field"><span>Group by</span><select id="chartGroupColumn" disabled>
+        <option value="">None</option>
+      </select></label>
       <div id="chartYColumns" class="chart-y-list" role="group" aria-label="Y columns"></div>
       <button id="renderChart" disabled>Render</button>
       <button id="exportChart" hidden disabled>Export PNG</button>
       <button id="resetChartZoom" disabled>Reset zoom</button>
+      <button id="refineChartZoom" disabled>Refine zoom</button>
       <button id="closeChart">Close</button>
       <span id="chartStatus" class="status"></span>
     </div>
@@ -2229,6 +2259,7 @@ export class KdbResultsPanel {
     </div>
     <div id="chartLegend" class="chart-legend"></div>
   </div>
+  <div id="chartSplitter" class="chart-splitter" role="separator" aria-orientation="horizontal" aria-label="Resize chart and table" title="Drag to resize chart and table" hidden></div>
   <div id="viewport" tabindex="0" data-vscode-context='{"webviewSection":"kdbResultsTable","preventDefaultContextMenuItems":true}'>
     <div id="canvas">
       <div id="header" class="header" role="row"></div>
@@ -2325,16 +2356,19 @@ export class KdbResultsPanel {
       const chartPanel = document.getElementById('chartPanel');
       const chartType = document.getElementById('chartType');
       const chartXColumn = document.getElementById('chartXColumn');
+      const chartGroupColumn = document.getElementById('chartGroupColumn');
       const chartYColumns = document.getElementById('chartYColumns');
       const renderChart = document.getElementById('renderChart');
       const exportChart = document.getElementById('exportChart');
       const resetChartZoomButton = document.getElementById('resetChartZoom');
+      const refineChartZoomButton = document.getElementById('refineChartZoom');
       const closeChart = document.getElementById('closeChart');
       const chartStatus = document.getElementById('chartStatus');
       const chartCanvasWrap = document.getElementById('chartCanvasWrap');
       const chartPlot = document.getElementById('chartPlot');
       const chartTooltip = document.getElementById('chartTooltip');
       const chartLegend = document.getElementById('chartLegend');
+      const chartSplitter = document.getElementById('chartSplitter');
       const empty = document.getElementById('empty');
       let data = emptyData();
       let slice = emptySlice();
@@ -2358,12 +2392,17 @@ export class KdbResultsPanel {
       let localDataServer = null;
       let latestChartRequestId = 0;
       let chartOptionsRequestId = 0;
-      let chartOptions = { xColumns: [], yColumns: [], warnings: [] };
+      let chartOptions = { xColumns: [], yColumns: [], groupColumns: [], warnings: [] };
       let chartData = null;
       let chartRendered = null;
       let chartUPlot = null;
       let chartZoomed = false;
+      let chartControlsDirty = false;
+      let chartResizeState = null;
+      let chartHeight = 280;
       const CHART_PNG_DATA_URL_PREFIX = 'data:image/png;base64,';
+      const CHART_MIN_HEIGHT = 180;
+      const CHART_MAX_HEIGHT = 720;
       window.addEventListener('message', event => {
         const msg = event.data || {};
         if (msg.type === 'loading') {
@@ -2498,11 +2537,14 @@ export class KdbResultsPanel {
       openChart.addEventListener('click', openChartPanel);
       chartType.addEventListener('change', onChartControlChanged);
       chartXColumn.addEventListener('change', onChartControlChanged);
+      chartGroupColumn.addEventListener('change', onChartControlChanged);
       renderChart.addEventListener('click', requestChartData);
       exportChart.addEventListener('click', exportChartPng);
       resetChartZoomButton.addEventListener('click', resetChartZoom);
+      refineChartZoomButton.addEventListener('click', refineChartZoom);
       closeChart.addEventListener('click', closeChartPanel);
       chartCanvasWrap.addEventListener('mouseleave', hideChartTooltip);
+      chartSplitter.addEventListener('mousedown', startChartResize);
       viewport.addEventListener('scroll', requestRender);
       viewport.addEventListener('contextmenu', () => {
         vscode.postMessage({ type: 'tableContextMenu' });
@@ -2530,6 +2572,11 @@ export class KdbResultsPanel {
         }
       });
       window.addEventListener('mousemove', event => {
+        if (chartResizeState) {
+          setChartHeight(chartResizeState.startHeight + event.clientY - chartResizeState.startY);
+          event.preventDefault();
+          return;
+        }
         if (!resizeState) {
           return;
         }
@@ -2538,6 +2585,12 @@ export class KdbResultsPanel {
         event.preventDefault();
       });
       window.addEventListener('mouseup', () => {
+        if (chartResizeState) {
+          chartResizeState = null;
+          chartSplitter.classList.remove('is-dragging');
+          document.body.style.cursor = '';
+          document.body.style.userSelect = '';
+        }
         if (resizeState) {
           resizeState = null;
           document.body.style.cursor = '';
@@ -2552,7 +2605,11 @@ export class KdbResultsPanel {
       });
       window.addEventListener('resize', () => {
         requestRender();
-        drawChart();
+        if (!chartPanel.hidden) {
+          setChartHeight(chartHeight);
+        } else {
+          drawChart();
+        }
       });
       settingsMenu.addEventListener('toggle', () => {
         if (settingsMenu.open) {
@@ -2919,6 +2976,32 @@ export class KdbResultsPanel {
         copyMetadataUrl.disabled = !running || !hasResult;
       }
 
+      function startChartResize(event) {
+        if (chartPanel.hidden) {
+          return;
+        }
+        chartResizeState = {
+          startY: event.clientY,
+          startHeight: chartHeight
+        };
+        chartSplitter.classList.add('is-dragging');
+        document.body.style.cursor = 'ns-resize';
+        document.body.style.userSelect = 'none';
+        event.preventDefault();
+      }
+
+      function setChartHeight(value) {
+        const availableHeight = Math.max(CHART_MIN_HEIGHT, window.innerHeight - 170);
+        const maxHeight = Math.min(CHART_MAX_HEIGHT, availableHeight);
+        chartHeight = clampInteger(value, CHART_MIN_HEIGHT, Math.max(CHART_MIN_HEIGHT, maxHeight));
+        chartPanel.style.setProperty('--chart-height', chartHeight + 'px');
+        chartSplitter.setAttribute('aria-valuenow', String(chartHeight));
+        chartSplitter.setAttribute('aria-valuemin', String(CHART_MIN_HEIGHT));
+        chartSplitter.setAttribute('aria-valuemax', String(Math.max(CHART_MIN_HEIGHT, maxHeight)));
+        drawChart();
+        requestRender();
+      }
+
       function updateChartControls() {
         openChart.disabled = !hasTableCells() || !!data.error || !!data.canceled;
         renderChart.disabled = !chartCanRender();
@@ -2926,10 +3009,12 @@ export class KdbResultsPanel {
         exportChart.hidden = !canExport;
         exportChart.disabled = !canExport;
         resetChartZoomButton.disabled = !canExport || !chartZoomed;
+        refineChartZoomButton.disabled = !chartCanRefineZoom();
         chartMenuStatus.textContent = chartPanel.hidden
           ? (openChart.disabled ? 'Unavailable' : 'Ready')
-          : (chartRendered ? 'Rendered' : 'Open');
+          : (chartRendered ? (chartControlsDirty ? 'Stale' : 'Rendered') : 'Open');
         chartMenuStatus.classList.toggle('is-running', !chartPanel.hidden);
+        chartSplitter.hidden = chartPanel.hidden;
       }
 
       function openChartPanel() {
@@ -2937,13 +3022,18 @@ export class KdbResultsPanel {
           return;
         }
         chartPanel.hidden = false;
+        chartSplitter.hidden = false;
+        setChartHeight(chartHeight);
         chartMenu.open = false;
         chartStatus.textContent = 'Detecting chart columns...';
-        chartData = null;
-        chartRendered = null;
-        destroyChartPlot();
-        chartLegend.textContent = '';
-        hideChartTooltip();
+        chartControlsDirty = false;
+        if (!chartRendered || chartRendered.version !== data.version) {
+          chartData = null;
+          chartRendered = null;
+          destroyChartPlot();
+          chartLegend.textContent = '';
+          hideChartTooltip();
+        }
         requestChartOptions();
         updateChartControls();
         drawChart();
@@ -2951,9 +3041,11 @@ export class KdbResultsPanel {
 
       function closeChartPanel() {
         chartPanel.hidden = true;
+        chartSplitter.hidden = true;
         latestChartRequestId += 1;
         chartData = null;
         chartRendered = null;
+        chartControlsDirty = false;
         destroyChartPlot();
         hideChartTooltip();
         chartStatus.textContent = '';
@@ -2964,12 +3056,15 @@ export class KdbResultsPanel {
       function resetChartState(messageText) {
         latestChartRequestId += 1;
         chartOptionsRequestId += 1;
-        chartOptions = { xColumns: [], yColumns: [], warnings: [] };
+        chartOptions = { xColumns: [], yColumns: [], groupColumns: [], warnings: [] };
         chartData = null;
         chartRendered = null;
+        chartControlsDirty = false;
         destroyChartPlot();
         chartPanel.hidden = true;
+        chartSplitter.hidden = true;
         chartXColumn.textContent = '';
+        chartGroupColumn.textContent = '';
         chartYColumns.textContent = '';
         chartStatus.textContent = messageText || '';
         chartLegend.textContent = '';
@@ -3002,6 +3097,7 @@ export class KdbResultsPanel {
         return {
           xColumns: normalizeChartColumnOptions(value.xColumns),
           yColumns: normalizeChartColumnOptions(value.yColumns),
+          groupColumns: normalizeChartGroupColumnOptions(value.groupColumns),
           warnings: Array.isArray(value.warnings) ? value.warnings.map(String) : []
         };
       }
@@ -3021,8 +3117,24 @@ export class KdbResultsPanel {
           .filter(option => option.columnName && option.columnIndex >= 0);
       }
 
+      function normalizeChartGroupColumnOptions(values) {
+        if (!Array.isArray(values)) {
+          return [];
+        }
+        return values
+          .map(option => {
+            return {
+              columnName: String(option && option.columnName || ''),
+              columnIndex: toInteger(option && option.columnIndex, -1),
+              kind: 'categorical'
+            };
+          })
+          .filter(option => option.columnName && option.columnIndex >= 0);
+      }
+
       function renderChartOptions() {
         chartXColumn.textContent = '';
+        chartGroupColumn.textContent = '';
         chartYColumns.textContent = '';
         chartXColumn.disabled = chartOptions.xColumns.length === 0;
         chartOptions.xColumns.forEach(option => {
@@ -3035,6 +3147,18 @@ export class KdbResultsPanel {
         if (preferredX) {
           chartXColumn.value = preferredX.columnName;
         }
+
+        const noGroup = document.createElement('option');
+        noGroup.value = '';
+        noGroup.textContent = 'None';
+        chartGroupColumn.appendChild(noGroup);
+        chartOptions.groupColumns.forEach(option => {
+          const element = document.createElement('option');
+          element.value = option.columnName;
+          element.textContent = option.columnName;
+          chartGroupColumn.appendChild(element);
+        });
+        chartGroupColumn.disabled = chartOptions.groupColumns.length === 0;
 
         const defaultY = defaultChartYColumns();
         chartOptions.yColumns.forEach(option => {
@@ -3059,6 +3183,7 @@ export class KdbResultsPanel {
         } else {
           chartStatus.textContent = 'Choose chart type, x and y columns.' + warnings;
         }
+        chartControlsDirty = false;
         updateChartControls();
       }
 
@@ -3075,7 +3200,8 @@ export class KdbResultsPanel {
           hasTableCells() &&
           chartOptions.xColumns.length > 0 &&
           selectedChartYColumns().length > 0 &&
-          String(chartXColumn.value || '').length > 0;
+          String(chartXColumn.value || '').length > 0 &&
+          !(selectedChartType() === 'box' && selectedChartGroupColumn());
       }
 
       function chartCanExport() {
@@ -3086,17 +3212,25 @@ export class KdbResultsPanel {
           !!renderedChartCanvas();
       }
 
+      function chartCanRefineZoom() {
+        return chartCanExport() && chartZoomed && !chartControlsDirty && !!currentChartZoomRange();
+      }
+
+      function chartControlStatusMessage() {
+        if (selectedChartType() === 'box' && selectedChartGroupColumn()) {
+          return 'Group by is not supported for box charts.';
+        }
+        if (!chartCanRender()) {
+          return 'Select one x column and at least one numeric y column.';
+        }
+        return chartRendered ? 'Chart settings changed — Render to update.' : 'Press Render to create chart.';
+      }
+
       function onChartControlChanged() {
-        chartData = null;
-        chartRendered = null;
-        destroyChartPlot();
-        chartLegend.textContent = '';
+        chartControlsDirty = true;
         hideChartTooltip();
-        chartStatus.textContent = chartCanRender()
-          ? 'Press Render to update chart.'
-          : 'Select one x column and at least one numeric y column.';
+        chartStatus.textContent = chartControlStatusMessage();
         updateChartControls();
-        drawChart();
       }
 
       function clearChartRendered() {
@@ -3115,6 +3249,10 @@ export class KdbResultsPanel {
         return values.filter(Boolean);
       }
 
+      function selectedChartGroupColumn() {
+        return String(chartGroupColumn.value || '');
+      }
+
       function selectedChartType() {
         return normalizeChartType(chartType.value);
       }
@@ -3127,23 +3265,49 @@ export class KdbResultsPanel {
       }
 
       function requestChartData() {
+        requestChartDataForRange(null, 'Sampling chart data...');
+      }
+
+      function refineChartZoom() {
+        if (chartControlsDirty) {
+          chartStatus.textContent = 'Render changed chart settings before refining zoom.';
+          updateChartControls();
+          return;
+        }
+        const range = currentChartZoomRange();
+        if (!range) {
+          chartStatus.textContent = 'Zoom the chart before refining.';
+          updateChartControls();
+          return;
+        }
+        requestChartDataForRange(range, 'Refining chart to zoom range...');
+      }
+
+      function requestChartDataForRange(xRange, messageText) {
         if (!chartCanRender()) {
-          chartStatus.textContent = 'Select one x column and at least one numeric y column.';
+          chartStatus.textContent = chartControlStatusMessage();
           return;
         }
         latestChartRequestId += 1;
         chartRendered = null;
+        chartControlsDirty = false;
         updateChartControls();
-        chartStatus.textContent = 'Sampling chart data...';
-        vscode.postMessage({
+        chartStatus.textContent = messageText;
+        const message = {
           type: 'requestChart',
           version: data.version,
           requestId: latestChartRequestId,
           chartType: selectedChartType(),
           xColumn: String(chartXColumn.value || ''),
           yColumns: selectedChartYColumns(),
+          groupByColumn: selectedChartGroupColumn(),
           width: Math.max(320, Math.floor(chartCanvasWrap.clientWidth || 800))
-        });
+        };
+        if (xRange) {
+          message.xMin = xRange.min;
+          message.xMax = xRange.max;
+        }
+        vscode.postMessage(message);
       }
 
       function exportChartPng() {
@@ -3188,19 +3352,22 @@ export class KdbResultsPanel {
 
       function setChartData(value) {
         if (toNonNegativeInteger(value.version, -1) !== data.version ||
-          toNonNegativeInteger(value.requestId, -1) !== latestChartRequestId) {
+          toNonNegativeInteger(value.requestId, -1) !== latestChartRequestId ||
+          chartControlsDirty) {
           return;
         }
         chartData = normalizeChartData(value);
         chartRendered = null;
+        chartControlsDirty = false;
         const warnings = chartData.warnings.length > 0 ? ' ' + chartData.warnings.join(' ') : '';
+        const grouped = chartData.groupByColumn ? ' grouped by ' + chartData.groupByColumn : '';
         chartStatus.textContent = chartData.chartType === 'box'
           ? 'Showing ' + formatUiCount(chartData.sampledPointCount) +
             ' box groups from ' + formatUiCount(chartData.eligibleRowCount) +
             ' eligible rows (' + chartData.algorithm + ').' + warnings
           : 'Showing ' + formatUiCount(chartData.sampledPointCount) +
             ' of ' + formatUiCount(chartData.sourceRowCount) +
-            ' rows (' + chartData.algorithm + ').' + warnings;
+            ' rows' + grouped + ' (' + chartData.algorithm + ').' + warnings;
         drawChart();
       }
 
@@ -3210,12 +3377,15 @@ export class KdbResultsPanel {
           requestId: toNonNegativeInteger(value.requestId, 0),
           chartType: normalizeChartType(value.chartType),
           xColumn: String(value.xColumn || ''),
+          groupByColumn: value.groupByColumn ? String(value.groupByColumn) : '',
           xKind: value.xKind === 'temporal' ? 'temporal' : 'numeric',
           x: Array.isArray(value.x) ? value.x.map(Number).filter(Number.isFinite) : [],
           xText: Array.isArray(value.xText) ? value.xText.map(String) : [],
           series: Array.isArray(value.series) ? value.series.map(series => {
             return {
               columnName: String(series && series.columnName || ''),
+              sourceColumnName: String(series && series.sourceColumnName || ''),
+              groupValue: String(series && series.groupValue || ''),
               values: Array.isArray(series && series.values)
                 ? series.values.map(item => Number.isFinite(Number(item)) ? Number(item) : null)
                 : []
@@ -3260,12 +3430,13 @@ export class KdbResultsPanel {
       }
 
       function setChartError(msg) {
-        if (toNonNegativeInteger(msg.requestId, -1) !== latestChartRequestId) {
+        if (toNonNegativeInteger(msg.requestId, -1) !== latestChartRequestId || chartControlsDirty) {
           return;
         }
         chartStatus.textContent = String(msg.message || 'Chart failed.');
         chartData = null;
         chartRendered = null;
+        chartControlsDirty = false;
         chartLegend.textContent = '';
         drawChart();
       }
@@ -3763,6 +3934,24 @@ export class KdbResultsPanel {
         updateChartControls();
       }
 
+      function currentChartZoomRange() {
+        if (!chartUPlot || !chartUPlot.scales || !chartUPlot.scales.x) {
+          return null;
+        }
+        const initial = chartInitialXRange();
+        const scale = chartUPlot.scales.x;
+        if (!initial || !Number.isFinite(scale.min) || !Number.isFinite(scale.max) || scale.max <= scale.min) {
+          return null;
+        }
+        const tolerance = Math.max(1e-9, Math.abs(initial.max - initial.min) * 1e-9);
+        if (Math.abs(scale.min - initial.min) <= tolerance && Math.abs(scale.max - initial.max) <= tolerance) {
+          return null;
+        }
+        const min = Math.max(scale.min, Math.min(initial.min, initial.max));
+        const max = Math.min(scale.max, Math.max(initial.min, initial.max));
+        return max > min ? { min, max } : null;
+      }
+
       function renderedChartCanvas() {
         if (chartUPlot && chartUPlot.root && typeof chartUPlot.root.querySelector === 'function') {
           return chartUPlot.root.querySelector('canvas');
@@ -3802,17 +3991,90 @@ export class KdbResultsPanel {
         if (!Array.isArray(splits) || splits.length === 0) {
           return [];
         }
-        const labels = splits.map(value => chartXAxisLabel(value));
+        const labels = splits.map(value => chartXAxisTickLabel(self, value));
         const maxLabels = chartMaxVisibleXAxisLabels(self, labels);
-        if (splits.length <= maxLabels) {
+        const suppressEdges = !!chartData && chartData.xKind === 'temporal' && splits.length > 2;
+        const first = suppressEdges ? 1 : 0;
+        const last = suppressEdges ? splits.length - 2 : splits.length - 1;
+        if (first > last) {
           return labels;
         }
-        const visibleIndexes = new Set([0, splits.length - 1]);
-        const step = Math.max(1, Math.ceil((splits.length - 1) / Math.max(1, maxLabels - 1)));
-        for (let index = 0; index < splits.length; index += step) {
+        const visibleCount = Math.min(maxLabels, last - first + 1);
+        const visibleIndexes = new Set();
+        const step = Math.max(1, Math.ceil((last - first) / Math.max(1, visibleCount - 1)));
+        for (let index = first; index <= last; index += step) {
           visibleIndexes.add(index);
         }
+        visibleIndexes.add(last);
         return labels.map((label, index) => visibleIndexes.has(index) ? label : '');
+      }
+
+      function chartXAxisTickLabel(self, value) {
+        if (!chartData || chartData.xKind !== 'temporal') {
+          return chartXAxisLabel(value);
+        }
+        return chartTemporalTickLabel(self, value);
+      }
+
+      function chartTemporalTickLabel(self, value) {
+        if (!Number.isFinite(value)) {
+          return '';
+        }
+        const span = chartVisibleXSpan(self);
+        const text = chartXAxisLabel(value);
+        if (/^([01]?\\d|2[0-3]):[0-5]\\d/.test(text)) {
+          return chartShortTimeLabel(value, span);
+        }
+        const date = new Date(value);
+        if (!Number.isFinite(date.getTime())) {
+          return text.length > 12 ? text.slice(0, 12) : text;
+        }
+        const day = 24 * 60 * 60 * 1000;
+        if (span <= day) {
+          return chartShortTimeLabel(value, span);
+        }
+        if (span <= 93 * day) {
+          return chartPad2(date.getUTCMonth() + 1) + '-' + chartPad2(date.getUTCDate());
+        }
+        if (span <= 730 * day) {
+          return date.getUTCFullYear() + '-' + chartPad2(date.getUTCMonth() + 1);
+        }
+        return String(date.getUTCFullYear());
+      }
+
+      function chartShortTimeLabel(value, span) {
+        const date = new Date(value);
+        if (!Number.isFinite(date.getTime())) {
+          return '';
+        }
+        const base = chartPad2(date.getUTCHours()) + ':' + chartPad2(date.getUTCMinutes());
+        if (span > 60 * 60 * 1000) {
+          return base;
+        }
+        const seconds = chartPad2(date.getUTCSeconds());
+        if (span > 10 * 1000) {
+          return base + ':' + seconds;
+        }
+        return base + ':' + seconds + '.' + chartPad3(date.getUTCMilliseconds());
+      }
+
+      function chartVisibleXSpan(self) {
+        const scale = self && self.scales && self.scales.x;
+        if (scale && Number.isFinite(scale.min) && Number.isFinite(scale.max) && scale.max > scale.min) {
+          return scale.max - scale.min;
+        }
+        const range = chartInitialXRange();
+        return range ? Math.max(0, range.max - range.min) : 0;
+      }
+
+      function chartPad2(value) {
+        const text = String(Math.max(0, Math.floor(Number(value) || 0)));
+        return text.length < 2 ? '0' + text : text;
+      }
+
+      function chartPad3(value) {
+        const text = String(Math.max(0, Math.floor(Number(value) || 0)));
+        return text.length === 1 ? '00' + text : text.length === 2 ? '0' + text : text;
       }
 
       function chartMaxVisibleXAxisLabels(self, labels) {
@@ -3820,10 +4082,10 @@ export class KdbResultsPanel {
         const maxLabelChars = labels.reduce((max, label) => Math.max(max, String(label || '').length), 1);
         const temporal = !!chartData && chartData.xKind === 'temporal';
         const charWidth = temporal ? 7.5 : 7;
-        const padding = temporal ? 36 : 24;
+        const padding = temporal ? 28 : 24;
         const minSpacing = Math.min(
-          temporal ? 220 : 160,
-          Math.max(temporal ? 110 : 60, Math.ceil(maxLabelChars * charWidth + padding))
+          temporal ? 150 : 160,
+          Math.max(temporal ? 72 : 60, Math.ceil(maxLabelChars * charWidth + padding))
         );
         return clampInteger(Math.floor(plotWidth / minSpacing), 2, Math.max(2, labels.length));
       }
