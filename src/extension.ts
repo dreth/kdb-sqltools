@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { IConnection, IExtension, IExtensionPlugin, IDriverExtensionApi } from '@sqltools/types';
 import { ExtensionContext } from 'vscode';
 import { DRIVER_ALIASES, DRIVER_ID, DRIVER_NAME } from './constants';
-import { selectedTextOrCurrentLine } from './q-text';
+import { selectedTextOrCurrentBlock, selectedTextOrCurrentLine } from './q-text';
 import KdbDriver from './ls/driver';
 import { emptyColumnarPanelResult } from './kdb-results';
 import { QResultDisplayOptions, QValue, qValueToColumnarPanel } from './ls/q-ipc';
@@ -32,6 +32,10 @@ interface FeedbackIssueTemplate {
   body: string;
 }
 
+interface KdbPanelExecutionOptions {
+  autoChart?: boolean;
+}
+
 export async function activate(extContext: ExtensionContext): Promise<IDriverExtensionApi> {
   const sqltools = vscode.extensions.getExtension<IExtension>('mtxr.sqltools');
   if (!sqltools) {
@@ -56,6 +60,7 @@ export async function activate(extContext: ExtensionContext): Promise<IDriverExt
     vscode.commands.registerCommand('kdb-sqltools.runSelectionOrBlockInKdbPanel', () => runQSelectionOrLine(extContext, 'kdbPanel')),
     vscode.commands.registerCommand('kdb-sqltools.runFileInKdbPanelReplace', () => runQFile(extContext, 'kdbPanel', 'replace')),
     vscode.commands.registerCommand('kdb-sqltools.runSelectionOrBlockInKdbPanelReplace', () => runQSelectionOrLine(extContext, 'kdbPanel', 'replace')),
+    vscode.commands.registerCommand('kdb-sqltools.runSelectionOrBlockAndChart', () => runQSelectionOrBlockAndChart(extContext)),
     vscode.commands.registerCommand('kdb-sqltools.runFileInNewKdbPanel', () => runQFile(extContext, 'kdbPanel', 'new')),
     vscode.commands.registerCommand('kdb-sqltools.runSelectionOrBlockInNewKdbPanel', () => runQSelectionOrLine(extContext, 'kdbPanel', 'new')),
     vscode.commands.registerCommand('kdb-sqltools.openKeyboardShortcuts', openKeyboardShortcuts),
@@ -135,11 +140,24 @@ async function runQSelectionOrLine(
   await executeQText(extContext, text, target, kdbPanelMode);
 }
 
+async function runQSelectionOrBlockAndChart(extContext: ExtensionContext): Promise<void> {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) {
+    vscode.window.showWarningMessage('Open a q file before running q code.');
+    return;
+  }
+
+  const selectionText = editor.selection.isEmpty ? '' : editor.document.getText(editor.selection);
+  const text = selectedTextOrCurrentBlock(editor.document.getText(), selectionText, editor.selection.active.line);
+  await executeQText(extContext, text, 'kdbPanel', 'replace', { autoChart: true });
+}
+
 async function executeQText(
   extContext: ExtensionContext,
   text: string,
   target?: ResultsTarget,
-  kdbPanelMode?: KdbResultsPanelRunMode
+  kdbPanelMode?: KdbResultsPanelRunMode,
+  options: KdbPanelExecutionOptions = {}
 ): Promise<void> {
   if (!text || text.trim().length === 0) {
     vscode.window.showWarningMessage('No q code selected to run.');
@@ -151,7 +169,7 @@ async function executeQText(
     return;
   }
 
-  await executeQTextInKdbPanel(extContext, text, kdbPanelMode || configuredKdbPanelRunMode());
+  await executeQTextInKdbPanel(extContext, text, kdbPanelMode || configuredKdbPanelRunMode(), options);
 }
 
 function configuredResultsTarget(): ResultsTarget {
@@ -277,14 +295,20 @@ function exampleGlobalConnectionSettings(): string {
 async function executeQTextInKdbPanel(
   extContext: ExtensionContext,
   text: string,
-  kdbPanelMode: KdbResultsPanelRunMode
+  kdbPanelMode: KdbResultsPanelRunMode,
+  options: KdbPanelExecutionOptions = {}
 ): Promise<void> {
   const connection = await pickKdbConnection(extContext);
   if (!connection) {
     return;
   }
 
-  const panel = KdbResultsPanel.showLoading(extContext, { query: text, connectionName: connection.name }, kdbPanelMode);
+  const panel = KdbResultsPanel.showLoading(
+    extContext,
+    { query: text, connectionName: connection.name },
+    kdbPanelMode,
+    { autoChart: options.autoChart === true }
+  );
   const runVersion = panel.currentVersion();
 
   const driver = new KdbDriver(connection, async () => []);
