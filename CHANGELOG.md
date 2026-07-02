@@ -1,5 +1,11 @@
 # Change Log
 
+## 0.3.12
+
+- qText/text display strategies now render in a plain text viewer rather than a one-cell grid.
+- Copy copies the plain text output directly.
+- Text export writes `.txt` for text-mode results.
+
 ## 0.3.11
 
 - Fixed Settings drawer horizontal overflow and wrapping.
