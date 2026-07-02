@@ -100,11 +100,21 @@ export interface QTabularResult {
 }
 
 export interface QColumnarPanelResult {
+  mode: 'grid';
   cols: string[];
   result: ColumnarPanelResult;
   kind: string;
   rowsMaterialized: boolean;
 }
+
+export interface QTextPanelResult {
+  mode: 'text';
+  text: string;
+  kind: string;
+  rowsMaterialized: boolean;
+}
+
+export type QPanelResult = QColumnarPanelResult | QTextPanelResult;
 
 export interface KdbConnectionOptions {
   host: string;
@@ -800,12 +810,13 @@ export function qValueToTabular(value: QValue): QTabularResult {
   };
 }
 
-export function qValueToColumnarPanel(value: QValue, options?: QResultDisplayOptions): QColumnarPanelResult {
+export function qValueToColumnarPanel(value: QValue, options?: QResultDisplayOptions): QPanelResult {
   const displayOptions = normalizeQResultDisplayOptions(options);
 
   if (isQTable(value)) {
     const result = qTableToColumnarPanel(value);
     return {
+      mode: 'grid',
       cols: value.columns,
       result,
       kind: 'table',
@@ -816,6 +827,7 @@ export function qValueToColumnarPanel(value: QValue, options?: QResultDisplayOpt
   if (isQKeyedTable(value)) {
     const result = qKeyedTableToColumnarPanel(value);
     return {
+      mode: 'grid',
       cols: value.columns,
       result,
       kind: 'keyed table',
@@ -825,10 +837,11 @@ export function qValueToColumnarPanel(value: QValue, options?: QResultDisplayOpt
 
   if (isQFunction(value)) {
     if (displayOptions.functionDisplayStrategy === 'qText') {
-      return qTextColumnarPanelResult(value, 'function');
+      return qTextPanelResult(value, 'function');
     }
     const result = createColumnarPanelResult(['value'], 1, () => qFunctionDisplayText(value));
     return {
+      mode: 'grid',
       cols: result.columns,
       result,
       kind: 'function',
@@ -838,7 +851,7 @@ export function qValueToColumnarPanel(value: QValue, options?: QResultDisplayOpt
 
   if (isQDict(value)) {
     if (displayOptions.dictionaryDisplayStrategy === 'qText') {
-      return qTextColumnarPanelResult(value, 'dictionary');
+      return qTextPanelResult(value, 'dictionary');
     }
     const result = createColumnarPanelResult(['key', 'value'], value.entries.length, (rowIndex, columnIndex) => {
       const entry = value.entries[rowIndex];
@@ -848,6 +861,7 @@ export function qValueToColumnarPanel(value: QValue, options?: QResultDisplayOpt
       return columnIndex === 0 ? normalizePanelCell(entry.key) : normalizePanelCell(entry.value);
     });
     return {
+      mode: 'grid',
       cols: result.columns,
       result,
       kind: 'dictionary',
@@ -857,12 +871,13 @@ export function qValueToColumnarPanel(value: QValue, options?: QResultDisplayOpt
 
   if (Array.isArray(value)) {
     if (displayOptions.listDisplayStrategy === 'qText') {
-      return qTextColumnarPanelResult(value, 'list');
+      return qTextPanelResult(value, 'list');
     }
     if (value.length > 0 && value.every(isPlainObject)) {
       const rows = value.map(row => normalizePanelPlainObject(row as unknown as { [key: string]: QValue }));
       const cols = collectColumns(rows);
       return {
+        mode: 'grid',
         cols,
         result: createColumnarPanelResult(cols, rows.length, (rowIndex, columnIndex) => {
           const row = rows[rowIndex] || {};
@@ -877,6 +892,7 @@ export function qValueToColumnarPanel(value: QValue, options?: QResultDisplayOpt
       return columnIndex === 0 ? rowIndex : normalizePanelCell(value[rowIndex]);
     });
     return {
+      mode: 'grid',
       cols: result.columns,
       result,
       kind: 'list',
@@ -886,11 +902,12 @@ export function qValueToColumnarPanel(value: QValue, options?: QResultDisplayOpt
 
   if (isPlainObject(value)) {
     if (displayOptions.objectDisplayStrategy === 'qText') {
-      return qTextColumnarPanelResult(value, 'object');
+      return qTextPanelResult(value, 'object');
     }
     const row = normalizePanelPlainObject(value as unknown as { [key: string]: QValue });
     const cols = Object.keys(row);
     return {
+      mode: 'grid',
       cols,
       result: createColumnarPanelResult(cols, 1, (_rowIndex, columnIndex) => row[cols[columnIndex]]),
       kind: 'object',
@@ -900,6 +917,7 @@ export function qValueToColumnarPanel(value: QValue, options?: QResultDisplayOpt
 
   const result = createColumnarPanelResult(['value'], 1, () => normalizePanelCell(value));
   return {
+    mode: 'grid',
     cols: result.columns,
     result,
     kind: 'scalar',
@@ -960,12 +978,10 @@ export function qValueRowsMaterialized(value: QValue): boolean {
   return true;
 }
 
-function qTextColumnarPanelResult(value: QValue, kind: string): QColumnarPanelResult {
-  const text = qValueToQText(value);
-  const result = createColumnarPanelResult(['q'], 1, () => text);
+function qTextPanelResult(value: QValue, kind: string): QTextPanelResult {
   return {
-    cols: result.columns,
-    result,
+    mode: 'text',
+    text: qValueToQText(value),
     kind,
     rowsMaterialized: true,
   };

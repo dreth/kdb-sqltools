@@ -415,8 +415,8 @@
             "text"
           ],
           "enumDescriptions": [
-            "Show a synthetic one-cell grid for function-like values.",
-            "Show q-like/default text in a single cell.",
+            "Show function-like values in the existing grid form.",
+            "Show q-like/default text in a plain text viewer.",
             "Alias for grid.",
             "Alias for qText."
           ],
@@ -433,7 +433,7 @@
           ],
           "enumDescriptions": [
             "Show dictionaries as synthetic key/value grids.",
-            "Show q-like/default text in a single cell.",
+            "Show q-like/default text in a plain text viewer.",
             "Alias for grid.",
             "Alias for qText."
           ],
@@ -450,7 +450,7 @@
           ],
           "enumDescriptions": [
             "Show lists as synthetic index/value grids or object-list grids where applicable.",
-            "Show q-like/default text in a single cell.",
+            "Show q-like/default text in a plain text viewer.",
             "Alias for grid.",
             "Alias for qText."
           ],
@@ -467,7 +467,7 @@
           ],
           "enumDescriptions": [
             "Show plain objects as synthetic field grids.",
-            "Show q-like/default text in a single cell.",
+            "Show q-like/default text in a plain text viewer.",
             "Alias for grid.",
             "Alias for qText."
           ],
