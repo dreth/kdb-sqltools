@@ -1,5 +1,11 @@
 # Change Log
 
+## 0.3.11
+
+- Fixed Settings drawer horizontal overflow and wrapping.
+- Fixed Run Selection to use selected text or the current q block instead of only the current physical line.
+- Added a promptness regression probe for local q `testConnection` and `query`.
+
 ## 0.3.10
 
 - Added configurable q result display strategies for functions, dictionaries, lists, and object/composite values, with q-text rendering where IPC supports it and clear source-unavailable guidance for functions.
