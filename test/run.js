@@ -1442,9 +1442,30 @@ function panelFormatElapsedMs(milliseconds, display) {
     assert.strictEqual(setting.default, defaultValue);
     assert.deepStrictEqual(setting.enum, qDisplayStrategyEnum);
     assert.ok(/Display strategy/.test(setting.description));
+    assert.strictEqual(/cell|grid|column|synthetic/i.test(setting.enumDescriptions[1]), false);
   });
   assert.ok(/source-unavailable marker/.test(resultSettings['kdb-sqltools.results.kdbPanel.functionDisplayStrategy'].description));
   assert.ok(/Return string f or \.Q\.s f/.test(resultSettings['kdb-sqltools.results.kdbPanel.functionDisplayStrategy'].description));
+  const qTextDocsLines = [resultsDocsSource, settingsDocsSource]
+    .join('\n')
+    .split('\n')
+    .filter(line => line.includes('qText'))
+    .join('\n');
+  assert.strictEqual(/single text cell|one text cell|single cell|one-cell grid|synthetic .*cell/i.test(qTextDocsLines), false);
+  assert.strictEqual(/single text cell|one text cell|single cell|one-cell grid|Show q-like\/default text in a single cell/i.test(packageSource), false);
+  const qTextPanelResultSource = qIpcSource.slice(
+    qIpcSource.indexOf('function qTextPanelResult'),
+    qIpcSource.indexOf('function qTextValue')
+  );
+  assert.strictEqual(qTextPanelResultSource.includes("mode: 'text'"), true);
+  assert.strictEqual(qTextPanelResultSource.includes('createColumnarPanelResult'), false);
+  assert.strictEqual(resultsPanelSource.includes('<pre id="textViewer" class="text-viewer"></pre>'), true);
+  assert.strictEqual(resultsPanelSource.includes('function renderTextResult()'), true);
+  assert.strictEqual(resultsPanelSource.includes("if (isTextResult()) {\n          renderTextResult();"), true);
+  assert.strictEqual(resultsPanelSource.includes("type: 'copyText'"), true);
+  assert.strictEqual(resultsPanelSource.includes("type: 'exportText'"), true);
+  assert.strictEqual(resultsPanelSource.includes('white-space: pre-wrap;'), true);
+  assert.strictEqual(extensionSource.includes("mode: 'text'"), true);
   const chartMaxSourceRowsSetting = resultSettings['kdb-sqltools.results.kdbPanel.chartMaxSourceRows'];
   assert.strictEqual(chartMaxSourceRowsSetting.type, 'integer');
   assert.strictEqual(chartMaxSourceRowsSetting.default, CHART_MAX_SOURCE_ROWS);
@@ -1771,8 +1792,10 @@ function panelFormatElapsedMs(milliseconds, display) {
     resultsPanelSource.indexOf('function setActionsDisabled'),
     resultsPanelSource.indexOf('function updateActionState')
   );
-  assert.strictEqual(setActionsDisabledSource.includes("copyButton.disabled = disabled || String(actionFormat.value || '') === 'xlsx';"), true);
+  assert.strictEqual(setActionsDisabledSource.includes("copyButton.disabled = disabled || (!textMode && String(actionFormat.value || '') === 'xlsx');"), true);
   assert.strictEqual(setActionsDisabledSource.includes('exportButton.disabled = disabled;'), true);
+  assert.strictEqual(setActionsDisabledSource.includes('includeHeadersLabel.hidden = textMode;'), true);
+  assert.strictEqual(setActionsDisabledSource.includes('includeRowIndexLabel.hidden = textMode;'), true);
   assert.strictEqual(
     resultsPanelSource.includes("value.replace(/[\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F&<>\"']/g"),
     true
@@ -2047,13 +2070,12 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.deepStrictEqual(dictColumnarGrid.result.columns, ['key', 'value']);
   assert.strictEqual(dictColumnarGrid.result.rowCount, 3);
   const dictColumnarText = qValueToColumnarPanel(dict, { dictionaryDisplayStrategy: 'qText' });
-  assert.deepStrictEqual(dictColumnarText.result.columns, ['q']);
-  assert.strictEqual(dictColumnarText.result.rowCount, 1);
-  assert.deepStrictEqual(
-    dictColumnarText.result.cellWindow({ start: 0, end: 0 }, { start: 0, end: 0 }).cells,
-    [['("a";"b";"c")!1 2 3']]
-  );
-  assert.deepStrictEqual(qValueToColumnarPanel(dict, { dictionaryDisplayStrategy: 'text' }).result.columns, ['q']);
+  assert.strictEqual(dictColumnarText.mode, 'text');
+  assert.strictEqual(dictColumnarText.text, '("a";"b";"c")!1 2 3');
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(dictColumnarText, 'result'), false);
+  const dictColumnarTextAlias = qValueToColumnarPanel(dict, { dictionaryDisplayStrategy: 'text' });
+  assert.strictEqual(dictColumnarTextAlias.mode, 'text');
+  assert.strictEqual(dictColumnarTextAlias.text, '("a";"b";"c")!1 2 3');
   assert.deepStrictEqual(qValueToColumnarPanel(dict, { dictionaryDisplayStrategy: 'table' }).result.columns, ['key', 'value']);
 
   const charDict = deserializeQMessage(hex(
@@ -2172,17 +2194,11 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.deepStrictEqual(mixedListGrid.result.columns, ['index', 'value']);
   assert.strictEqual(mixedListGrid.result.rowCount, 4);
   const mixedListText = qValueToColumnarPanel(mixedList, { listDisplayStrategy: 'qText' });
-  assert.deepStrictEqual(mixedListText.result.columns, ['q']);
-  assert.deepStrictEqual(
-    mixedListText.result.cellWindow({ start: 0, end: 0 }, { start: 0, end: 0 }).cells,
-    [['(1;"alpha";2 3;{beta:1b})']]
-  );
+  assert.strictEqual(mixedListText.mode, 'text');
+  assert.strictEqual(mixedListText.text, '(1;"alpha";2 3;{beta:1b})');
   const plainObjectText = qValueToColumnarPanel({ alpha: 1, beta: [2, 3] }, { objectDisplayStrategy: 'text' });
-  assert.deepStrictEqual(plainObjectText.result.columns, ['q']);
-  assert.deepStrictEqual(
-    plainObjectText.result.cellWindow({ start: 0, end: 0 }, { start: 0, end: 0 }).cells,
-    [['{alpha:1;beta:2 3}']]
-  );
+  assert.strictEqual(plainObjectText.mode, 'text');
+  assert.strictEqual(plainObjectText.text, '{alpha:1;beta:2 3}');
   assert.strictEqual(qValueToQText([1, 2, 3], { maxItems: 2 }), '1 2 ... 1 more');
   assert.strictEqual(qValueToQText({ a: { b: { c: 1 } } }, { maxDepth: 2 }), '{a:{b:[object 1 fields]}}');
 
@@ -2191,16 +2207,13 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(lambdaWithSource.functionType, 'lambda');
   assert.strictEqual(lambdaWithSource.source, '{x+y}');
   const lambdaWithSourceColumnar = qValueToColumnarPanel(lambdaWithSource);
-  assert.deepStrictEqual(lambdaWithSourceColumnar.result.columns, ['q']);
-  assert.deepStrictEqual(
-    lambdaWithSourceColumnar.result.cellWindow({ start: 0, end: 0 }, { start: 0, end: 0 }).cells,
-    [['{x+y}']]
-  );
+  assert.strictEqual(lambdaWithSourceColumnar.mode, 'text');
+  assert.strictEqual(lambdaWithSourceColumnar.text, '{x+y}');
   const lambdaWithoutSource = deserializeQPayload(Buffer.concat([int8(100), cString(''), intVector([1, 2])]));
   const lambdaWithoutSourceColumnar = qValueToColumnarPanel(lambdaWithoutSource);
-  assert.deepStrictEqual(lambdaWithoutSourceColumnar.result.columns, ['q']);
+  assert.strictEqual(lambdaWithoutSourceColumnar.mode, 'text');
   assert.match(
-    lambdaWithoutSourceColumnar.result.cellText(0, 0),
+    lambdaWithoutSourceColumnar.text,
     /lambda: source unavailable over q IPC; return string f or \.Q\.s f/
   );
   const lambdaGrid = qValueToColumnarPanel(lambdaWithoutSource, { functionDisplayStrategy: 'grid' });

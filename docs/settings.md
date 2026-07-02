@@ -31,7 +31,7 @@ Non-table result strategy values:
 | Value | Display |
 | --- | --- |
 | `grid` | Existing synthetic grid/table form. |
-| `qText` | Single text cell with deterministic q-like output. |
+| `qText` | Deterministic q-like output in a plain text viewer. |
 | `table` | Alias for `grid`. |
 | `text` | Alias for `qText`. |
 

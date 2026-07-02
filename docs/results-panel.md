@@ -99,7 +99,7 @@ True q tables and keyed tables always open as grids. Top-level non-table composi
 | `listDisplayStrategy` | `grid` | General, mixed, and object lists. |
 | `objectDisplayStrategy` | `grid` | Plain objects or nested composite values decoded as objects. |
 
-Use `grid` for the existing synthetic table form, or `qText` for one text cell with deterministic q-like output. Settings JSON also accepts `table` as an alias for `grid`, and `text` as an alias for `qText`.
+Use `grid` for the existing synthetic table form, or `qText` for deterministic q-like output in a plain text viewer. Settings JSON also accepts `table` as an alias for `grid`, and `text` as an alias for `qText`.
 
 Example:
 

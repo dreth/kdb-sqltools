@@ -40,8 +40,9 @@ import {
 } from './local-data-server';
 import { endPerfSpan, isPerfTraceEnabled, perfSpan } from './perf';
 
-export interface KdbPanelResult {
-  table: ColumnarPanelResult;
+type KdbPanelResultMode = 'table' | 'text';
+
+interface KdbPanelBaseResult {
   query: string;
   connectionName: string;
   elapsedMs: number;
@@ -50,17 +51,31 @@ export interface KdbPanelResult {
   canceled?: boolean;
 }
 
+export interface KdbPanelTableResult extends KdbPanelBaseResult {
+  mode?: 'table';
+  table: ColumnarPanelResult;
+}
+
+export interface KdbPanelTextResult extends KdbPanelBaseResult {
+  mode: 'text';
+  text: string;
+}
+
+export type KdbPanelResult = KdbPanelTableResult | KdbPanelTextResult;
+
 interface LoadingState {
   query: string;
   connectionName: string;
 }
 
 interface KdbPanelMetadata {
+  mode: KdbPanelResultMode;
   columns: string[];
   allColumns: string[];
   hiddenColumnCount: number;
   hiddenColumnNames: string[];
   rowCount: number;
+  text?: string;
   query: string;
   connectionName: string;
   elapsedMs: number;
@@ -280,10 +295,17 @@ export class KdbResultsPanel {
     this.activeChartRequestId += 1;
     this.chartPanelRendered = false;
     this.loading = undefined;
-    this.hiddenColumnNames = this.hiddenColumnNamesForNewResult(result.table.columns);
-    this.hiddenColumnSchema = result.table.columns.slice();
-    this.columnOrder = this.columnOrderForNewResult(result.table.columns);
-    this.columnOrderSchema = result.table.columns.slice();
+    if (isTextPanelResult(result)) {
+      this.hiddenColumnNames = [];
+      this.hiddenColumnSchema = [];
+      this.columnOrder = undefined;
+      this.columnOrderSchema = [];
+    } else {
+      this.hiddenColumnNames = this.hiddenColumnNamesForNewResult(result.table.columns);
+      this.hiddenColumnSchema = result.table.columns.slice();
+      this.columnOrder = this.columnOrderForNewResult(result.table.columns);
+      this.columnOrderSchema = result.table.columns.slice();
+    }
     this.result = result;
     this.revealExisting();
     this.postResultMetadata();
@@ -520,6 +542,16 @@ export class KdbResultsPanel {
       return;
     }
 
+    if (message.type === 'copyText') {
+      await this.copyText(message.version);
+      return;
+    }
+
+    if (message.type === 'exportText') {
+      await this.exportText(message.version);
+      return;
+    }
+
     if (message.type === 'requestSlice') {
       this.postSlice(message);
       return;
@@ -590,12 +622,16 @@ export class KdbResultsPanel {
     if (!this.result) {
       return;
     }
+    const result = this.result;
     const tracePerf = isPerfTraceEnabled();
+    const tableResult = isTextPanelResult(result) ? null : result;
+    const table = tableResult ? tableResult.table : null;
     const span = tracePerf ? perfSpan('results-panel.metadata.post', {
         version: this.version,
-        rows: this.result.table.rowCount,
-        columns: this.visibleColumnNames(this.result).length,
-        totalColumns: this.result.table.columns.length,
+        rows: table ? table.rowCount : 0,
+        columns: tableResult ? this.visibleColumnNames(tableResult).length : 0,
+        totalColumns: table ? table.columns.length : 0,
+        mode: table ? 'table' : 'text',
         ready: this.ready,
       }) : null;
     try {
@@ -609,10 +645,34 @@ export class KdbResultsPanel {
   }
 
   private metadataForResult(result: KdbPanelResult): KdbPanelMetadata {
+    if (isTextPanelResult(result)) {
+      const settings = panelSettings();
+      return {
+        mode: 'text',
+        columns: [],
+        allColumns: [],
+        hiddenColumnCount: 0,
+        hiddenColumnNames: [],
+        rowCount: 0,
+        text: result.text,
+        query: result.query,
+        connectionName: result.connectionName,
+        elapsedMs: result.elapsedMs,
+        messages: result.messages,
+        error: result.error,
+        canceled: result.canceled,
+        version: this.version,
+        settings,
+        sort: null,
+        chartAutoOpen: false,
+      };
+    }
+
     const columns = this.visibleColumnNames(result);
     const hiddenColumnNames = this.activeHiddenColumnNames(result);
     const settings = panelSettings();
     return {
+      mode: 'table',
       columns,
       allColumns: result.table.columns.slice(),
       hiddenColumnCount: result.table.columns.length - columns.length,
@@ -640,6 +700,12 @@ export class KdbResultsPanel {
     }
     if (!this.result) {
       const message = 'Run a q result in this panel before starting the local data server.';
+      vscode.window.showWarningMessage(message);
+      this.post({ type: 'localDataServerMessage', message });
+      return;
+    }
+    if (isTextPanelResult(this.result)) {
+      const message = 'Local data server requires a table/grid result.';
       vscode.window.showWarningMessage(message);
       this.post({ type: 'localDataServerMessage', message });
       return;
@@ -919,28 +985,30 @@ export class KdbResultsPanel {
   }
 
   private baseVisibleTable(): ColumnarPanelResult | null {
-    if (!this.result) {
+    if (!this.result || isTextPanelResult(this.result)) {
       return null;
     }
 
+    const result = this.result;
     if (
       this.baseVisibleTableCache &&
       this.baseVisibleTableCache.version === this.version &&
-      this.baseVisibleTableCache.source === this.result.table
+      this.baseVisibleTableCache.source === result.table
     ) {
       return this.baseVisibleTableCache.table;
     }
 
-    const table = filterColumnarPanelResult(this.result.table, this.visibleColumnNames(this.result));
-    this.baseVisibleTableCache = { version: this.version, source: this.result.table, table };
+    const table = filterColumnarPanelResult(result.table, this.visibleColumnNames(result));
+    this.baseVisibleTableCache = { version: this.version, source: result.table, table };
     return table;
   }
 
   private visibleTable(): ColumnarPanelResult | null {
-    if (!this.result) {
+    if (!this.result || isTextPanelResult(this.result)) {
       return null;
     }
 
+    const result = this.result;
     const table = this.baseVisibleTable();
     if (!table || !this.rowOrder) {
       return table;
@@ -949,17 +1017,17 @@ export class KdbResultsPanel {
     if (
       this.visibleTableCache &&
       this.visibleTableCache.version === this.version &&
-      this.visibleTableCache.source === this.result.table
+      this.visibleTableCache.source === result.table
     ) {
       return this.visibleTableCache.table;
     }
 
     const orderedTable = applyColumnarRowOrder(table, this.rowOrder);
-    this.visibleTableCache = { version: this.version, source: this.result.table, table: orderedTable };
+    this.visibleTableCache = { version: this.version, source: result.table, table: orderedTable };
     return orderedTable;
   }
 
-  private visibleSortState(result: KdbPanelResult): KdbPanelSortState | null {
+  private visibleSortState(result: KdbPanelTableResult): KdbPanelSortState | null {
     if (!this.sortState) {
       return null;
     }
@@ -969,7 +1037,7 @@ export class KdbResultsPanel {
       : { ...this.sortState };
   }
 
-  private visibleColumnNames(result: KdbPanelResult): string[] {
+  private visibleColumnNames(result: KdbPanelTableResult): string[] {
     const hidden = columnNameLookup(this.hiddenColumnNames);
     return this.orderedColumnNames(result.table.columns).filter(column => !hidden[column]);
   }
@@ -992,7 +1060,7 @@ export class KdbResultsPanel {
     return ordered;
   }
 
-  private activeHiddenColumnNames(result: KdbPanelResult): string[] {
+  private activeHiddenColumnNames(result: KdbPanelTableResult): string[] {
     const hidden = columnNameLookup(this.hiddenColumnNames);
     const names: string[] = [];
     result.table.columns.forEach(column => {
@@ -1413,6 +1481,46 @@ export class KdbResultsPanel {
     this.post({ type: 'exported', version: requestVersion, rows, columns, format, includeHeaders, includeRowIndex });
   }
 
+  private async copyText(version: any): Promise<void> {
+    const requestVersion = integerOrNull(version);
+    if (requestVersion === null || requestVersion !== this.version || !this.result || !isTextPanelResult(this.result)) {
+      return;
+    }
+
+    await vscode.env.clipboard.writeText(this.result.text);
+    if (!this.isCurrentVersion(requestVersion)) {
+      return;
+    }
+    this.post({ type: 'textCopied', version: requestVersion });
+  }
+
+  private async exportText(version: any): Promise<void> {
+    const requestVersion = integerOrNull(version);
+    if (requestVersion === null || requestVersion !== this.version || !this.result || !isTextPanelResult(this.result)) {
+      return;
+    }
+
+    const text = this.result.text;
+    const uri = await vscode.window.showSaveDialog({
+      defaultUri: defaultTextExportUri(),
+      filters: { Text: ['txt'] },
+      saveLabel: 'Export',
+    });
+    if (!this.isCurrentVersion(requestVersion)) {
+      return;
+    }
+    if (!uri) {
+      this.post({ type: 'exportSkipped', version: requestVersion, format: 'txt' });
+      return;
+    }
+
+    await vscode.workspace.fs.writeFile(uri, Buffer.from(text, 'utf8'));
+    if (!this.isCurrentVersion(requestVersion)) {
+      return;
+    }
+    this.post({ type: 'textExported', version: requestVersion });
+  }
+
   private async confirmLargeCopyExport(
     action: 'copy' | 'export',
     format: ExportFormat,
@@ -1434,9 +1542,10 @@ export class KdbResultsPanel {
 
   private reorderColumn(message: any): void {
     const requestVersion = integerOrNull(message.version);
-    if (requestVersion === null || !this.result || requestVersion !== this.version) {
+    if (requestVersion === null || !this.result || isTextPanelResult(this.result) || requestVersion !== this.version) {
       return;
     }
+    const result = this.result;
 
     const sourceColumnName = typeof message.sourceColumnName === 'string' ? message.sourceColumnName : '';
     const targetColumnName = typeof message.targetColumnName === 'string' ? message.targetColumnName : '';
@@ -1444,7 +1553,7 @@ export class KdbResultsPanel {
       return;
     }
 
-    const visibleColumns = this.visibleColumnNames(this.result);
+    const visibleColumns = this.visibleColumnNames(result);
     if (visibleColumns.indexOf(sourceColumnName) === -1 || visibleColumns.indexOf(targetColumnName) === -1) {
       return;
     }
@@ -1455,18 +1564,19 @@ export class KdbResultsPanel {
     }
 
     this.columnOrder = mergeVisibleColumnOrder(
-      this.orderedColumnNames(this.result.table.columns),
+      this.orderedColumnNames(result.table.columns),
       nextVisibleColumns,
       this.hiddenColumnNames
     );
-    this.columnOrderSchema = this.result.table.columns.slice();
+    this.columnOrderSchema = result.table.columns.slice();
     this.refreshResultView();
   }
 
   private updateColumnVisibility(message: any): void {
-    if (!this.result) {
+    if (!this.result || isTextPanelResult(this.result)) {
       return;
     }
+    const result = this.result;
 
     if (message.type === 'resetHiddenColumns' || message.type === 'showAllColumns') {
       if (this.hiddenColumnNames.length > 0) {
@@ -1477,8 +1587,8 @@ export class KdbResultsPanel {
     }
 
     if (message.type === 'hideAllColumns') {
-      this.hiddenColumnSchema = this.result.table.columns.slice();
-      this.hiddenColumnNames = this.result.table.columns.slice();
+      this.hiddenColumnSchema = result.table.columns.slice();
+      this.hiddenColumnNames = result.table.columns.slice();
       this.rowOrder = undefined;
       this.sortState = undefined;
       this.refreshResultView();
@@ -1486,13 +1596,13 @@ export class KdbResultsPanel {
     }
 
     const columnName = typeof message.columnName === 'string' ? message.columnName : '';
-    if (!columnName || this.result.table.columns.indexOf(columnName) === -1) {
+    if (!columnName || result.table.columns.indexOf(columnName) === -1) {
       return;
     }
 
     if (message.type === 'hideColumn') {
       if (this.hiddenColumnNames.indexOf(columnName) === -1) {
-        this.hiddenColumnSchema = this.result.table.columns.slice();
+        this.hiddenColumnSchema = result.table.columns.slice();
         this.hiddenColumnNames = this.hiddenColumnNames.concat(columnName);
         if (this.sortState && this.sortState.columnName === columnName) {
           this.rowOrder = undefined;
@@ -1505,7 +1615,7 @@ export class KdbResultsPanel {
 
     if (message.type === 'showColumn') {
       if (this.hiddenColumnNames.indexOf(columnName) !== -1) {
-        this.hiddenColumnSchema = this.result.table.columns.slice();
+        this.hiddenColumnSchema = result.table.columns.slice();
         this.hiddenColumnNames = this.hiddenColumnNames.filter(name => name !== columnName);
         this.refreshResultView();
       }
@@ -2147,6 +2257,30 @@ export class KdbResultsPanel {
       outline: none;
       user-select: none;
     }
+    #viewport[hidden] {
+      display: none;
+    }
+    .text-viewport {
+      flex: 1;
+      overflow: auto;
+      outline: none;
+      user-select: text;
+    }
+    .text-viewport[hidden] {
+      display: none;
+    }
+    .text-viewer {
+      margin: 0;
+      padding: 12px 14px;
+      color: var(--vscode-editor-foreground);
+      background: var(--vscode-editor-background);
+      font-family: var(--vscode-editor-font-family, monospace);
+      font-size: var(--panel-font-size);
+      line-height: 1.45;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      user-select: text;
+    }
     #canvas {
       position: relative;
       min-width: 100%;
@@ -2413,6 +2547,9 @@ export class KdbResultsPanel {
       <div id="empty" class="empty" hidden>0 rows</div>
     </div>
   </div>
+  <div id="textViewport" class="text-viewport" tabindex="0" hidden>
+    <pre id="textViewer" class="text-viewer"></pre>
+  </div>
   <script nonce="${nonce}" src="${uplotScriptUri}"></script>
   <script nonce="${nonce}">
     (function () {
@@ -2448,12 +2585,16 @@ export class KdbResultsPanel {
         objectDisplayStrategy: 'grid'
       };
       const viewport = document.getElementById('viewport');
+      const textViewport = document.getElementById('textViewport');
+      const textViewer = document.getElementById('textViewer');
       const canvas = document.getElementById('canvas');
       const header = document.getElementById('header');
       const rowsLayer = document.getElementById('rows');
       const actionFormat = document.getElementById('actionFormat');
       const copyButton = document.getElementById('copy');
       const exportButton = document.getElementById('export');
+      const includeHeadersLabel = document.getElementById('includeHeadersLabel');
+      const includeRowIndexLabel = document.getElementById('includeRowIndexLabel');
       const includeRowIndex = document.getElementById('includeRowIndex');
       const includeHeaders = document.getElementById('includeHeaders');
       const autoFit = document.getElementById('autoFit');
@@ -2584,6 +2725,10 @@ export class KdbResultsPanel {
           status.textContent = 'Copied ' + msg.rows + 'x' + msg.columns + ' ' + String(msg.format || '').toUpperCase();
         } else if (msg.type === 'exported' && isCurrentVersionMessage(msg)) {
           status.textContent = 'Exported ' + msg.rows + 'x' + msg.columns + ' ' + String(msg.format || '').toUpperCase();
+        } else if (msg.type === 'textCopied' && isCurrentVersionMessage(msg)) {
+          status.textContent = 'Copied text';
+        } else if (msg.type === 'textExported' && isCurrentVersionMessage(msg)) {
+          status.textContent = 'Exported text';
         } else if (msg.type === 'exportSkipped' && isCurrentVersionMessage(msg)) {
           status.textContent = String(msg.format || '').toUpperCase() + ' export skipped';
         } else if (msg.type === 'copySkipped' && isCurrentVersionMessage(msg)) {
@@ -2826,6 +2971,7 @@ export class KdbResultsPanel {
 
       function setResultMeta(result) {
         applySettings(result.settings);
+        const mode = result.mode === 'text' ? 'text' : 'table';
         const nextColumns = Array.isArray(result.columns) ? result.columns.map(String) : [];
         if (!sameColumnNames(columnWidthSchema, nextColumns)) {
           columnWidthOverrides = Object.create(null);
@@ -2834,11 +2980,13 @@ export class KdbResultsPanel {
         }
         data = {
           version: toNonNegativeInteger(result.version, data.version + 1),
+          mode,
           columns: nextColumns,
           allColumns: Array.isArray(result.allColumns) ? result.allColumns.map(String) : [],
           hiddenColumnNames: Array.isArray(result.hiddenColumnNames) ? result.hiddenColumnNames.map(String) : [],
           hiddenColumnCount: toNonNegativeInteger(result.hiddenColumnCount, 0),
           rowCount: toNonNegativeInteger(result.rowCount, 0),
+          text: mode === 'text' ? String(result.text || '') : '',
           messages: Array.isArray(result.messages) ? result.messages.map(String) : [],
           guardrailMessage: result.guardrailMessage ? String(result.guardrailMessage) : '',
           query: result.query || '',
@@ -3093,22 +3241,36 @@ export class KdbResultsPanel {
       }
 
       function setActionsDisabled(disabled) {
-        actionFormat.disabled = disabled;
-        copyButton.disabled = disabled || String(actionFormat.value || '') === 'xlsx';
-        copyButton.title = String(actionFormat.value || '') === 'xlsx' ? 'XLSX is export-only' : '';
+        const textMode = isTextResult();
+        actionFormat.disabled = disabled || textMode;
+        copyButton.disabled = disabled || (!textMode && String(actionFormat.value || '') === 'xlsx');
+        copyButton.title = textMode
+          ? 'Copy text output'
+          : (String(actionFormat.value || '') === 'xlsx' ? 'XLSX is export-only' : '');
         exportButton.disabled = disabled;
-        includeRowIndex.disabled = false;
-        includeHeaders.disabled = false;
+        exportButton.title = textMode ? 'Export text output as .txt' : '';
+        includeHeadersLabel.hidden = textMode;
+        includeRowIndexLabel.hidden = textMode;
+        includeHeaders.disabled = textMode;
+        includeRowIndex.disabled = textMode;
       }
 
       function updateActionState() {
-        setActionsDisabled(!hasTableCells());
+        setActionsDisabled(!hasActionContent());
         updateLocalDataServerControls();
         updateChartControls();
       }
 
+      function isTextResult() {
+        return data.mode === 'text';
+      }
+
+      function hasActionContent() {
+        return hasTableCells() || (data.hasResult && isTextResult() && !data.error && !data.canceled);
+      }
+
       function hasTableCells() {
-        return data.rowCount > 0 && data.columns.length > 0;
+        return !isTextResult() && data.rowCount > 0 && data.columns.length > 0;
       }
 
       function setLocalDataServerStatus(server, message) {
@@ -3123,7 +3285,7 @@ export class KdbResultsPanel {
       }
 
       function updateLocalDataServerControls() {
-        const hasResult = data.hasResult && !data.error && !data.canceled && data.rowCount >= 0;
+        const hasResult = data.hasResult && !isTextResult() && !data.error && !data.canceled && data.rowCount >= 0;
         const running = !!localDataServer;
         startLocalDataServer.disabled = !hasResult || running;
         stopLocalDataServer.disabled = !running;
@@ -4874,6 +5036,12 @@ export class KdbResultsPanel {
             ' | ' + formatElapsedMs(data.elapsedMs, settings.elapsedTimeDisplay);
           return;
         }
+        if (isTextResult()) {
+          summary.textContent = 'Text output' +
+            (data.connectionName ? ' | ' + data.connectionName : '') +
+            ' | ' + formatElapsedMs(data.elapsedMs, settings.elapsedTimeDisplay);
+          return;
+        }
         summary.textContent = formatUiCount(data.rowCount) + ' rows x ' + formatUiCount(data.columns.length) + ' columns' +
           (data.hiddenColumnCount > 0 ? ' (' + formatUiCount(data.hiddenColumnCount) + ' hidden)' : '') +
           (data.connectionName ? ' | ' + data.connectionName : '') +
@@ -4940,6 +5108,13 @@ export class KdbResultsPanel {
       }
 
       function renderNow() {
+        if (isTextResult()) {
+          renderTextResult();
+          return;
+        }
+        viewport.hidden = false;
+        textViewport.hidden = true;
+        textViewer.textContent = '';
         const columnCount = data.columns.length;
         const rowCount = data.rowCount;
         const metrics = columnMetrics();
@@ -4966,6 +5141,21 @@ export class KdbResultsPanel {
         renderHeader(columns, horizontalState, metrics);
         requestSlice(rows, columns);
         renderRows(rows, columns, verticalState, horizontalState, metrics);
+      }
+
+      function renderTextResult() {
+        viewport.hidden = true;
+        textViewport.hidden = false;
+        header.textContent = '';
+        rowsLayer.textContent = '';
+        empty.hidden = true;
+        canvas.style.width = '';
+        canvas.style.height = '';
+        const text = data.text || '';
+        if (textViewer.textContent !== text) {
+          textViewer.textContent = text;
+        }
+        updateAutoFitControlState();
       }
 
       function scrollStateForViewport() {
@@ -5563,6 +5753,10 @@ export class KdbResultsPanel {
       }
 
       function updateSelectionLabel() {
+        if (isTextResult()) {
+          selectionLabel.textContent = 'Plain text output';
+          return;
+        }
         const range = normalizedSelection();
         selectionLabel.textContent = range ? selectionText(range) : 'No selection (actions use all)';
       }
@@ -5647,6 +5841,13 @@ export class KdbResultsPanel {
       }
 
       function copySelection() {
+        if (isTextResult()) {
+          vscode.postMessage({
+            type: 'copyText',
+            version: data.version
+          });
+          return;
+        }
         if (!hasTableCells()) {
           return;
         }
@@ -5668,6 +5869,13 @@ export class KdbResultsPanel {
       }
 
       function exportSelection() {
+        if (isTextResult()) {
+          vscode.postMessage({
+            type: 'exportText',
+            version: data.version
+          });
+          return;
+        }
         if (!hasTableCells()) {
           return;
         }
@@ -5708,11 +5916,13 @@ export class KdbResultsPanel {
       function emptyData() {
         return {
           version: 0,
+          mode: 'table',
           columns: [],
           allColumns: [],
           hiddenColumnNames: [],
           hiddenColumnCount: 0,
           rowCount: 0,
+          text: '',
           messages: [],
           guardrailMessage: '',
           query: '',
@@ -5971,6 +6181,10 @@ function panelSettingConfigKey(key: string, density: KdbPanelDensity): string {
 
 function panelTitle(panelNumber: number): string {
   return panelNumber <= 1 ? 'kdb Results' : `kdb Results ${panelNumber}`;
+}
+
+function isTextPanelResult(result: KdbPanelResult): result is KdbPanelTextResult {
+  return result.mode === 'text';
 }
 
 function initialResultViewColumn(): vscode.ViewColumn {
@@ -6359,6 +6573,13 @@ function defaultExportUri(format: ExportFormat): vscode.Uri {
     : os.homedir();
   const extension = format === 'markdown' ? 'md' : format;
   return vscode.Uri.file(path.join(folder, `kdb-results.${extension}`));
+}
+
+function defaultTextExportUri(): vscode.Uri {
+  const folder = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0
+    ? vscode.workspace.workspaceFolders[0].uri.fsPath
+    : os.homedir();
+  return vscode.Uri.file(path.join(folder, 'kdb-results.txt'));
 }
 
 function defaultChartExportUri(): vscode.Uri {

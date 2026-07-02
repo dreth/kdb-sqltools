@@ -384,21 +384,35 @@ async function executeQTextInKdbPanel(
     });
     let panelResult: KdbPanelResult | undefined;
     try {
-      const columnar = qValueToColumnarPanel(value, qResultDisplayOptions());
-      panelResult = {
-        table: columnar.result,
-        query: text,
-        connectionName: connection.name,
-        elapsedMs: Date.now() - started,
-        messages: [
-          `q returned ${columnar.kind} with ${columnar.result.rowCount} row${columnar.result.rowCount === 1 ? '' : 's'} in ${Date.now() - started} ms.`,
-        ],
-      };
+      const panelValue = qValueToColumnarPanel(value, qResultDisplayOptions());
+      if (panelValue.mode === 'text') {
+        panelResult = {
+          mode: 'text',
+          text: panelValue.text,
+          query: text,
+          connectionName: connection.name,
+          elapsedMs: Date.now() - started,
+          messages: [
+            `q returned ${panelValue.kind} as text in ${Date.now() - started} ms.`,
+          ],
+        };
+      } else {
+        panelResult = {
+          table: panelValue.result,
+          query: text,
+          connectionName: connection.name,
+          elapsedMs: Date.now() - started,
+          messages: [
+            `q returned ${panelValue.kind} with ${panelValue.result.rowCount} row${panelValue.result.rowCount === 1 ? '' : 's'} in ${Date.now() - started} ms.`,
+          ],
+        };
+      }
       endPerfSpan(panelResultSpan, {
-        rows: columnar.result.rowCount,
-        columns: columnar.result.columns.length,
-        kind: columnar.kind,
-        rowMaterialized: columnar.rowsMaterialized,
+        rows: panelValue.mode === 'text' ? 0 : panelValue.result.rowCount,
+        columns: panelValue.mode === 'text' ? 0 : panelValue.result.columns.length,
+        kind: panelValue.kind,
+        mode: panelValue.mode,
+        rowMaterialized: panelValue.rowsMaterialized,
         error: false,
       });
     } finally {
