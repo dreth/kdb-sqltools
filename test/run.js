@@ -259,8 +259,12 @@ function panelFormatElapsedMs(milliseconds, display) {
 
   const qScript = '.data.gateway:{[query;db]\n  neg[gatewayHandle](`.gw.asyncExec;query;db)\n}\n\nselect from trade';
   assert.strictEqual(currentQBlock(qScript, 1), '.data.gateway:{[query;db]\n  neg[gatewayHandle](`.gw.asyncExec;query;db)\n}');
+  assert.strictEqual(currentQBlock(qScript, 3), '');
   assert.strictEqual(currentQBlock(qScript, 4), 'select from trade');
   assert.strictEqual(selectedTextOrCurrentBlock(qScript, '1+1', 0), '1+1');
+  assert.strictEqual(selectedTextOrCurrentBlock(qScript, '  ', 1), '  ');
+  assert.strictEqual(selectedTextOrCurrentBlock(qScript, '', 1), '.data.gateway:{[query;db]\n  neg[gatewayHandle](`.gw.asyncExec;query;db)\n}');
+  assert.strictEqual(selectedTextOrCurrentBlock(qScript, '', 3), '');
   assert.strictEqual(selectedTextOrCurrentLine(qScript, '  1+1\n2+2  ', 1), '  1+1\n2+2  ');
   assert.strictEqual(selectedTextOrCurrentLine(qScript, '', 1), '  neg[gatewayHandle](`.gw.asyncExec;query;db)');
   assert.strictEqual(selectedTextOrCurrentLine(qScript, '', 3), '');
@@ -1108,6 +1112,10 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.deepStrictEqual(htmlSelectOptions(resultsPanelSource, 'chartType'), ['line', 'scatter', 'step', 'bar', 'box']);
   assert.strictEqual(settingsMenuSource.includes('<summary id="settingsSummary" aria-label="Settings menu">Settings</summary>'), true);
   assert.strictEqual(settingsMenuSource.includes('role="group" aria-label="Settings controls"'), true);
+  assert.strictEqual(resultsPanelSource.includes('overflow-x: hidden;'), true);
+  assert.strictEqual(resultsPanelSource.includes('.settings-panel * {\n      max-width: 100%;\n      min-width: 0;\n    }'), true);
+  assert.strictEqual(resultsPanelSource.includes('grid-template-columns: minmax(0, 1fr) 94px;'), false);
+  assert.strictEqual(resultsPanelSource.includes('.settings-row > span {\n      overflow-wrap: anywhere;\n    }'), true);
   assert.strictEqual(settingsMenuSource.includes('<span>View</span>'), true);
   assert.strictEqual(settingsMenuSource.includes('id="autoFit"'), true);
   assert.strictEqual(settingsMenuSource.includes('id="interactionMode"'), true);
@@ -1266,7 +1274,21 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(extensionSource.includes("'kdb-sqltools.runSelectionOrBlockInNewKdbPanel'"), true);
   assert.strictEqual(extensionSource.includes("'kdb-sqltools.runSelectionOrBlockInKdbPanelReplace'"), true);
   assert.strictEqual(extensionSource.includes("'kdb-sqltools.runSelectionOrBlockAndChart'"), true);
+  assert.strictEqual(extensionSource.includes('runQSelectionOrLine'), false);
+  assert.strictEqual(extensionSource.includes('selectedTextOrCurrentLine'), false);
+  assert.strictEqual(extensionSource.includes("'kdb-sqltools.runSelectionOrBlock', () => runQSelectionOrBlock(extContext)"), true);
+  assert.strictEqual(extensionSource.includes("'kdb-sqltools.runSelectionOrBlockInSqltools', () => runQSelectionOrBlock(extContext, 'sqltools')"), true);
+  assert.strictEqual(extensionSource.includes("'kdb-sqltools.runSelectionOrBlockInKdbPanel', () => runQSelectionOrBlock(extContext, 'kdbPanel')"), true);
+  assert.strictEqual(extensionSource.includes("'kdb-sqltools.runSelectionOrBlockInKdbPanelReplace', () => runQSelectionOrBlock(extContext, 'kdbPanel', 'replace')"), true);
+  assert.strictEqual(extensionSource.includes("'kdb-sqltools.runSelectionOrBlockInNewKdbPanel', () => runQSelectionOrBlock(extContext, 'kdbPanel', 'new')"), true);
+  const runSelectionOrBlockSource = extensionSource.slice(
+    extensionSource.indexOf('async function runQSelectionOrBlock'),
+    extensionSource.indexOf('async function runQSelectionOrBlockAndChart')
+  );
+  assert.strictEqual(runSelectionOrBlockSource.includes('selectedTextOrCurrentBlock(editor.document.getText(), selectionText, editor.selection.active.line)'), true);
+  assert.strictEqual(runSelectionOrBlockSource.includes('autoChart'), false);
   assert.strictEqual(extensionSource.includes('selectedTextOrCurrentBlock(editor.document.getText(), selectionText, editor.selection.active.line)'), true);
+  assert.strictEqual(sourceOccurrences(extensionSource, '{ autoChart: true }'), 1);
   assert.strictEqual(extensionSource.includes("await executeQText(extContext, text, 'kdbPanel', 'replace', { autoChart: true });"), true);
   assert.strictEqual(extensionSource.includes('{ autoChart: options.autoChart === true }'), true);
   assert.strictEqual(extensionSource.includes("'kdb-sqltools.copyKdbPanelSelection'"), true);
@@ -1677,8 +1699,12 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(chartingDocsSource.includes('Press the top-level `Chart` button.'), true);
   assert.strictEqual(chartingDocsSource.includes('kdb+: Run Selection and Chart'), true);
   assert.strictEqual(runningDocsSource.includes('| `Ctrl+Alt+C` | `Cmd+Alt+C` | `kdb+: Run Selection and Chart`'), true);
+  assert.strictEqual(runningDocsSource.includes('current q block bounded by blank lines'), true);
+  assert.strictEqual(runningDocsSource.includes('current physical line'), false);
   assert.strictEqual(readmeSource.includes('The top toolbar is a single compact line'), true);
   assert.strictEqual(readmeSource.includes('`Settings` contains collapsible sections for view controls, search, hidden columns, output defaults, and `Data server` controls'), true);
+  assert.strictEqual(readmeSource.includes('current q block bounded by blank lines'), true);
+  assert.strictEqual(readmeSource.includes('current physical line'), false);
   assert.strictEqual(chartingDocsSource.includes('PNG export saves the rendered uPlot canvas'), true);
   assert.strictEqual(chartingDocsSource.includes('X-axis labels are auto-thinned'), true);
   assert.strictEqual(chartingDocsSource.includes('dense numeric and timestamp axes readable'), true);
