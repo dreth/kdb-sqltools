@@ -37,6 +37,17 @@ const FIXTURE = path.join(__dirname, 'fixture.q');
 });
 
 async function runLiveAssertions(port) {
+  const promptDriver = createDriver(port, 2);
+  try {
+    await assertCompletesWithin('testConnection', () => promptDriver.testConnection(), 2000);
+    const simple = await assertCompletesWithin('simple query', () => promptDriver.query('1+1'), 2000);
+    assert.strictEqual(simple[0].error, undefined);
+    assert.deepStrictEqual(simple[0].cols, ['value']);
+    assert.strictEqual(simple[0].results[0].value, 2);
+  } finally {
+    await promptDriver.close();
+  }
+
   const driver = createDriver(port);
 
   try {
@@ -270,7 +281,7 @@ async function runLiveAssertions(port) {
   }
 }
 
-function createDriver(port) {
+function createDriver(port, connectionTimeout = 10) {
   return new KdbDriver({
     id: 'live-q',
     name: 'Live q',
@@ -280,10 +291,26 @@ function createDriver(port) {
     database: '.',
     username: '',
     password: '',
-    connectionTimeout: 10,
+    connectionTimeout,
     isConnected: false,
     isActive: false,
   }, async () => []);
+}
+
+async function assertCompletesWithin(label, operation, timeoutMs) {
+  let timeout;
+  try {
+    return await Promise.race([
+      operation(),
+      new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(`${label} did not complete within ${timeoutMs} ms`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
 }
 
 function simulateSqlToolsFormatInsertQuery(insertQuery) {

@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { IConnection, IExtension, IExtensionPlugin, IDriverExtensionApi } from '@sqltools/types';
 import { ExtensionContext } from 'vscode';
 import { DRIVER_ALIASES, DRIVER_ID, DRIVER_NAME } from './constants';
-import { selectedTextOrCurrentBlock, selectedTextOrCurrentLine } from './q-text';
+import { selectedTextOrCurrentBlock } from './q-text';
 import KdbDriver from './ls/driver';
 import { emptyColumnarPanelResult } from './kdb-results';
 import { QResultDisplayOptions, QValue, qValueToColumnarPanel } from './ls/q-ipc';
@@ -53,16 +53,16 @@ export async function activate(extContext: ExtensionContext): Promise<IDriverExt
       }
     }),
     vscode.commands.registerCommand('kdb-sqltools.runFile', () => runQFile(extContext)),
-    vscode.commands.registerCommand('kdb-sqltools.runSelectionOrBlock', () => runQSelectionOrLine(extContext)),
+    vscode.commands.registerCommand('kdb-sqltools.runSelectionOrBlock', () => runQSelectionOrBlock(extContext)),
     vscode.commands.registerCommand('kdb-sqltools.runFileInSqltools', () => runQFile(extContext, 'sqltools')),
-    vscode.commands.registerCommand('kdb-sqltools.runSelectionOrBlockInSqltools', () => runQSelectionOrLine(extContext, 'sqltools')),
+    vscode.commands.registerCommand('kdb-sqltools.runSelectionOrBlockInSqltools', () => runQSelectionOrBlock(extContext, 'sqltools')),
     vscode.commands.registerCommand('kdb-sqltools.runFileInKdbPanel', () => runQFile(extContext, 'kdbPanel')),
-    vscode.commands.registerCommand('kdb-sqltools.runSelectionOrBlockInKdbPanel', () => runQSelectionOrLine(extContext, 'kdbPanel')),
+    vscode.commands.registerCommand('kdb-sqltools.runSelectionOrBlockInKdbPanel', () => runQSelectionOrBlock(extContext, 'kdbPanel')),
     vscode.commands.registerCommand('kdb-sqltools.runFileInKdbPanelReplace', () => runQFile(extContext, 'kdbPanel', 'replace')),
-    vscode.commands.registerCommand('kdb-sqltools.runSelectionOrBlockInKdbPanelReplace', () => runQSelectionOrLine(extContext, 'kdbPanel', 'replace')),
+    vscode.commands.registerCommand('kdb-sqltools.runSelectionOrBlockInKdbPanelReplace', () => runQSelectionOrBlock(extContext, 'kdbPanel', 'replace')),
     vscode.commands.registerCommand('kdb-sqltools.runSelectionOrBlockAndChart', () => runQSelectionOrBlockAndChart(extContext)),
     vscode.commands.registerCommand('kdb-sqltools.runFileInNewKdbPanel', () => runQFile(extContext, 'kdbPanel', 'new')),
-    vscode.commands.registerCommand('kdb-sqltools.runSelectionOrBlockInNewKdbPanel', () => runQSelectionOrLine(extContext, 'kdbPanel', 'new')),
+    vscode.commands.registerCommand('kdb-sqltools.runSelectionOrBlockInNewKdbPanel', () => runQSelectionOrBlock(extContext, 'kdbPanel', 'new')),
     vscode.commands.registerCommand('kdb-sqltools.openKeyboardShortcuts', openKeyboardShortcuts),
     vscode.commands.registerCommand('kdb-sqltools.copyExampleConnectionSettings', copyExampleConnectionSettings),
     vscode.commands.registerCommand('kdb-sqltools.copyKdbPanelSelection', () => KdbResultsPanel.copySelectionFromActivePanel()),
@@ -124,7 +124,7 @@ async function runQFile(
   await executeQText(extContext, editor.document.getText(), target, kdbPanelMode);
 }
 
-async function runQSelectionOrLine(
+async function runQSelectionOrBlock(
   extContext: ExtensionContext,
   target?: ResultsTarget,
   kdbPanelMode?: KdbResultsPanelRunMode
@@ -136,7 +136,7 @@ async function runQSelectionOrLine(
   }
 
   const selectionText = editor.selection.isEmpty ? '' : editor.document.getText(editor.selection);
-  const text = selectedTextOrCurrentLine(editor.document.getText(), selectionText, editor.selection.active.line);
+  const text = selectedTextOrCurrentBlock(editor.document.getText(), selectionText, editor.selection.active.line);
   await executeQText(extContext, text, target, kdbPanelMode);
 }
 

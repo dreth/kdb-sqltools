@@ -1711,6 +1711,10 @@ export class KdbResultsPanel {
       display: inline-flex;
       align-items: center;
       gap: 4px;
+      min-width: 0;
+      max-width: 100%;
+      white-space: normal;
+      overflow-wrap: anywhere;
       color: var(--vscode-descriptionForeground);
     }
     .settings,
@@ -1763,6 +1767,18 @@ export class KdbResultsPanel {
     }
     .settings-panel {
       width: min(360px, calc(100vw - 20px));
+      max-width: calc(100vw - 20px);
+      grid-template-columns: minmax(0, 1fr);
+      overflow-x: hidden;
+      min-width: 0;
+    }
+    .settings-panel,
+    .settings-panel * {
+      box-sizing: border-box;
+    }
+    .settings-panel * {
+      max-width: 100%;
+      min-width: 0;
     }
     .tool-dropdown-panel {
       width: min(260px, calc(100vw - 20px));
@@ -1793,9 +1809,13 @@ export class KdbResultsPanel {
     }
     .settings-row {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 94px;
-      gap: 8px;
-      align-items: center;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 3px;
+      align-items: stretch;
+      color: var(--vscode-descriptionForeground);
+    }
+    .settings-row > span {
+      overflow-wrap: anywhere;
     }
     .settings-row select,
     .settings-row input[type="number"] {
@@ -1817,7 +1837,13 @@ export class KdbResultsPanel {
       align-items: center;
       justify-content: space-between;
       gap: 8px;
+      min-width: 0;
       color: var(--vscode-descriptionForeground);
+    }
+    .settings-heading > span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     .settings-actions {
       display: grid;

@@ -12,7 +12,7 @@ The extension executes q text. It does not parse or translate SQL.
 
 The default is `kdbPanel`.
 
-`Run Selection` sends the selected text exactly. If there is no selection, it sends the current physical line. A blank current line shows the normal no-code warning. `Run q Script` sends the whole active editor document.
+`Run Selection` sends the selected text exactly. If there is no selection, it sends the current q block bounded by blank lines. A blank current line shows the normal no-code warning. `Run q Script` sends the whole active editor document.
 
 ## Canceling a run
 

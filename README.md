@@ -80,7 +80,7 @@ The `kdb+: Copy Example Global Connection Settings` command copies this User-set
 
 ## kdb Results Panel
 
-The kdb results panel is the default target for `kdb+: Run q Script` and `kdb+: Run Selection`. It runs through this extension's direct driver path and avoids SQLTools `*.session.sql` editor documents. `Run Selection` sends the selected text exactly; with no selection, it sends only the current physical line. A blank current line uses the normal no-code warning.
+The kdb results panel is the default target for `kdb+: Run q Script` and `kdb+: Run Selection`. It runs through this extension's direct driver path and avoids SQLTools `*.session.sql` editor documents. `Run Selection` sends the selected text exactly; with no selection, it sends the current q block bounded by blank lines. A blank current line uses the normal no-code warning.
 
 Default kdb-panel runs open a new result tab unless you set `"kdb-sqltools.results.kdbPanel.defaultRunMode": "replace"`. Explicit commands are also available:
 
