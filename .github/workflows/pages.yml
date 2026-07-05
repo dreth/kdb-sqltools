@@ -5,20 +5,22 @@ on:
     branches:
       - main
     paths:
+      - mkdocs-src/**
       - docs/**
       - mkdocs.yml
+      - .github/scripts/**
       - .github/workflows/pages.yml
   pull_request:
     paths:
+      - mkdocs-src/**
       - docs/**
       - mkdocs.yml
+      - .github/scripts/**
       - .github/workflows/pages.yml
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages
@@ -41,33 +43,25 @@ jobs:
       - name: Install docs dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r docs/requirements.txt
+          pip install -r mkdocs-src/requirements.txt
 
       - name: Build docs
         run: mkdocs build --strict
 
-      - name: Configure Pages
+      - name: Normalize generated docs
+        run: python .github/scripts/clean-mkdocs-output.py docs
+
+      - name: Verify generated docs are committed
+        run: |
+          git diff --exit-code -- docs
+          if [ -n "$(git status --porcelain -- docs)" ]; then
+            git status --short -- docs
+            exit 1
+          fi
+
+      - name: Upload generated docs artifact
         if: github.event_name != 'pull_request'
-        uses: actions/configure-pages@v6
+        uses: actions/upload-artifact@v4
         with:
-          enablement: true
-
-      - name: Upload Pages artifact
-        if: github.event_name != 'pull_request'
-        uses: actions/upload-pages-artifact@v5
-        with:
-          path: ./site
-
-  deploy:
-    name: Deploy Pages
-    if: github.event_name != 'pull_request'
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v5
+          name: github-pages-docs
+          path: ./docs

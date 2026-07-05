@@ -82,4 +82,4 @@ npm run test:live-kdb
 
 ## Public docs show raw Markdown
 
-If the public docs render as raw Markdown with no left sidebar, GitHub Pages is serving the `docs/` branch source instead of the MkDocs build. In the repository, set Settings -> Pages -> Build and deployment -> Source to `GitHub Actions`.
+If the public docs render as raw Markdown with no left sidebar, the committed `/docs` directory likely contains Markdown source instead of the generated MkDocs site. Repository Pages is legacy-configured to serve branch `main`, path `/docs`, so edit source under `mkdocs-src/`, run `mkdocs build --strict`, and commit the generated `/docs` output.
