@@ -3,8 +3,8 @@ site_url: https://kdb-sqltools.dac.sg/
 repo_url: https://github.com/dreth/kdb-sqltools
 repo_name: dreth/kdb-sqltools
 site_description: Practical documentation for the SQLTools kdb driver.
-docs_dir: docs
-site_dir: site
+docs_dir: mkdocs-src
+site_dir: docs
 exclude_docs: |
   README.md
   requirements.txt
