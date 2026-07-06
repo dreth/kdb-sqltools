@@ -149,6 +149,13 @@ interface QIpcQueryPerf {
   copyBytesCopied: number;
 }
 
+type KdbIpcPhase = 'connect' | 'handshake' | 'query';
+
+interface PendingConnect {
+  socket: net.Socket;
+  fail(error: Error, destroy?: boolean): void;
+}
+
 let nextQueryId = 1;
 
 export class KdbQError extends Error {
@@ -338,6 +345,8 @@ export class QIpcReceiveBuffer {
 export class KdbIpcClient {
   private socket: net.Socket | null = null;
   private connectingSocket: net.Socket | null = null;
+  private pendingConnect: PendingConnect | null = null;
+  private connectPromise: Promise<void> | null = null;
   private receiveBuffer = new QIpcReceiveBuffer();
   private pending: PendingQuery | null = null;
   private queue: PendingQuery[] = [];
@@ -349,23 +358,30 @@ export class KdbIpcClient {
     if (this.socket && !this.socket.destroyed) {
       return;
     }
+    if (this.connectPromise) {
+      return this.connectPromise;
+    }
 
-    await new Promise<void>((resolve, reject) => {
+    const connectPromise = new Promise<void>((resolve, reject) => {
       const socket = net.createConnection({
         host: this.options.host,
         port: this.options.port,
       });
       this.connectingSocket = socket;
       let settled = false;
+      let phase: KdbIpcPhase = 'connect';
 
-      const fail = (error: Error) => {
+      const fail = (error: Error, destroy = true) => {
         if (settled) {
           return;
         }
         settled = true;
+        const wrapped = this.phaseError(phase, error);
         cleanup();
-        socket.destroy();
-        reject(error);
+        if (destroy && !socket.destroyed) {
+          socket.destroy();
+        }
+        reject(wrapped);
       };
 
       const cleanup = () => {
@@ -377,9 +393,13 @@ export class KdbIpcClient {
         if (this.connectingSocket === socket) {
           this.connectingSocket = null;
         }
+        if (this.pendingConnect && this.pendingConnect.socket === socket) {
+          this.pendingConnect = null;
+        }
       };
 
       const onConnect = () => {
+        phase = 'handshake';
         socket.write(createHandshake(this.options), error => {
           if (error) {
             fail(error);
@@ -394,7 +414,7 @@ export class KdbIpcClient {
 
         const version = chunk.readUInt8(0);
         if (version < 1) {
-          fail(new KdbIpcError('kdb+ rejected IPC authentication'));
+          fail(new KdbIpcError('q rejected IPC authentication'));
           return;
         }
 
@@ -416,9 +436,10 @@ export class KdbIpcClient {
       };
 
       const onError = (error: Error) => fail(error);
-      const onClose = () => fail(new KdbIpcError('kdb+ connection closed during handshake'));
-      const onTimeout = () => fail(new KdbIpcError(`kdb+ connection timed out after ${this.timeoutMs()} ms`));
+      const onClose = () => fail(new KdbIpcError('connection closed before q IPC handshake completed'), false);
+      const onTimeout = () => fail(new KdbIpcError(`timed out after ${this.timeoutMs()} ms`));
 
+      this.pendingConnect = { socket, fail };
       socket.once('connect', onConnect);
       socket.once('data', onHandshakeData);
       socket.once('error', onError);
@@ -427,6 +448,14 @@ export class KdbIpcClient {
         socket.setTimeout(this.timeoutMs(), onTimeout);
       }
     });
+    this.connectPromise = connectPromise;
+    try {
+      await connectPromise;
+    } finally {
+      if (this.connectPromise === connectPromise) {
+        this.connectPromise = null;
+      }
+    }
   }
 
   public query(query: string): Promise<QValue> {
@@ -446,9 +475,9 @@ export class KdbIpcClient {
       ? this.connectingSocket
       : null;
     this.socket = null;
-    this.connectingSocket = null;
     this.receiveBuffer.clear();
     this.failAll(new KdbIpcError('kdb+ connection closed'));
+    this.rejectConnecting(new KdbIpcError('kdb+ connection closed'));
 
     if (connectingSocket && !connectingSocket.destroyed) {
       connectingSocket.destroy();
@@ -469,9 +498,9 @@ export class KdbIpcClient {
       ? this.connectingSocket
       : null;
     this.socket = null;
-    this.connectingSocket = null;
     this.receiveBuffer.clear();
     this.failAll(error);
+    this.rejectConnecting(error);
 
     if (socket && !socket.destroyed) {
       socket.destroy(error);
@@ -505,7 +534,7 @@ export class KdbIpcClient {
     }
     if (this.timeoutMs() > 0) {
       pending.timeout = setTimeout(() => {
-        this.rejectPending(new KdbIpcError(`kdb+ query timed out after ${this.timeoutMs()} ms`));
+        this.rejectPending(this.phaseError('query', new KdbIpcError(`timed out after ${this.timeoutMs()} ms`)));
         this.socket && this.socket.destroy();
       }, this.timeoutMs());
     }
@@ -522,7 +551,7 @@ export class KdbIpcClient {
         finishSendPerf(pending.perf, { error: !!error });
       }
       if (error) {
-        this.rejectPending(error);
+        this.rejectPending(this.phaseError('query', error));
       }
     });
   }
@@ -630,12 +659,12 @@ export class KdbIpcClient {
   }
 
   private handleSocketError = (error: Error) => {
-    this.failAll(error);
+    this.failAll(this.phaseError('query', error));
   };
 
   private handleSocketClose = () => {
     this.socket = null;
-    this.failAll(new KdbIpcError('kdb+ connection closed'));
+    this.failAll(this.phaseError('query', new KdbIpcError('connection closed')));
   };
 
   private rejectPending(error: Error) {
@@ -672,6 +701,34 @@ export class KdbIpcClient {
       }
       item.reject(error);
     });
+  }
+
+  private rejectConnecting(error: Error): void {
+    const pendingConnect = this.pendingConnect;
+    if (pendingConnect) {
+      pendingConnect.fail(error);
+      return;
+    }
+
+    const connectingSocket = this.connectingSocket;
+    this.connectingSocket = null;
+    if (connectingSocket && !connectingSocket.destroyed) {
+      connectingSocket.destroy();
+    }
+  }
+
+  private endpointLabel(): string {
+    return `${this.options.host}:${this.options.port}`;
+  }
+
+  private phaseError(phase: KdbIpcPhase, error: Error): KdbIpcError {
+    const err = toError(error);
+    const wrapped = new KdbIpcError(`kdb+ ${phase} failed for ${this.endpointLabel()}: ${err.message}`);
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code) {
+      (wrapped as NodeJS.ErrnoException).code = code;
+    }
+    return wrapped;
   }
 }
 

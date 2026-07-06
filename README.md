@@ -36,7 +36,11 @@ Example SQLTools connection:
 }
 ```
 
-The `database` field is used as a q namespace for the object explorer. Use `.` for the root namespace or values such as `.analytics`. Queries are sent exactly as written to the remote q process.
+The `database` field is the q namespace for the object explorer and raw editor runs. Use `.` for the root namespace or values such as `.analytics`. With `database: ".analytics"`, running `a` is evaluated in `.analytics` and the previous q namespace is restored afterwards.
+
+If SQLTools' edit form crashes on old connection metadata, set the saved connection's `driver` to `KDB` in `settings.json` or run `kdb+: Copy Example Global Connection Settings` and merge the example.
+
+`read ECONNRESET` usually means something accepted TCP but did not complete the q IPC handshake: wrong port/process, auth rejection/reset, a proxy/gateway reset, or a stale q process. Connection errors include the host, port, and phase that failed.
 
 ### Persisting Connections
 
@@ -193,9 +197,9 @@ GitHub links:
 
 - TLS is not implemented by this driver, so no TLS option is exposed in the connection UI.
 - The driver does not translate SQL to q. Write q/qSQL directly.
-- Arbitrary editor queries are sent exactly as written. The driver does not add hidden limits; the kdb panel reduces webview transfer and DOM work, but it does not stream q execution. Canceling a kdb-panel run closes the client IPC connection and stops VS Code waiting, but already-running server-side work may continue depending on q/gateway behavior. The SQLTools target renders however many rows SQLTools receives.
+- Root-namespace editor queries are sent exactly as written. Non-root connection namespaces wrap the raw run in that namespace and restore the previous q namespace afterwards. The driver does not add hidden limits; the kdb panel reduces webview transfer and DOM work, but it does not stream q execution. Canceling a kdb-panel run closes the client IPC connection and stops VS Code waiting, but already-running server-side work may continue depending on q/gateway behavior. The SQLTools target renders however many rows SQLTools receives.
 - SQLTools' "execute current query" command uses SQL-style semicolon/`GO` statement parsing before the driver is called. For q expressions that contain semicolons inside lambdas, projections, or multi-statement expressions, select the intended q text and run `kdb+: Run Selection` so it is sent as one q expression.
-- kdb has namespaces rather than SQL catalogs and schemas; SQLTools `database`/`schema` fields are mapped to the selected q namespace.
+- kdb has namespaces rather than SQL catalogs and schemas; SQLTools `database`/`schema` fields are mapped to the selected q namespace for object explorer metadata and raw editor runs.
 - Root q views are listed with protected `views[]`; non-root view listing depends on what the target process returns for protected `system "b <namespace>"`.
 - The default automated E2E suite uses a mock q IPC server so it can run without licensed kdb+/q tooling. Use `npm run test:live-kdb` for an opt-in live q process smoke test.
 

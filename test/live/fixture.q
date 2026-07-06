@@ -39,6 +39,7 @@ edge:([]
 calcSpread:{[bid;ask] ask-bid}
 
 \d .analytics
+a:42
 nsTrade:([] sym:`IBM`ORCL; size:10 20i)
 nsFunc:{[x] x+1}
 \d .

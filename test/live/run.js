@@ -48,6 +48,30 @@ async function runLiveAssertions(port) {
     await promptDriver.close();
   }
 
+  const analyticsDriver = createDriver(port, 10, '.analytics');
+  try {
+    const rawValue = await assertCompletesWithin('analytics raw query', () => analyticsDriver.rawQuery('a'), 2000);
+    assert.strictEqual(rawValue, 42);
+
+    const analyticsScalar = await assertCompletesWithin('analytics SQLTools query', () => analyticsDriver.query('a'), 2000);
+    assert.strictEqual(analyticsScalar[0].error, undefined);
+    assert.deepStrictEqual(analyticsScalar[0].cols, ['value']);
+    assert.strictEqual(analyticsScalar[0].results[0].value, 42);
+
+    await assert.rejects(
+      () => analyticsDriver.rawQuery('missingSymbolForSqltoolsTest'),
+      error => error &&
+        error.name === 'KdbQError' &&
+        /missingSymbolForSqltoolsTest/.test(error.message)
+    );
+    const missing = await analyticsDriver.query('missingSymbolForSqltoolsTest');
+    assert.strictEqual(missing[0].error, true);
+    assert.strictEqual(missing[0].rawError.name, 'KdbQError');
+    assert.match(missing[0].rawError.message, /missingSymbolForSqltoolsTest/);
+  } finally {
+    await analyticsDriver.close();
+  }
+
   const driver = createDriver(port);
 
   try {
@@ -281,14 +305,14 @@ async function runLiveAssertions(port) {
   }
 }
 
-function createDriver(port, connectionTimeout = 10) {
+function createDriver(port, connectionTimeout = 10, database = '.') {
   return new KdbDriver({
     id: 'live-q',
     name: 'Live q',
     driver: 'KDB',
     server: '127.0.0.1',
     port,
-    database: '.',
+    database,
     username: '',
     password: '',
     connectionTimeout,

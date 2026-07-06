@@ -764,6 +764,7 @@
 <p>The default is <code>kdbPanel</code>.</p>
 <p><code>Run Selection</code> sends the selected text exactly. If there is no selection, it sends the current physical line. A blank current line shows the normal no-code warning. <code>Run q Script</code> sends the whole active editor document.</p>
 <p>For multi-line, lambda, or blank-line-bounded block execution, select the intended text explicitly or use the explicit <code>Run Selection or q Block</code> commands. The q Block commands send the selected text exactly, or the current q block bounded by blank lines when there is no selection.</p>
+<p>The SQLTools connection <code>database</code> field is the q namespace for raw editor runs. With <code>database: "."</code>, text is sent as written. With <code>database: ".analytics"</code>, text is evaluated inside <code>.analytics</code> and the previous q namespace is restored afterwards, so <code>a</code> resolves as <code>.analytics.a</code>.</p>
 <h2 id="canceling-a-run">Canceling a run</h2>
 <p>While a q run is loading in the kdb results panel, use the panel's <code>Cancel</code> button or the VS Code progress notification's cancel action. Cancellation stops VS Code waiting for that run, tears down the active q IPC connection, and leaves a clear canceled message in the panel.</p>
 <p>Cancellation is best-effort on the server side. Depending on the q process, gateway, and query being executed, work that already reached the server may continue briefly or complete even after the client connection is closed.</p>

@@ -106,8 +106,8 @@ export async function activate(extContext: ExtensionContext): Promise<IDriverExt
   api.registerPlugin(plugin);
   return {
     driverName: DRIVER_NAME || displayName,
-    parseBeforeSaveConnection: ({ connInfo }) => connInfo,
-    parseBeforeEditConnection: ({ connInfo }) => connInfo,
+    parseBeforeSaveConnection: (arg: any = {}) => normalizeConnection(arg && arg.connInfo),
+    parseBeforeEditConnection: (arg: any = {}) => normalizeConnection(arg && arg.connInfo),
     driverAliases: DRIVER_ALIASES,
   };
 }
@@ -393,11 +393,11 @@ async function executeQTextInKdbPanel(
         async (_progress, token) => {
           const tokenCancel = token.onCancellationRequested(cancelRun);
           try {
-            const client = await driver.open();
+            await driver.open();
             if (cancelRequested) {
               throw cancellationError;
             }
-            return await client.query(text);
+            return await driver.rawQuery(text);
           } finally {
             tokenCancel.dispose();
           }
@@ -556,17 +556,27 @@ async function resolvePassword(connection: IConnection<any>): Promise<IConnectio
   return { ...connection, password };
 }
 
-function isKdbConnection(connection: Partial<IConnection<any>>): boolean {
-  return DRIVER_ALIASES.some(alias => connection.driver === alias.value) || connection.driver === DRIVER_NAME;
+export function isKdbConnection(connection?: Partial<IConnection<any>> | null): boolean {
+  if (!connection) {
+    return false;
+  }
+  const driver = normalizeDriverValue(connection.driver);
+  return DRIVER_ALIASES.some(alias => normalizeDriverValue(alias.value) === driver) ||
+    driver === normalizeDriverValue(DRIVER_NAME);
 }
 
-function normalizeConnection(connection: Partial<IConnection<any>>): IConnection<any> {
+export function normalizeConnection(connection?: Partial<IConnection<any>> | null): IConnection<any> {
+  const safeConnection = connection || {};
   return {
-    ...connection,
-    id: connection.id || connectionId(connection),
-    name: connection.name || 'kdb',
+    ...safeConnection,
+    id: safeConnection.id || connectionId(safeConnection),
+    name: safeConnection.name || 'kdb',
     driver: DRIVER_ID,
-    username: connection.username || '',
+    server: safeConnection.server || 'localhost',
+    port: safeConnection.port || 5000,
+    database: safeConnection.database || '.',
+    connectionTimeout: safeConnection.connectionTimeout ?? (safeConnection as any).timeout ?? 30,
+    username: safeConnection.username || '',
   } as IConnection<any>;
 }
 
@@ -579,6 +589,10 @@ function connectionId(connection: Partial<IConnection<any>>): string {
     parts.push(String(connection.server || 'localhost'), String(connection.database || '.'));
   }
   return parts.join('|').replace(/\./g, ':').replace(/\//g, '\\');
+}
+
+function normalizeDriverValue(driver: unknown): string {
+  return String(driver || '').trim().toLowerCase();
 }
 
 function kdbPanelFailureMessages(error: Error, connection: IConnection<any>, text: string): string[] {

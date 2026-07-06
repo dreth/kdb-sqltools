@@ -598,6 +598,17 @@
 </li>
 
         <li class="md-nav__item">
+  <a href="#sqltools-edit-form-crashes" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        SQLTools edit form crashes
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
   <a href="#sqltools-session-filenames" class="md-nav__link">
     <span class="md-ellipsis">
 
@@ -769,6 +780,17 @@
 </li>
 
         <li class="md-nav__item">
+  <a href="#sqltools-edit-form-crashes" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        SQLTools edit form crashes
+
+    </span>
+  </a>
+
+</li>
+
+        <li class="md-nav__item">
   <a href="#sqltools-session-filenames" class="md-nav__link">
     <span class="md-ellipsis">
 
@@ -890,6 +912,9 @@
 <span class="p">}</span>
 </code></pre></div>
 <p>If your q process requires IPC credentials, set <code>username</code> and <code>password</code>.</p>
+<p>If the error is <code>read ECONNRESET</code>, something accepted the TCP connection but did not complete the q IPC handshake or reset the socket. Common causes are the wrong port/process, q IPC auth rejection, a proxy/gateway reset, or a stale q process. Restarting q can clear a wedged IPC listener, but the extension should also time out and show the host, port, and phase that failed.</p>
+<h2 id="sqltools-edit-form-crashes">SQLTools edit form crashes</h2>
+<p>If editing a saved connection fails with a stale-driver error such as <code>cannot read properties of null reading driver name</code>, open <code>settings.json</code> and set that connection's <code>driver</code> to <code>KDB</code>. You can also run <code>kdb+: Copy Example Global Connection Settings</code> and merge the example connection into <code>sqltools.connections</code>.</p>
 <h2 id="sqltools-session-filenames">SQLTools session filenames</h2>
 <p>SQLTools' own result target may open <code>*.session.sql</code> editor documents. That filename is owned by SQLTools, not this driver.</p>
 <p>Use the kdb panel target to avoid the SQLTools session-file workflow:</p>
@@ -911,8 +936,8 @@ npm<span class="w"> </span>run<span class="w"> </span>test:live-kdb
 <h2 id="other-limitations">Other limitations</h2>
 <ul>
 <li>TLS is not implemented by this driver.</li>
-<li>The driver sends q text as written; it does not translate ANSI SQL.</li>
-<li>kdb has namespaces rather than SQL catalogs and schemas. SQLTools <code>database</code> and <code>schema</code> fields map to q namespaces.</li>
+<li>The driver sends root-namespace q text as written; non-root connection namespaces wrap raw editor runs in that q namespace. It does not translate ANSI SQL.</li>
+<li>kdb has namespaces rather than SQL catalogs and schemas. SQLTools <code>database</code> and <code>schema</code> fields map to q namespaces for object explorer metadata and raw editor runs.</li>
 <li>Root q views are listed with protected <code>views[]</code>; non-root view listing depends on what the target process returns for protected <code>system "b &lt;namespace&gt;"</code>.</li>
 </ul>
 <h2 id="public-docs-show-raw-markdown">Public docs show raw Markdown</h2>

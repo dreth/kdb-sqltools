@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Hardened saved connection normalization so stale kdb driver aliases edit/save back to `KDB` instead of crashing SQLTools connection forms.
+- Added connect/handshake/query phase diagnostics and pending-connect cleanup for q IPC resets, closed ports, and stalled handshakes.
+- Made raw editor runs honor the connection `database` namespace in both SQLTools and kdb panel result paths while preserving q errors.
+
 ## 0.3.13
 
 - Restored primary `Run Selection` / `Ctrl+Enter` fallback to the current physical line when nothing is selected.
