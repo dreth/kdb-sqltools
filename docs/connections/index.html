@@ -813,7 +813,7 @@
 </tr>
 <tr>
 <td><code>database</code></td>
-<td>q namespace used by the SQLTools object explorer. Use <code>.</code> for root or values such as <code>.analytics</code>.</td>
+<td>q namespace used by the SQLTools object explorer and raw editor runs. Use <code>.</code> for root or values such as <code>.analytics</code>.</td>
 </tr>
 <tr>
 <td><code>connectionTimeout</code></td>
@@ -821,7 +821,8 @@
 </tr>
 </tbody>
 </table>
-<p>Queries are sent exactly as written to the remote q process. The driver does not add a schema prefix to arbitrary query text.</p>
+<p>For <code>database: "."</code>, raw q text is sent as written. For a namespace such as <code>.analytics</code>, raw editor runs are evaluated inside that namespace and the previous q namespace is restored afterwards.</p>
+<p>If SQLTools' edit form crashes on stale driver metadata, set the connection's <code>driver</code> to <code>KDB</code> in <code>settings.json</code> or run <code>kdb+: Copy Example Global Connection Settings</code> and merge the example.</p>
 <h2 id="user-vs-workspace-settings">User vs workspace settings</h2>
 <p>SQLTools can save connections at User, Workspace, or Workspace Folder scope.</p>
 <ul>

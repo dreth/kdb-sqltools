@@ -41,10 +41,12 @@ If you already have SQLTools connections, add only the connection object to the 
 | `port` | q IPC port, such as `5000`. |
 | `username` | Optional q IPC username. Leave empty when not required. |
 | `password` | Optional q IPC password. Leave empty when not required. |
-| `database` | q namespace used by the SQLTools object explorer. Use `.` for root or values such as `.analytics`. |
+| `database` | q namespace used by the SQLTools object explorer and raw editor runs. Use `.` for root or values such as `.analytics`. |
 | `connectionTimeout` | Connection timeout in seconds. |
 
-Queries are sent exactly as written to the remote q process. The driver does not add a schema prefix to arbitrary query text.
+For `database: "."`, raw q text is sent as written. For a namespace such as `.analytics`, raw editor runs are evaluated inside that namespace and the previous q namespace is restored afterwards.
+
+If SQLTools' edit form crashes on stale driver metadata, set the connection's `driver` to `KDB` in `settings.json` or run `kdb+: Copy Example Global Connection Settings` and merge the example.
 
 ## User vs workspace settings
 

@@ -1,8 +1,8 @@
 import AbstractDriver from '@sqltools/base-driver';
 import { IConnectionDriver, MConnectionExplorer, NSDatabase, ContextValue, Arg0, IQueryOptions } from '@sqltools/types';
 import { v4 as generateId } from 'uuid';
-import queries, { normalizeNamespace, qSymbolExpression, TableParams } from './queries';
-import { KdbIpcClient, KdbIpcError, qValueToTabular } from './q-ipc';
+import queries, { normalizeNamespace, qString, qSymbolExpression, TableParams } from './queries';
+import { KdbIpcClient, KdbIpcError, QValue, qValueToTabular } from './q-ipc';
 import { endPerfSpan, perfSpan } from '../perf';
 
 interface KdbDriverOptions {
@@ -115,14 +115,22 @@ export default class KdbDriver extends AbstractDriver<DriverLib, DriverOptions> 
     }
   }
 
-  public query: (typeof AbstractDriver)['prototype']['query'] = async (query, opt = {}) => {
+  public async rawQuery(query: string): Promise<QValue> {
     const client = await this.open();
+    return client.query(this.rawQueryText(query));
+  }
+
+  public rawQueryText(query: string): string {
+    return queryInNamespace(query, this.namespaceFor());
+  }
+
+  public query: (typeof AbstractDriver)['prototype']['query'] = async (query, opt = {}) => {
     const text = query.toString();
     const started = Date.now();
     const querySpan = perfSpan('driver.query.total', { queryChars: text.length });
 
     try {
-      const value = await client.query(text);
+      const value = await this.rawQuery(text);
       const tabularSpan = perfSpan('driver.qValueToTabular', { queryChars: text.length });
       let tabular: ReturnType<typeof qValueToTabular> | undefined;
       try {
@@ -526,6 +534,22 @@ function placeholderForQType(type: string): string {
     t: '00:00:00.000',
   };
   return values[normalized] || '::';
+}
+
+export function queryInNamespace(query: string, namespace?: string): string {
+  const normalizedNamespace = normalizeNamespace(namespace);
+  if (!normalizedNamespace || normalizedNamespace === '.') {
+    return query;
+  }
+
+  return `{[ns;src]
+  old:string system "d";
+  system "d ",ns;
+  r:@[{(1b;value x)};src;{(0b;x)}];
+  system "d ",old;
+  if[not first r;'last r];
+  last r
+}[${qString(normalizedNamespace)};${qString(query)}]`;
 }
 
 function toError(error: unknown): Error {

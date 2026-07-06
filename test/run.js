@@ -2,10 +2,12 @@ const assert = require('assert');
 const fs = require('fs');
 const http = require('http');
 const Module = require('module');
+const net = require('net');
 const path = require('path');
 const JSZip = require('jszip');
 
 const {
+  KdbIpcClient,
   deserializeQMessage,
   deserializeQPayload,
   QIpcReceiveBuffer,
@@ -62,7 +64,10 @@ const {
   LocalDataServer,
   randomLocalDataServerToken,
 } = require('../out/local-data-server');
-const KdbDriver = require('../out/ls/driver').default;
+const driverModule = require('../out/ls/driver');
+const KdbDriver = driverModule.default;
+const { queryInNamespace } = driverModule;
+const { DRIVER_ALIASES, DRIVER_ID } = require('../out/constants');
 const { ContextValue } = require('@sqltools/types');
 const connectionSchema = require('../connection.schema.json');
 const packageJson = require('../package.json');
@@ -256,6 +261,66 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(coalescedReceiveBuffer.bufferedBytes, 0);
   assert.strictEqual(coalescedReceiveBuffer.copyCount, 0);
   assert.strictEqual(coalescedReceiveBuffer.copyBytesCopied, 0);
+
+  const closedServer = net.createServer();
+  await listenTestServer(closedServer, 0, LOCAL_DATA_SERVER_HOST);
+  const closedPort = closedServer.address().port;
+  await closeTestServer(closedServer);
+  await assertCompletesWithin(
+    'closed q IPC port connect failure',
+    () => assert.rejects(
+      () => new KdbIpcClient({ host: LOCAL_DATA_SERVER_HOST, port: closedPort, timeoutMs: 250 }).connect(),
+      error => error &&
+        /kdb\+ connect failed/.test(error.message) &&
+        error.message.includes(`${LOCAL_DATA_SERVER_HOST}:${closedPort}`) &&
+        /ECONNREFUSED/.test(error.message)
+    ),
+    1000
+  );
+
+  const resetServer = net.createServer(socket => socket.destroy());
+  await listenTestServer(resetServer, 0, LOCAL_DATA_SERVER_HOST);
+  const resetPort = resetServer.address().port;
+  try {
+    await assertCompletesWithin(
+      'q IPC handshake reset failure',
+      () => assert.rejects(
+        () => new KdbIpcClient({ host: LOCAL_DATA_SERVER_HOST, port: resetPort, timeoutMs: 250 }).connect(),
+        error => error &&
+          /kdb\+ handshake failed/.test(error.message) &&
+          error.message.includes(`${LOCAL_DATA_SERVER_HOST}:${resetPort}`)
+      ),
+      1000
+    );
+  } finally {
+    await closeTestServer(resetServer);
+  }
+
+  const heldSockets = [];
+  const stalledServer = net.createServer(socket => heldSockets.push(socket));
+  await listenTestServer(stalledServer, 0, LOCAL_DATA_SERVER_HOST);
+  const stalledPort = stalledServer.address().port;
+  const accepted = new Promise(resolve => stalledServer.once('connection', resolve));
+  const stalledClient = new KdbIpcClient({ host: LOCAL_DATA_SERVER_HOST, port: stalledPort, timeoutMs: 5000 });
+  const stalledConnect = stalledClient.connect();
+  try {
+    await accepted;
+    stalledClient.cancel(new Error('test cancel'));
+    await assertCompletesWithin(
+      'q IPC connect cancel failure',
+      () => assert.rejects(
+        () => stalledConnect,
+        error => error &&
+          /kdb\+ (connect|handshake) failed/.test(error.message) &&
+          error.message.includes(`${LOCAL_DATA_SERVER_HOST}:${stalledPort}`) &&
+          /test cancel/.test(error.message)
+      ),
+      1000
+    );
+  } finally {
+    heldSockets.forEach(socket => socket.destroy());
+    await closeTestServer(stalledServer);
+  }
 
   const qScript = '.data.gateway:{[query;db]\n  neg[gatewayHandle](`.gw.asyncExec;query;db)\n}\n\nselect from trade';
   assert.strictEqual(currentQBlock(qScript, 1), '.data.gateway:{[query;db]\n  neg[gatewayHandle](`.gw.asyncExec;query;db)\n}');
@@ -1431,7 +1496,16 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(kdbResultsSource.includes('XLSX_MAX_ROWS = 1048576'), true);
   assert.strictEqual(kdbResultsSource.includes('XLSX_MAX_COLUMNS = 16384'), true);
   assert.strictEqual(extensionSource.includes('driver.query(text, {})'), false, 'kdbPanel execution must not use row-object SQLTools driver.query');
-  assert.strictEqual(extensionSource.includes('client.query(text)'), true, 'kdbPanel execution should query IPC directly');
+  assert.strictEqual(extensionSource.includes('client.query(text)'), false, 'kdbPanel execution should use shared raw driver query handling');
+  assert.strictEqual(extensionSource.includes('return await driver.rawQuery(text);'), true, 'kdbPanel execution should use shared raw driver query handling');
+  assert.strictEqual(extensionSource.includes('parseBeforeSaveConnection: (arg: any = {}) => normalizeConnection(arg && arg.connInfo)'), true);
+  assert.strictEqual(extensionSource.includes('parseBeforeEditConnection: (arg: any = {}) => normalizeConnection(arg && arg.connInfo)'), true);
+  assert.strictEqual(extensionSource.includes('export function isKdbConnection(connection?: Partial<IConnection<any>> | null): boolean'), true);
+  assert.strictEqual(extensionSource.includes('export function normalizeConnection(connection?: Partial<IConnection<any>> | null): IConnection<any>'), true);
+  assert.strictEqual(extensionSource.includes("driver: DRIVER_ID"), true);
+  assert.strictEqual(extensionSource.includes("server: safeConnection.server || 'localhost'"), true);
+  assert.strictEqual(extensionSource.includes("port: safeConnection.port || 5000"), true);
+  assert.strictEqual(extensionSource.includes("database: safeConnection.database || '.'"), true);
   const kdbPanelRunSource = extensionSource.slice(
     extensionSource.indexOf('async function executeQTextInKdbPanel'),
     extensionSource.indexOf('async function pickKdbConnection')
@@ -1456,13 +1530,19 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(extensionSource.includes('function connectionLabel(connection: Partial<IConnection<any>>): string'), true);
   assert.strictEqual(extensionSource.includes('function qTextPreview(text: string, maxChars = 240): string'), true);
   assert.strictEqual(qIpcSource.includes('private connectingSocket: net.Socket | null = null;'), true);
+  assert.strictEqual(qIpcSource.includes('private pendingConnect: PendingConnect | null = null;'), true);
+  assert.strictEqual(qIpcSource.includes('private connectPromise: Promise<void> | null = null;'), true);
   assert.strictEqual(qIpcSource.includes("public cancel(error: Error = new KdbIpcError('kdb+ query canceled')): void"), true);
   assert.strictEqual(qIpcSource.includes('this.failAll(error);'), true);
+  assert.strictEqual(qIpcSource.includes('this.rejectConnecting(error);'), true);
+  assert.strictEqual(qIpcSource.includes("private phaseError(phase: KdbIpcPhase, error: Error): KdbIpcError"), true);
   assert.strictEqual(qIpcSource.includes('socket.destroy(error);'), true);
   assert.strictEqual(qIpcSource.includes('connectingSocket.destroy(error);'), true);
   assert.strictEqual(driverSource.includes("public cancel(error: Error = new KdbIpcError('kdb+ query canceled')): void"), true);
   assert.strictEqual(driverSource.includes('this.openingClient.cancel(error);'), true);
   assert.strictEqual(driverSource.includes('client => client.cancel(error)'), true);
+  assert.strictEqual(driverSource.includes('public async rawQuery(query: string): Promise<QValue>'), true);
+  assert.strictEqual(driverSource.includes('export function queryInNamespace(query: string, namespace?: string): string'), true);
   assert.strictEqual(readmeSource.includes('Cancellable kdb results panel runs'), true);
   assert.strictEqual(runningDocsSource.includes('## Canceling a run'), true);
   assert.strictEqual(resultsDocsSource.includes('## Cancel running queries'), true);
@@ -2279,6 +2359,20 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(normalizeNamespace('.analytics'), '.analytics');
   assert.strictEqual(qString('a"b\\c'), '"a\\"b\\\\c"');
   assert.strictEqual(qSymbolExpression('.analytics.trade'), '`$".analytics.trade"');
+  assert.strictEqual(DRIVER_ID, 'KDB');
+  assert.deepStrictEqual(
+    DRIVER_ALIASES.map(alias => alias.value),
+    ['KDB', 'kdb+', 'kdb', 'kdb-sqltools', 'DanielAlonso.kdb-sqltools']
+  );
+  assert.strictEqual(queryInNamespace('1+1', '.'), '1+1');
+  assert.strictEqual(queryInNamespace('1+1', ''), '1+1');
+  const namespacedQuery = queryInNamespace('1+1', '.analytics');
+  assert.ok(namespacedQuery.includes('old:string system "d"'));
+  assert.ok(namespacedQuery.includes('system "d ",ns'));
+  assert.ok(namespacedQuery.includes('r:@[{(1b;value x)};src;{(0b;x)}]'));
+  assert.ok(namespacedQuery.includes('if[not first r;\'last r]'));
+  assert.ok(namespacedQuery.endsWith('}[".analytics";"1+1"]'));
+  assert.strictEqual(createDriver().rawQueryText('1+1'), namespacedQuery);
 
   const fetchRecords = queries.fetchRecords({
     namespace: '.analytics',
@@ -2624,6 +2718,22 @@ function httpGet(url) {
       request.destroy(new Error(`GET timed out: ${url}`));
     });
   });
+}
+
+async function assertCompletesWithin(label, operation, timeoutMs) {
+  let timeout;
+  try {
+    return await Promise.race([
+      operation(),
+      new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(`${label} did not complete within ${timeoutMs} ms`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
 }
 
 function createDriver() {

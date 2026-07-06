@@ -16,6 +16,8 @@ The default is `kdbPanel`.
 
 For multi-line, lambda, or blank-line-bounded block execution, select the intended text explicitly or use the explicit `Run Selection or q Block` commands. The q Block commands send the selected text exactly, or the current q block bounded by blank lines when there is no selection.
 
+The SQLTools connection `database` field is the q namespace for raw editor runs. With `database: "."`, text is sent as written. With `database: ".analytics"`, text is evaluated inside `.analytics` and the previous q namespace is restored afterwards, so `a` resolves as `.analytics.a`.
+
 ## Canceling a run
 
 While a q run is loading in the kdb results panel, use the panel's `Cancel` button or the VS Code progress notification's cancel action. Cancellation stops VS Code waiting for that run, tears down the active q IPC connection, and leaves a clear canceled message in the panel.

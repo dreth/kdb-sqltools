@@ -38,6 +38,12 @@ Then confirm the connection uses:
 
 If your q process requires IPC credentials, set `username` and `password`.
 
+If the error is `read ECONNRESET`, something accepted the TCP connection but did not complete the q IPC handshake or reset the socket. Common causes are the wrong port/process, q IPC auth rejection, a proxy/gateway reset, or a stale q process. Restarting q can clear a wedged IPC listener, but the extension should also time out and show the host, port, and phase that failed.
+
+## SQLTools edit form crashes
+
+If editing a saved connection fails with a stale-driver error such as `cannot read properties of null reading driver name`, open `settings.json` and set that connection's `driver` to `KDB`. You can also run `kdb+: Copy Example Global Connection Settings` and merge the example connection into `sqltools.connections`.
+
 ## SQLTools session filenames
 
 SQLTools' own result target may open `*.session.sql` editor documents. That filename is owned by SQLTools, not this driver.
@@ -76,8 +82,8 @@ npm run test:live-kdb
 ## Other limitations
 
 - TLS is not implemented by this driver.
-- The driver sends q text as written; it does not translate ANSI SQL.
-- kdb has namespaces rather than SQL catalogs and schemas. SQLTools `database` and `schema` fields map to q namespaces.
+- The driver sends root-namespace q text as written; non-root connection namespaces wrap raw editor runs in that q namespace. It does not translate ANSI SQL.
+- kdb has namespaces rather than SQL catalogs and schemas. SQLTools `database` and `schema` fields map to q namespaces for object explorer metadata and raw editor runs.
 - Root q views are listed with protected `views[]`; non-root view listing depends on what the target process returns for protected `system "b <namespace>"`.
 
 ## Public docs show raw Markdown
