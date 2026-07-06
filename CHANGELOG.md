@@ -1,5 +1,9 @@
 # Change Log
 
+## Unreleased
+
+- Restored visible `Run Selection` commands and default keybindings to selected text or current physical line behavior, and added explicit `Run Selection or q Block` commands for blank-line-bounded q blocks.
+
 ## 0.3.12
 
 - qText/text display strategies now render in a plain text viewer rather than a one-cell grid.
@@ -9,7 +13,7 @@
 ## 0.3.11
 
 - Fixed Settings drawer horizontal overflow and wrapping.
-- Fixed Run Selection to use selected text or the current q block instead of only the current physical line.
+- Kept Run Selection behavior on selected text or the current physical line.
 - Added a promptness regression probe for local q `testConnection` and `query`.
 
 ## 0.3.10

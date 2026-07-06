@@ -46,15 +46,21 @@
     "onCommand:sqltools.*",
     "onCommand:kdb-sqltools.runFile",
     "onCommand:kdb-sqltools.runSelectionOrBlock",
+    "onCommand:kdb-sqltools.runSelectionOrCurrentBlock",
     "onCommand:kdb-sqltools.runFileInSqltools",
     "onCommand:kdb-sqltools.runSelectionOrBlockInSqltools",
+    "onCommand:kdb-sqltools.runSelectionOrCurrentBlockInSqltools",
     "onCommand:kdb-sqltools.runFileInKdbPanel",
     "onCommand:kdb-sqltools.runSelectionOrBlockInKdbPanel",
+    "onCommand:kdb-sqltools.runSelectionOrCurrentBlockInKdbPanel",
     "onCommand:kdb-sqltools.runFileInKdbPanelReplace",
     "onCommand:kdb-sqltools.runSelectionOrBlockInKdbPanelReplace",
+    "onCommand:kdb-sqltools.runSelectionOrCurrentBlockInKdbPanelReplace",
     "onCommand:kdb-sqltools.runSelectionOrBlockAndChart",
+    "onCommand:kdb-sqltools.runSelectionOrCurrentBlockAndChart",
     "onCommand:kdb-sqltools.runFileInNewKdbPanel",
     "onCommand:kdb-sqltools.runSelectionOrBlockInNewKdbPanel",
+    "onCommand:kdb-sqltools.runSelectionOrCurrentBlockInNewKdbPanel",
     "onCommand:kdb-sqltools.openKeyboardShortcuts",
     "onCommand:kdb-sqltools.copyExampleConnectionSettings",
     "onCommand:kdb-sqltools.copyKdbPanelSelection",
@@ -94,6 +100,12 @@
         "icon": "$(run)"
       },
       {
+        "command": "kdb-sqltools.runSelectionOrCurrentBlock",
+        "title": "Run Selection or q Block",
+        "category": "kdb+",
+        "icon": "$(run)"
+      },
+      {
         "command": "kdb-sqltools.runFileInSqltools",
         "title": "Run q Script in SQLTools Results",
         "category": "kdb+",
@@ -102,6 +114,12 @@
       {
         "command": "kdb-sqltools.runSelectionOrBlockInSqltools",
         "title": "Run Selection in SQLTools Results",
+        "category": "kdb+",
+        "icon": "$(run)"
+      },
+      {
+        "command": "kdb-sqltools.runSelectionOrCurrentBlockInSqltools",
+        "title": "Run Selection or q Block in SQLTools Results",
         "category": "kdb+",
         "icon": "$(run)"
       },
@@ -118,6 +136,12 @@
         "icon": "$(table)"
       },
       {
+        "command": "kdb-sqltools.runSelectionOrCurrentBlockInKdbPanel",
+        "title": "Run Selection or q Block in kdb Panel",
+        "category": "kdb+",
+        "icon": "$(table)"
+      },
+      {
         "command": "kdb-sqltools.runFileInKdbPanelReplace",
         "title": "Run q Script in kdb Panel (Replace)",
         "category": "kdb+",
@@ -130,8 +154,20 @@
         "icon": "$(replace)"
       },
       {
+        "command": "kdb-sqltools.runSelectionOrCurrentBlockInKdbPanelReplace",
+        "title": "Run Selection or q Block in kdb Panel (Replace)",
+        "category": "kdb+",
+        "icon": "$(replace)"
+      },
+      {
         "command": "kdb-sqltools.runSelectionOrBlockAndChart",
         "title": "Run Selection and Chart",
+        "category": "kdb+",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "kdb-sqltools.runSelectionOrCurrentBlockAndChart",
+        "title": "Run Selection or q Block and Chart",
         "category": "kdb+",
         "icon": "$(graph)"
       },
@@ -144,6 +180,12 @@
       {
         "command": "kdb-sqltools.runSelectionOrBlockInNewKdbPanel",
         "title": "Run Selection in New kdb Panel",
+        "category": "kdb+",
+        "icon": "$(new-file)"
+      },
+      {
+        "command": "kdb-sqltools.runSelectionOrCurrentBlockInNewKdbPanel",
+        "title": "Run Selection or q Block in New kdb Panel",
         "category": "kdb+",
         "icon": "$(new-file)"
       },
@@ -243,7 +285,17 @@
           "group": "navigation"
         },
         {
+          "command": "kdb-sqltools.runSelectionOrCurrentBlock",
+          "when": "editorLangId == q || resourceExtname == .q",
+          "group": "navigation"
+        },
+        {
           "command": "kdb-sqltools.runSelectionOrBlockInKdbPanelReplace",
+          "when": "editorLangId == q || resourceExtname == .q",
+          "group": "navigation"
+        },
+        {
+          "command": "kdb-sqltools.runSelectionOrCurrentBlockInKdbPanelReplace",
           "when": "editorLangId == q || resourceExtname == .q",
           "group": "navigation"
         },
@@ -253,7 +305,17 @@
           "group": "navigation"
         },
         {
+          "command": "kdb-sqltools.runSelectionOrCurrentBlockInNewKdbPanel",
+          "when": "editorLangId == q || resourceExtname == .q",
+          "group": "navigation"
+        },
+        {
           "command": "kdb-sqltools.runSelectionOrBlockAndChart",
+          "when": "editorLangId == q || resourceExtname == .q",
+          "group": "navigation"
+        },
+        {
+          "command": "kdb-sqltools.runSelectionOrCurrentBlockAndChart",
           "when": "editorLangId == q || resourceExtname == .q",
           "group": "navigation"
         },
@@ -273,11 +335,19 @@
           "when": "editorLangId == q || resourceExtname == .q"
         },
         {
+          "command": "kdb-sqltools.runSelectionOrCurrentBlock",
+          "when": "editorLangId == q || resourceExtname == .q"
+        },
+        {
           "command": "kdb-sqltools.runFileInSqltools",
           "when": "editorLangId == q || resourceExtname == .q"
         },
         {
           "command": "kdb-sqltools.runSelectionOrBlockInSqltools",
+          "when": "editorLangId == q || resourceExtname == .q"
+        },
+        {
+          "command": "kdb-sqltools.runSelectionOrCurrentBlockInSqltools",
           "when": "editorLangId == q || resourceExtname == .q"
         },
         {
@@ -289,6 +359,10 @@
           "when": "editorLangId == q || resourceExtname == .q"
         },
         {
+          "command": "kdb-sqltools.runSelectionOrCurrentBlockInKdbPanel",
+          "when": "editorLangId == q || resourceExtname == .q"
+        },
+        {
           "command": "kdb-sqltools.runFileInKdbPanelReplace",
           "when": "editorLangId == q || resourceExtname == .q"
         },
@@ -297,7 +371,15 @@
           "when": "editorLangId == q || resourceExtname == .q"
         },
         {
+          "command": "kdb-sqltools.runSelectionOrCurrentBlockInKdbPanelReplace",
+          "when": "editorLangId == q || resourceExtname == .q"
+        },
+        {
           "command": "kdb-sqltools.runSelectionOrBlockAndChart",
+          "when": "editorLangId == q || resourceExtname == .q"
+        },
+        {
+          "command": "kdb-sqltools.runSelectionOrCurrentBlockAndChart",
           "when": "editorLangId == q || resourceExtname == .q"
         },
         {
@@ -306,6 +388,10 @@
         },
         {
           "command": "kdb-sqltools.runSelectionOrBlockInNewKdbPanel",
+          "when": "editorLangId == q || resourceExtname == .q"
+        },
+        {
+          "command": "kdb-sqltools.runSelectionOrCurrentBlockInNewKdbPanel",
           "when": "editorLangId == q || resourceExtname == .q"
         },
         {

@@ -12,7 +12,9 @@ The extension executes q text. It does not parse or translate SQL.
 
 The default is `kdbPanel`.
 
-`Run Selection` sends the selected text exactly. If there is no selection, it sends the current q block bounded by blank lines. A blank current line shows the normal no-code warning. `Run q Script` sends the whole active editor document.
+`Run Selection` sends the selected text exactly. If there is no selection, it sends the current physical line. A blank current line shows the normal no-code warning. `Run q Script` sends the whole active editor document.
+
+For multi-line, lambda, or blank-line-bounded block execution, select the intended text explicitly or use the explicit `Run Selection or q Block` commands. The q Block commands send the selected text exactly, or the current q block bounded by blank lines when there is no selection.
 
 ## Canceling a run
 
@@ -27,7 +29,7 @@ Cancellation is best-effort on the server side. Depending on the q process, gate
 | `Ctrl+Enter` | `Cmd+Enter` | `kdb+: Run Selection in kdb Panel (Replace)` | Reuse the current or first kdb result tab. |
 | `Ctrl+Shift+Enter` | `Cmd+Shift+Enter` | `kdb+: Run Selection in New kdb Panel` | Open an independent kdb result tab. |
 | `Ctrl+Alt+Enter` | `Cmd+Alt+Enter` | `kdb+: Run q Script in kdb Panel (Replace)` | Run the whole file and reuse an existing kdb result tab. |
-| `Ctrl+Alt+C` | `Cmd+Alt+C` | `kdb+: Run Selection and Chart` | Run the selection, or current q block, in replace mode and open/render the chart panel. |
+| `Ctrl+Alt+C` | `Cmd+Alt+C` | `kdb+: Run Selection and Chart` | Run the selected text, or current physical line, in replace mode and open/render the chart panel. |
 
 Use `kdb+: Open kdb Keyboard Shortcuts` to edit these bindings in VS Code. Extension settings cannot define arbitrary VS Code keybindings.
 
@@ -37,15 +39,21 @@ Use `kdb+: Open kdb Keyboard Shortcuts` to edit these bindings in VS Code. Exten
 | --- | --- |
 | `kdb+: Run q Script` | Configured default target. |
 | `kdb+: Run Selection` | Configured default target. |
+| `kdb+: Run Selection or q Block` | Configured default target, with q-block fallback. |
 | `kdb+: Run q Script in kdb Panel` | kdb panel, using configured default run mode. |
 | `kdb+: Run Selection in kdb Panel` | kdb panel, using configured default run mode. |
+| `kdb+: Run Selection or q Block in kdb Panel` | kdb panel, using configured default run mode, with q-block fallback. |
 | `kdb+: Run q Script in kdb Panel (Replace)` | kdb panel, replace mode. |
 | `kdb+: Run Selection in kdb Panel (Replace)` | kdb panel, replace mode. |
+| `kdb+: Run Selection or q Block in kdb Panel (Replace)` | kdb panel, replace mode, with q-block fallback. |
 | `kdb+: Run Selection and Chart` | kdb panel, replace mode, then chart restored or default eligible columns. |
+| `kdb+: Run Selection or q Block and Chart` | kdb panel, replace mode, with q-block fallback, then chart restored or default eligible columns. |
 | `kdb+: Run q Script in New kdb Panel` | kdb panel, new result tab. |
 | `kdb+: Run Selection in New kdb Panel` | kdb panel, new result tab. |
+| `kdb+: Run Selection or q Block in New kdb Panel` | kdb panel, new result tab, with q-block fallback. |
 | `kdb+: Run q Script in SQLTools Results` | SQLTools result grid. |
 | `kdb+: Run Selection in SQLTools Results` | SQLTools result grid. |
+| `kdb+: Run Selection or q Block in SQLTools Results` | SQLTools result grid, with q-block fallback. |
 | `kdb Results: Start Local Data Server` | Active kdb panel's current result, opt-in local server. |
 | `kdb Results: Stop Local Data Server` | Stops the active kdb panel's local server. |
 | `kdb Results: Copy Local Data Server current.csv URL` | Copies the active kdb panel server's CSV URL. |

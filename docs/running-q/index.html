@@ -762,7 +762,8 @@
 <div class="highlight"><pre><span></span><code><span class="nt">&quot;kdb-sqltools.results.target&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;kdbPanel&quot;</span>
 </code></pre></div>
 <p>The default is <code>kdbPanel</code>.</p>
-<p><code>Run Selection</code> sends the selected text exactly. If there is no selection, it sends the current q block bounded by blank lines. A blank current line shows the normal no-code warning. <code>Run q Script</code> sends the whole active editor document.</p>
+<p><code>Run Selection</code> sends the selected text exactly. If there is no selection, it sends the current physical line. A blank current line shows the normal no-code warning. <code>Run q Script</code> sends the whole active editor document.</p>
+<p>For multi-line, lambda, or blank-line-bounded block execution, select the intended text explicitly or use the explicit <code>Run Selection or q Block</code> commands. The q Block commands send the selected text exactly, or the current q block bounded by blank lines when there is no selection.</p>
 <h2 id="canceling-a-run">Canceling a run</h2>
 <p>While a q run is loading in the kdb results panel, use the panel's <code>Cancel</code> button or the VS Code progress notification's cancel action. Cancellation stops VS Code waiting for that run, tears down the active q IPC connection, and leaves a clear canceled message in the panel.</p>
 <p>Cancellation is best-effort on the server side. Depending on the q process, gateway, and query being executed, work that already reached the server may continue briefly or complete even after the client connection is closed.</p>
@@ -799,7 +800,7 @@
 <td><code>Ctrl+Alt+C</code></td>
 <td><code>Cmd+Alt+C</code></td>
 <td><code>kdb+: Run Selection and Chart</code></td>
-<td>Run the selection, or current q block, in replace mode and open/render the chart panel.</td>
+<td>Run the selected text, or current physical line, in replace mode and open/render the chart panel.</td>
 </tr>
 </tbody>
 </table>
@@ -822,12 +823,20 @@
 <td>Configured default target.</td>
 </tr>
 <tr>
+<td><code>kdb+: Run Selection or q Block</code></td>
+<td>Configured default target, with q-block fallback.</td>
+</tr>
+<tr>
 <td><code>kdb+: Run q Script in kdb Panel</code></td>
 <td>kdb panel, using configured default run mode.</td>
 </tr>
 <tr>
 <td><code>kdb+: Run Selection in kdb Panel</code></td>
 <td>kdb panel, using configured default run mode.</td>
+</tr>
+<tr>
+<td><code>kdb+: Run Selection or q Block in kdb Panel</code></td>
+<td>kdb panel, using configured default run mode, with q-block fallback.</td>
 </tr>
 <tr>
 <td><code>kdb+: Run q Script in kdb Panel (Replace)</code></td>
@@ -838,8 +847,16 @@
 <td>kdb panel, replace mode.</td>
 </tr>
 <tr>
+<td><code>kdb+: Run Selection or q Block in kdb Panel (Replace)</code></td>
+<td>kdb panel, replace mode, with q-block fallback.</td>
+</tr>
+<tr>
 <td><code>kdb+: Run Selection and Chart</code></td>
 <td>kdb panel, replace mode, then chart restored or default eligible columns.</td>
+</tr>
+<tr>
+<td><code>kdb+: Run Selection or q Block and Chart</code></td>
+<td>kdb panel, replace mode, with q-block fallback, then chart restored or default eligible columns.</td>
 </tr>
 <tr>
 <td><code>kdb+: Run q Script in New kdb Panel</code></td>
@@ -850,12 +867,20 @@
 <td>kdb panel, new result tab.</td>
 </tr>
 <tr>
+<td><code>kdb+: Run Selection or q Block in New kdb Panel</code></td>
+<td>kdb panel, new result tab, with q-block fallback.</td>
+</tr>
+<tr>
 <td><code>kdb+: Run q Script in SQLTools Results</code></td>
 <td>SQLTools result grid.</td>
 </tr>
 <tr>
 <td><code>kdb+: Run Selection in SQLTools Results</code></td>
 <td>SQLTools result grid.</td>
+</tr>
+<tr>
+<td><code>kdb+: Run Selection or q Block in SQLTools Results</code></td>
+<td>SQLTools result grid, with q-block fallback.</td>
 </tr>
 <tr>
 <td><code>kdb Results: Start Local Data Server</code></td>
