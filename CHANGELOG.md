@@ -2,7 +2,11 @@
 
 ## Unreleased
 
-- Restored visible `Run Selection` commands and default keybindings to selected text or current physical line behavior, and added explicit `Run Selection or q Block` commands for blank-line-bounded q blocks.
+## 0.3.13
+
+- Restored primary `Run Selection` / `Ctrl+Enter` fallback to the current physical line when nothing is selected.
+- Added explicit `Run Selection or q Block` commands for blank-line-bounded block execution.
+- kdb panel errors now include the connection and exact query preview.
 
 ## 0.3.12
 
