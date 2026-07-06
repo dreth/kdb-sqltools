@@ -80,13 +80,15 @@ The `kdb+: Copy Example Global Connection Settings` command copies this User-set
 
 ## kdb Results Panel
 
-The kdb results panel is the default target for `kdb+: Run q Script` and `kdb+: Run Selection`. It runs through this extension's direct driver path and avoids SQLTools `*.session.sql` editor documents. `Run Selection` sends the selected text exactly; with no selection, it sends the current q block bounded by blank lines. A blank current line uses the normal no-code warning.
+The kdb results panel is the default target for `kdb+: Run q Script` and `kdb+: Run Selection`. It runs through this extension's direct driver path and avoids SQLTools `*.session.sql` editor documents. `Run Selection` sends the selected text exactly; with no selection, it sends the current physical line. A blank current line uses the normal no-code warning. For multi-line, lambda, or blank-line-bounded block execution, select the text explicitly or use the explicit `Run Selection or q Block` commands.
 
 Default kdb-panel runs open a new result tab unless you set `"kdb-sqltools.results.kdbPanel.defaultRunMode": "replace"`. Explicit commands are also available:
 
 - `kdb+: Run Selection in kdb Panel (Replace)` reuses the current or first existing kdb result tab.
 - `kdb+: Run Selection in New kdb Panel` opens an independent result tab.
-- `kdb+: Run Selection and Chart` reuses the current or first existing kdb result tab, runs the selection or current q block, and opens/renders the chart panel.
+- `kdb+: Run Selection and Chart` reuses the current or first existing kdb result tab, runs the selected text or current physical line, and opens/renders the chart panel.
+- `kdb+: Run Selection or q Block in kdb Panel (Replace)` reuses the current or first existing kdb result tab and falls back to the current q block when there is no selection.
+- `kdb+: Run Selection or q Block and Chart` reuses the current or first existing kdb result tab, falls back to the current q block when there is no selection, and opens/renders the chart panel.
 - `kdb+: Run q Script in kdb Panel (Replace)` reuses an existing kdb result tab.
 - `kdb+: Run q Script in New kdb Panel` opens an independent result tab.
 

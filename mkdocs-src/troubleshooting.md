@@ -50,7 +50,7 @@ Use the kdb panel target to avoid the SQLTools session-file workflow:
 
 ## q expressions with semicolons
 
-SQLTools' execute-current-query flow uses SQL-style statement parsing before the driver is called. For q expressions that contain semicolons inside lambdas, projections, or multi-statement expressions, select the intended q text and run `kdb+: Run Selection` so it is sent as one q expression.
+SQLTools' execute-current-query flow uses SQL-style statement parsing before the driver is called. For q expressions that contain semicolons inside lambdas, projections, or multi-statement expressions, select the intended q text and run `kdb+: Run Selection` so it is sent as one q expression. With no selection, `Run Selection` sends only the current physical line; use `kdb+: Run Selection or q Block` when you want the current q block bounded by blank lines.
 
 ## Huge results and exports
 

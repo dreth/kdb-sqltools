@@ -24,7 +24,7 @@ X-axis labels are auto-thinned to keep dense numeric and timestamp axes readable
 
 Chart selections are saved after a successful render using the visible column names and order as the signature. Later results with the same compatible columns restore chart type, x column, y columns, and group-by selection, including after VS Code restarts.
 
-`kdb+: Run Selection and Chart` runs the selected text, or the current q block when nothing is selected, into the kdb panel and opens/renders the chart panel. It uses restored chart selections when available; otherwise it renders the current default eligible columns. Replacing a result in a panel that already had a rendered chart also re-renders the chart when the new result columns are compatible.
+`kdb+: Run Selection and Chart` runs the selected text, or the current physical line when nothing is selected, into the kdb panel and opens/renders the chart panel. `kdb+: Run Selection or q Block and Chart` uses the current q block bounded by blank lines when nothing is selected. Both commands use restored chart selections when available; otherwise they render the current default eligible columns. Replacing a result in a panel that already had a rendered chart also re-renders the chart when the new result columns are compatible.
 
 Supported chart types are intentionally compact: line, scatter, step, bar, and box. Scatter uses points without line clutter. Step uses stepped lines. Bar uses uPlot bar paths. Box plots compute per-x/bucket min, quartiles, median, and max for selected numeric y columns and draw those summaries over the sampled x axis. Pie, heatmap, dashboard, streaming, and pan features are not implemented.
 

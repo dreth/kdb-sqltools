@@ -995,13 +995,13 @@ function panelFormatElapsedMs(milliseconds, display) {
   const chartingSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'charting.ts'), 'utf8');
   const perfSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'perf.ts'), 'utf8');
   const readmeSource = fs.readFileSync(path.join(__dirname, '..', 'README.md'), 'utf8');
-  const chartingDocsSource = fs.readFileSync(path.join(__dirname, '..', 'docs', 'charting.md'), 'utf8');
-  const localDataDocsSource = fs.readFileSync(path.join(__dirname, '..', 'docs', 'local-data-server.md'), 'utf8');
-  const copyExportDocsSource = fs.readFileSync(path.join(__dirname, '..', 'docs', 'copy-export.md'), 'utf8');
-  const runningDocsSource = fs.readFileSync(path.join(__dirname, '..', 'docs', 'running-q.md'), 'utf8');
-  const resultsDocsSource = fs.readFileSync(path.join(__dirname, '..', 'docs', 'results-panel.md'), 'utf8');
-  const settingsDocsSource = fs.readFileSync(path.join(__dirname, '..', 'docs', 'settings.md'), 'utf8');
-  const troubleshootingDocsSource = fs.readFileSync(path.join(__dirname, '..', 'docs', 'troubleshooting.md'), 'utf8');
+  const chartingDocsSource = fs.readFileSync(path.join(__dirname, '..', 'mkdocs-src', 'charting.md'), 'utf8');
+  const localDataDocsSource = fs.readFileSync(path.join(__dirname, '..', 'mkdocs-src', 'local-data-server.md'), 'utf8');
+  const copyExportDocsSource = fs.readFileSync(path.join(__dirname, '..', 'mkdocs-src', 'copy-export.md'), 'utf8');
+  const runningDocsSource = fs.readFileSync(path.join(__dirname, '..', 'mkdocs-src', 'running-q.md'), 'utf8');
+  const resultsDocsSource = fs.readFileSync(path.join(__dirname, '..', 'mkdocs-src', 'results-panel.md'), 'utf8');
+  const settingsDocsSource = fs.readFileSync(path.join(__dirname, '..', 'mkdocs-src', 'settings.md'), 'utf8');
+  const troubleshootingDocsSource = fs.readFileSync(path.join(__dirname, '..', 'mkdocs-src', 'troubleshooting.md'), 'utf8');
   const packageSource = fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8');
   const commandTitle = commandId => packageJson.contributes.commands.find(command => command.command === commandId).title;
   const keybinding = commandId => packageJson.contributes.keybindings.find(binding => binding.command === commandId);
@@ -1229,9 +1229,9 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('id="exportFormat"'), false);
   assert.strictEqual(resultsPanelSource.includes("format === 'xlsx'"), true);
   assert.strictEqual(/parquet/i.test([resultsPanelSource, kdbResultsSource, readmeSource, packageSource].join('\n')), false);
-  assert.strictEqual(packageJson.contributes.commands.some(command => /Run q Block|Run block/.test(command.title)), false);
   assert.strictEqual(commandTitle('kdb-sqltools.runFile'), 'Run q Script');
   assert.strictEqual(commandTitle('kdb-sqltools.runSelectionOrBlock'), 'Run Selection');
+  assert.strictEqual(commandTitle('kdb-sqltools.runSelectionOrCurrentBlock'), 'Run Selection or q Block');
   assert.ok(packageJson.contributes.menus['editor/title'].some(menu =>
     menu.command === 'kdb-sqltools.runSelectionOrBlock' &&
       menu.when === 'editorLangId == q || resourceExtname == .q'
@@ -1239,13 +1239,18 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(packageJson.contributes.menus['editor/title'].some(menu => menu.command === 'kdb-sqltools.runFile'), false);
   assert.strictEqual(commandTitle('kdb-sqltools.runFileInSqltools'), 'Run q Script in SQLTools Results');
   assert.strictEqual(commandTitle('kdb-sqltools.runSelectionOrBlockInSqltools'), 'Run Selection in SQLTools Results');
+  assert.strictEqual(commandTitle('kdb-sqltools.runSelectionOrCurrentBlockInSqltools'), 'Run Selection or q Block in SQLTools Results');
   assert.strictEqual(commandTitle('kdb-sqltools.runFileInKdbPanel'), 'Run q Script in kdb Panel');
   assert.strictEqual(commandTitle('kdb-sqltools.runSelectionOrBlockInKdbPanel'), 'Run Selection in kdb Panel');
+  assert.strictEqual(commandTitle('kdb-sqltools.runSelectionOrCurrentBlockInKdbPanel'), 'Run Selection or q Block in kdb Panel');
   assert.strictEqual(commandTitle('kdb-sqltools.runFileInKdbPanelReplace'), 'Run q Script in kdb Panel (Replace)');
   assert.strictEqual(commandTitle('kdb-sqltools.runSelectionOrBlockInKdbPanelReplace'), 'Run Selection in kdb Panel (Replace)');
+  assert.strictEqual(commandTitle('kdb-sqltools.runSelectionOrCurrentBlockInKdbPanelReplace'), 'Run Selection or q Block in kdb Panel (Replace)');
   assert.strictEqual(commandTitle('kdb-sqltools.runSelectionOrBlockAndChart'), 'Run Selection and Chart');
+  assert.strictEqual(commandTitle('kdb-sqltools.runSelectionOrCurrentBlockAndChart'), 'Run Selection or q Block and Chart');
   assert.strictEqual(commandTitle('kdb-sqltools.runFileInNewKdbPanel'), 'Run q Script in New kdb Panel');
   assert.strictEqual(commandTitle('kdb-sqltools.runSelectionOrBlockInNewKdbPanel'), 'Run Selection in New kdb Panel');
+  assert.strictEqual(commandTitle('kdb-sqltools.runSelectionOrCurrentBlockInNewKdbPanel'), 'Run Selection or q Block in New kdb Panel');
   assert.strictEqual(commandTitle('kdb-sqltools.openKeyboardShortcuts'), 'Open kdb Keyboard Shortcuts');
   assert.strictEqual(commandTitle('kdb-sqltools.copyKdbPanelSelection'), 'Copy');
   assert.strictEqual(commandTitle('kdb-sqltools.openLocalDataServer'), 'Start Local Data Server');
@@ -1261,9 +1266,25 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(keybinding('kdb-sqltools.runFileInKdbPanelReplace').key, 'ctrl+alt+enter');
   assert.strictEqual(keybinding('kdb-sqltools.runSelectionOrBlockAndChart').key, 'ctrl+alt+c');
   assert.strictEqual(keybinding('kdb-sqltools.runSelectionOrBlockAndChart').mac, 'cmd+alt+c');
+  assert.strictEqual(keybinding('kdb-sqltools.runSelectionOrCurrentBlockInKdbPanelReplace'), undefined);
+  assert.strictEqual(keybinding('kdb-sqltools.runSelectionOrCurrentBlockAndChart'), undefined);
   assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.runSelectionOrBlockInNewKdbPanel'));
   assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.runSelectionOrBlockInKdbPanelReplace'));
   assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.runSelectionOrBlockAndChart'));
+  assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.runSelectionOrCurrentBlock'));
+  assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.runSelectionOrCurrentBlockInSqltools'));
+  assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.runSelectionOrCurrentBlockInKdbPanel'));
+  assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.runSelectionOrCurrentBlockInKdbPanelReplace'));
+  assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.runSelectionOrCurrentBlockAndChart'));
+  assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.runSelectionOrCurrentBlockInNewKdbPanel'));
+  assert.ok(packageJson.contributes.menus.commandPalette.some(menu =>
+    menu.command === 'kdb-sqltools.runSelectionOrCurrentBlock' &&
+      menu.when === 'editorLangId == q || resourceExtname == .q'
+  ));
+  assert.ok(packageJson.contributes.menus.commandPalette.some(menu =>
+    menu.command === 'kdb-sqltools.runSelectionOrCurrentBlockAndChart' &&
+      menu.when === 'editorLangId == q || resourceExtname == .q'
+  ));
   assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.copyKdbPanelSelection'));
   assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.openLocalDataServer'));
   assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.stopLocalDataServer'));
@@ -1274,21 +1295,44 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(extensionSource.includes("'kdb-sqltools.runSelectionOrBlockInNewKdbPanel'"), true);
   assert.strictEqual(extensionSource.includes("'kdb-sqltools.runSelectionOrBlockInKdbPanelReplace'"), true);
   assert.strictEqual(extensionSource.includes("'kdb-sqltools.runSelectionOrBlockAndChart'"), true);
-  assert.strictEqual(extensionSource.includes('runQSelectionOrLine'), false);
-  assert.strictEqual(extensionSource.includes('selectedTextOrCurrentLine'), false);
-  assert.strictEqual(extensionSource.includes("'kdb-sqltools.runSelectionOrBlock', () => runQSelectionOrBlock(extContext)"), true);
-  assert.strictEqual(extensionSource.includes("'kdb-sqltools.runSelectionOrBlockInSqltools', () => runQSelectionOrBlock(extContext, 'sqltools')"), true);
-  assert.strictEqual(extensionSource.includes("'kdb-sqltools.runSelectionOrBlockInKdbPanel', () => runQSelectionOrBlock(extContext, 'kdbPanel')"), true);
-  assert.strictEqual(extensionSource.includes("'kdb-sqltools.runSelectionOrBlockInKdbPanelReplace', () => runQSelectionOrBlock(extContext, 'kdbPanel', 'replace')"), true);
-  assert.strictEqual(extensionSource.includes("'kdb-sqltools.runSelectionOrBlockInNewKdbPanel', () => runQSelectionOrBlock(extContext, 'kdbPanel', 'new')"), true);
+  assert.strictEqual(extensionSource.includes('runQSelectionOrLine'), true);
+  assert.strictEqual(extensionSource.includes('selectedTextOrCurrentLine'), true);
+  assert.strictEqual(extensionSource.includes("'kdb-sqltools.runSelectionOrBlock', () => runQSelectionOrLine(extContext)"), true);
+  assert.strictEqual(extensionSource.includes("'kdb-sqltools.runSelectionOrBlockInSqltools', () => runQSelectionOrLine(extContext, 'sqltools')"), true);
+  assert.strictEqual(extensionSource.includes("'kdb-sqltools.runSelectionOrBlockInKdbPanel', () => runQSelectionOrLine(extContext, 'kdbPanel')"), true);
+  assert.strictEqual(extensionSource.includes("'kdb-sqltools.runSelectionOrBlockInKdbPanelReplace', () => runQSelectionOrLine(extContext, 'kdbPanel', 'replace')"), true);
+  assert.strictEqual(extensionSource.includes("'kdb-sqltools.runSelectionOrBlockInNewKdbPanel', () => runQSelectionOrLine(extContext, 'kdbPanel', 'new')"), true);
+  assert.strictEqual(extensionSource.includes("'kdb-sqltools.runSelectionOrCurrentBlock', () => runQSelectionOrBlock(extContext)"), true);
+  assert.strictEqual(extensionSource.includes("'kdb-sqltools.runSelectionOrCurrentBlockInSqltools', () => runQSelectionOrBlock(extContext, 'sqltools')"), true);
+  assert.strictEqual(extensionSource.includes("'kdb-sqltools.runSelectionOrCurrentBlockInKdbPanel', () => runQSelectionOrBlock(extContext, 'kdbPanel')"), true);
+  assert.strictEqual(extensionSource.includes("'kdb-sqltools.runSelectionOrCurrentBlockInKdbPanelReplace', () => runQSelectionOrBlock(extContext, 'kdbPanel', 'replace')"), true);
+  assert.strictEqual(extensionSource.includes("'kdb-sqltools.runSelectionOrCurrentBlockInNewKdbPanel', () => runQSelectionOrBlock(extContext, 'kdbPanel', 'new')"), true);
+  const runSelectionOrLineSource = extensionSource.slice(
+    extensionSource.indexOf('async function runQSelectionOrLine'),
+    extensionSource.indexOf('async function runQSelectionOrBlock')
+  );
+  assert.strictEqual(runSelectionOrLineSource.includes('selectedTextOrCurrentLine(editor.document.getText(), selectionText, editor.selection.active.line)'), true);
+  assert.strictEqual(runSelectionOrLineSource.includes('selectedTextOrCurrentBlock'), false);
   const runSelectionOrBlockSource = extensionSource.slice(
     extensionSource.indexOf('async function runQSelectionOrBlock'),
-    extensionSource.indexOf('async function runQSelectionOrBlockAndChart')
+    extensionSource.indexOf('async function runQSelectionOrLineAndChart')
   );
   assert.strictEqual(runSelectionOrBlockSource.includes('selectedTextOrCurrentBlock(editor.document.getText(), selectionText, editor.selection.active.line)'), true);
+  assert.strictEqual(runSelectionOrBlockSource.includes('selectedTextOrCurrentLine'), false);
   assert.strictEqual(runSelectionOrBlockSource.includes('autoChart'), false);
-  assert.strictEqual(extensionSource.includes('selectedTextOrCurrentBlock(editor.document.getText(), selectionText, editor.selection.active.line)'), true);
-  assert.strictEqual(sourceOccurrences(extensionSource, '{ autoChart: true }'), 1);
+  const runSelectionOrLineAndChartSource = extensionSource.slice(
+    extensionSource.indexOf('async function runQSelectionOrLineAndChart'),
+    extensionSource.indexOf('async function runQSelectionOrBlockAndChart')
+  );
+  assert.strictEqual(runSelectionOrLineAndChartSource.includes('selectedTextOrCurrentLine(editor.document.getText(), selectionText, editor.selection.active.line)'), true);
+  assert.strictEqual(runSelectionOrLineAndChartSource.includes('{ autoChart: true }'), true);
+  const runSelectionOrBlockAndChartSource = extensionSource.slice(
+    extensionSource.indexOf('async function runQSelectionOrBlockAndChart'),
+    extensionSource.indexOf('async function executeQText')
+  );
+  assert.strictEqual(runSelectionOrBlockAndChartSource.includes('selectedTextOrCurrentBlock(editor.document.getText(), selectionText, editor.selection.active.line)'), true);
+  assert.strictEqual(runSelectionOrBlockAndChartSource.includes('{ autoChart: true }'), true);
+  assert.strictEqual(sourceOccurrences(extensionSource, '{ autoChart: true }'), 2);
   assert.strictEqual(extensionSource.includes("await executeQText(extContext, text, 'kdbPanel', 'replace', { autoChart: true });"), true);
   assert.strictEqual(extensionSource.includes('{ autoChart: options.autoChart === true }'), true);
   assert.strictEqual(extensionSource.includes("'kdb-sqltools.copyKdbPanelSelection'"), true);
@@ -1402,9 +1446,15 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(kdbPanelRunSource.includes('canceled: true'), true);
   assert.ok(
     kdbPanelRunSource.indexOf('if (cancelRequested || error === cancellationError)') <
-      kdbPanelRunSource.indexOf('vscode.window.showErrorMessage(err.message)'),
+      kdbPanelRunSource.indexOf("vscode.window.showErrorMessage(failureMessages.join(' '))"),
     'expected user cancellation should return before error toast'
   );
+  assert.strictEqual(kdbPanelRunSource.includes('const failureMessages = kdbPanelFailureMessages(err, connection, text);'), true);
+  assert.strictEqual(extensionSource.includes('function kdbPanelFailureMessages(error: Error, connection: IConnection<any>, text: string): string[]'), true);
+  assert.strictEqual(extensionSource.includes('`q failed on ${connectionLabel(connection)}.`'), true);
+  assert.strictEqual(extensionSource.includes('`Query: ${qTextPreview(text)}`'), true);
+  assert.strictEqual(extensionSource.includes('function connectionLabel(connection: Partial<IConnection<any>>): string'), true);
+  assert.strictEqual(extensionSource.includes('function qTextPreview(text: string, maxChars = 240): string'), true);
   assert.strictEqual(qIpcSource.includes('private connectingSocket: net.Socket | null = null;'), true);
   assert.strictEqual(qIpcSource.includes("public cancel(error: Error = new KdbIpcError('kdb+ query canceled')): void"), true);
   assert.strictEqual(qIpcSource.includes('this.failAll(error);'), true);
@@ -1720,12 +1770,16 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(chartingDocsSource.includes('Press the top-level `Chart` button.'), true);
   assert.strictEqual(chartingDocsSource.includes('kdb+: Run Selection and Chart'), true);
   assert.strictEqual(runningDocsSource.includes('| `Ctrl+Alt+C` | `Cmd+Alt+C` | `kdb+: Run Selection and Chart`'), true);
+  assert.strictEqual(runningDocsSource.includes('If there is no selection, it sends the current q block bounded by blank lines'), false);
+  assert.strictEqual(readmeSource.includes('with no selection, it sends the current q block bounded by blank lines'), false);
+  assert.strictEqual(runningDocsSource.includes('If there is no selection, it sends the current physical line'), true);
+  assert.strictEqual(runningDocsSource.includes('Run Selection or q Block'), true);
   assert.strictEqual(runningDocsSource.includes('current q block bounded by blank lines'), true);
-  assert.strictEqual(runningDocsSource.includes('current physical line'), false);
+  assert.strictEqual(runningDocsSource.includes('For multi-line, lambda, or blank-line-bounded block execution'), true);
+  assert.strictEqual(readmeSource.includes('with no selection, it sends the current physical line'), true);
+  assert.strictEqual(readmeSource.includes('Run Selection or q Block'), true);
   assert.strictEqual(readmeSource.includes('The top toolbar is a single compact line'), true);
   assert.strictEqual(readmeSource.includes('`Settings` contains collapsible sections for view controls, search, hidden columns, output defaults, and `Data server` controls'), true);
-  assert.strictEqual(readmeSource.includes('current q block bounded by blank lines'), true);
-  assert.strictEqual(readmeSource.includes('current physical line'), false);
   assert.strictEqual(chartingDocsSource.includes('PNG export saves the rendered uPlot canvas'), true);
   assert.strictEqual(chartingDocsSource.includes('X-axis labels are auto-thinned'), true);
   assert.strictEqual(chartingDocsSource.includes('dense numeric and timestamp axes readable'), true);
