@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- qText plain text output now renders normal list/object results fully by default, with only a large character safety cap for very large output.
+
 ## 0.3.14
 
 - Hardened SQLTools connection edit/save for stale/null driver metadata.
