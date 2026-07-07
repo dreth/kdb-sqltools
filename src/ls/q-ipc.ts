@@ -90,8 +90,15 @@ interface NormalizedQTextFormatOptions {
   maxDepth: number;
   maxItems: number;
   maxChars: number;
+  remainingChars: number;
+  truncated: boolean;
   seen: Set<unknown>;
 }
+
+const DEFAULT_QTEXT_MAX_DEPTH = 16;
+const DEFAULT_QTEXT_MAX_ITEMS = Number.MAX_SAFE_INTEGER;
+const DEFAULT_QTEXT_MAX_CHARS = 1024 * 1024;
+const QTEXT_TRUNCATED_SUFFIX = '... [truncated]';
 
 export interface QTabularResult {
   cols: string[];
@@ -1002,18 +1009,20 @@ export function normalizeQResultDisplayStrategy(value: any, fallback: QResultDis
 }
 
 export function qValueToQText(value: QValue, options: QTextFormatOptions = {}): string {
-  const maxChars = positiveIntegerOption(options.maxChars, 12000);
+  const maxChars = positiveIntegerOption(options.maxChars, DEFAULT_QTEXT_MAX_CHARS);
   const state: NormalizedQTextFormatOptions = {
-    maxDepth: positiveIntegerOption(options.maxDepth, 4),
-    maxItems: positiveIntegerOption(options.maxItems, 40),
+    maxDepth: positiveIntegerOption(options.maxDepth, DEFAULT_QTEXT_MAX_DEPTH),
+    maxItems: positiveIntegerOption(options.maxItems, DEFAULT_QTEXT_MAX_ITEMS),
     maxChars,
+    remainingChars: maxChars,
+    truncated: false,
     seen: new Set<unknown>(),
   };
   const text = qTextValue(value, 0, state);
-  if (text.length <= maxChars) {
+  if (!state.truncated) {
     return text;
   }
-  return `${text.slice(0, Math.max(0, maxChars - 16))}... [truncated]`;
+  return `${text.slice(0, Math.max(0, maxChars - QTEXT_TRUNCATED_SUFFIX.length))}${QTEXT_TRUNCATED_SUFFIX}`;
 }
 
 export function qFunctionDisplayText(value: QFunction): string {
@@ -1045,47 +1054,34 @@ function qTextPanelResult(value: QValue, kind: string): QTextPanelResult {
 }
 
 function qTextValue(value: QValue, depth: number, options: NormalizedQTextFormatOptions): string {
+  if (options.truncated) {
+    return '';
+  }
+
   if (depth >= options.maxDepth) {
-    return qTextSummary(value);
+    return qTextSummary(value, options);
   }
 
-  if (value === null || value === undefined) {
-    return '0N';
-  }
-
-  if (typeof value === 'string') {
-    return qStringLiteral(value);
-  }
-
-  if (typeof value === 'number') {
-    if (value === Infinity) {
-      return '0w';
-    }
-    if (value === -Infinity) {
-      return '-0w';
-    }
-    return String(value);
-  }
-
-  if (typeof value === 'boolean') {
-    return value ? '1b' : '0b';
+  const primitiveText = qTextPrimitive(value);
+  if (primitiveText !== undefined) {
+    return qTextTake(primitiveText, options);
   }
 
   if (isQFunction(value)) {
-    return qFunctionDisplayText(value);
+    return qTextTake(qFunctionDisplayText(value), options);
   }
 
   if (isQTable(value)) {
-    return `[table ${qTableRowCount(value)}x${value.columns.length}]`;
+    return qTextTake(`[table ${qTableRowCount(value)}x${value.columns.length}]`, options);
   }
 
   if (isQKeyedTable(value)) {
-    return `[keyed table ${qKeyedTableRowCount(value)}x${value.columns.length}]`;
+    return qTextTake(`[keyed table ${qKeyedTableRowCount(value)}x${value.columns.length}]`, options);
   }
 
   if (isQDict(value)) {
     return withQTextSeen(value, options, () => {
-      return `${qTextValue(value.keys, depth + 1, options)}!${qTextValue(value.values, depth + 1, options)}`;
+      return qTextDict(value, depth, options);
     });
   }
 
@@ -1094,26 +1090,45 @@ function qTextValue(value: QValue, depth: number, options: NormalizedQTextFormat
   }
 
   if (isPlainObject(value)) {
-    return withQTextSeen(value, options, () => qTextPlainObject(value as unknown as { [key: string]: QValue }, depth, options));
+    return withQTextSeen(value as unknown as object, options, () => qTextPlainObject(value as unknown as { [key: string]: QValue }, depth, options));
   }
 
-  return String(value);
+  return qTextTake(String(value), options);
 }
 
 function qTextList(value: QValue[], depth: number, options: NormalizedQTextFormatOptions): string {
   if (value.length === 0) {
-    return '()';
+    return qTextTake('()', options);
   }
 
   const count = Math.min(value.length, options.maxItems);
-  const items = value.slice(0, count).map(item => qTextValue(item, depth + 1, options));
   const omitted = value.length - count;
   const simpleVector = value.every(isSimpleQTextVectorItem);
-  if (omitted > 0) {
-    items.push(`... ${omitted} more`);
+  const parts: string[] = [];
+
+  if (!simpleVector) {
+    parts.push(qTextTake('(', options));
   }
 
-  return simpleVector ? items.join(' ') : `(${items.join(';')})`;
+  for (let index = 0; index < count && !options.truncated; index += 1) {
+    if (index > 0) {
+      parts.push(qTextTake(simpleVector ? ' ' : ';', options));
+    }
+    parts.push(qTextValue(value[index], depth + 1, options));
+  }
+
+  if (omitted > 0 && !options.truncated) {
+    if (count > 0) {
+      parts.push(qTextTake(simpleVector ? ' ' : ';', options));
+    }
+    parts.push(qTextTake(`... ${omitted} more`, options));
+  }
+
+  if (!simpleVector && !options.truncated) {
+    parts.push(qTextTake(')', options));
+  }
+
+  return parts.join('');
 }
 
 function qTextPlainObject(
@@ -1123,40 +1138,67 @@ function qTextPlainObject(
 ): string {
   const keys = Object.keys(value);
   if (keys.length === 0) {
-    return '()';
+    return qTextTake('()', options);
   }
 
   const count = Math.min(keys.length, options.maxItems);
-  const parts = keys.slice(0, count).map(key => {
-    return `${qTextObjectKey(key)}:${qTextValue(value[key], depth + 1, options)}`;
-  });
   const omitted = keys.length - count;
-  if (omitted > 0) {
-    parts.push(`... ${omitted} more`);
+  const parts: string[] = [qTextTake('{', options)];
+
+  for (let index = 0; index < count && !options.truncated; index += 1) {
+    if (index > 0) {
+      parts.push(qTextTake(';', options));
+    }
+    const key = keys[index];
+    parts.push(qTextTake(`${qTextObjectKey(key)}:`, options));
+    parts.push(qTextValue(value[key], depth + 1, options));
   }
-  return `{${parts.join(';')}}`;
+
+  if (omitted > 0 && !options.truncated) {
+    if (count > 0) {
+      parts.push(qTextTake(';', options));
+    }
+    parts.push(qTextTake(`... ${omitted} more`, options));
+  }
+
+  if (!options.truncated) {
+    parts.push(qTextTake('}', options));
+  }
+
+  return parts.join('');
 }
 
-function qTextSummary(value: QValue): string {
+function qTextDict(value: QDict, depth: number, options: NormalizedQTextFormatOptions): string {
+  const parts = [qTextValue(value.keys, depth + 1, options)];
+  if (!options.truncated) {
+    parts.push(qTextTake('!', options));
+  }
+  if (!options.truncated) {
+    parts.push(qTextValue(value.values, depth + 1, options));
+  }
+  return parts.join('');
+}
+
+function qTextSummary(value: QValue, options: NormalizedQTextFormatOptions): string {
   if (isQFunction(value)) {
-    return qFunctionDisplayText(value);
+    return qTextTake(qFunctionDisplayText(value), options);
   }
   if (isQTable(value)) {
-    return `[table ${qTableRowCount(value)}x${value.columns.length}]`;
+    return qTextTake(`[table ${qTableRowCount(value)}x${value.columns.length}]`, options);
   }
   if (isQKeyedTable(value)) {
-    return `[keyed table ${qKeyedTableRowCount(value)}x${value.columns.length}]`;
+    return qTextTake(`[keyed table ${qKeyedTableRowCount(value)}x${value.columns.length}]`, options);
   }
   if (isQDict(value)) {
-    return `[dictionary ${value.entries.length} entries]`;
+    return qTextTake(`[dictionary ${value.entries.length} entries]`, options);
   }
   if (Array.isArray(value)) {
-    return `[list ${value.length} items]`;
+    return qTextTake(`[list ${value.length} items]`, options);
   }
   if (isPlainObject(value)) {
-    return `[object ${Object.keys(value as unknown as { [key: string]: QValue }).length} fields]`;
+    return qTextTake(`[object ${Object.keys(value as unknown as { [key: string]: QValue }).length} fields]`, options);
   }
-  return qTextValue(value, 0, { maxDepth: 1, maxItems: 1, maxChars: 256, seen: new Set<unknown>() });
+  return qTextTake(qTextPrimitive(value) || String(value), options);
 }
 
 function withQTextSeen(value: object, options: NormalizedQTextFormatOptions, render: () => string): string {
@@ -1173,6 +1215,46 @@ function withQTextSeen(value: object, options: NormalizedQTextFormatOptions, ren
 
 function qTextObjectKey(value: string): string {
   return /^[A-Za-z_][A-Za-z0-9_.]*$/.test(value) ? value : qStringLiteral(value);
+}
+
+function qTextPrimitive(value: QValue): string | undefined {
+  if (value === null || value === undefined) {
+    return '0N';
+  }
+  if (typeof value === 'string') {
+    return qStringLiteral(value);
+  }
+  if (typeof value === 'number') {
+    if (value === Infinity) {
+      return '0w';
+    }
+    if (value === -Infinity) {
+      return '-0w';
+    }
+    return String(value);
+  }
+  if (typeof value === 'boolean') {
+    return value ? '1b' : '0b';
+  }
+  return undefined;
+}
+
+function qTextTake(text: string, options: NormalizedQTextFormatOptions): string {
+  if (text.length === 0 || options.truncated) {
+    return '';
+  }
+  if (options.remainingChars <= 0) {
+    options.truncated = true;
+    return '';
+  }
+  if (text.length <= options.remainingChars) {
+    options.remainingChars -= text.length;
+    return text;
+  }
+  const partial = text.slice(0, options.remainingChars);
+  options.remainingChars = 0;
+  options.truncated = true;
+  return partial;
 }
 
 function qStringLiteral(value: string): string {

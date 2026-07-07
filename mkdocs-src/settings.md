@@ -31,7 +31,7 @@ Non-table result strategy values:
 | Value | Display |
 | --- | --- |
 | `grid` | Existing synthetic grid/table form. |
-| `qText` | Deterministic q-like output in a plain text viewer. |
+| `qText` | Deterministic q-like output in a plain text viewer. Normal list/object output is rendered fully; only very large text hits a character safety cap and shows `[truncated]`. |
 | `table` | Alias for `grid`. |
 | `text` | Alias for `qText`. |
 

@@ -2333,7 +2333,16 @@ function panelFormatElapsedMs(milliseconds, display) {
   const plainObjectText = qValueToColumnarPanel({ alpha: 1, beta: [2, 3] }, { objectDisplayStrategy: 'text' });
   assert.strictEqual(plainObjectText.mode, 'text');
   assert.strictEqual(plainObjectText.text, '{alpha:1;beta:2 3}');
+  const eightyItemQText = qValueToQText(Array.from({ length: 80 }, (_, index) => `table_${index}`));
+  assert.strictEqual(eightyItemQText.includes('more'), false);
+  assert.strictEqual(eightyItemQText.includes('"table_79"'), true);
   assert.strictEqual(qValueToQText([1, 2, 3], { maxItems: 2 }), '1 2 ... 1 more');
+  const moderatelyLargeQText = qValueToQText('x'.repeat(20000));
+  assert.strictEqual(moderatelyLargeQText.includes('[truncated]'), false);
+  assert.strictEqual(moderatelyLargeQText.length, 20002);
+  const explicitlyTruncatedQText = qValueToQText('x'.repeat(20000), { maxChars: 100 });
+  assert.strictEqual(explicitlyTruncatedQText.endsWith('... [truncated]'), true);
+  assert.strictEqual(explicitlyTruncatedQText.length <= 100, true);
   assert.strictEqual(qValueToQText({ a: { b: { c: 1 } } }, { maxDepth: 2 }), '{a:{b:[object 1 fields]}}');
 
   const lambdaWithSource = deserializeQPayload(Buffer.concat([int8(100), cString(''), charVector('{x+y}')]));

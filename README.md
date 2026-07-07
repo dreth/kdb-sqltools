@@ -163,6 +163,8 @@ kdb panel settings:
 
 `fontSize: 0` uses the VS Code default. Density can be `compact`, `standard`, or `comfortable`; each density has its own saved `cellWidth`, `rowHeight`, and `fontSize`. The legacy top-level size settings remain as fallbacks for existing user configuration. `elapsedTimeDisplay` can be `auto` or `milliseconds`. `arrayDisplayFormat` can be `commaSpace` (`1, 2, 3`), `space` (`1 2 3`), or `raw` (`[1 2 3]` where q-ish bracketed display is supported). `showRowIndex` controls the visible left row-number column; `includeHeaders` and `includeRowIndex` control default copy/export output. Text copy/export formats use display text; JSON and NDJSON keep structured values. Large-result and large-sort warnings can be suppressed from the panel or these settings. `copyExportConfirmCellThreshold` controls when panel copy/export asks for confirmation; `localDataServerFullExportCellLimit` controls the local data server hard limit for full `current.*` exports.
 
+For non-table result strategies, `qText` renders normal q-like list/object output fully in a plain text viewer, including metadata lists such as `tables[]`. It only applies a large character safety cap for very large text and marks capped output with `[truncated]`.
+
 ## Performance Trace
 
 Opt-in performance tracing logs query timing and memory snapshots to the VS Code extension host console with the `[kdb-sqltools:perf]` prefix. It helps diagnose large-query bottlenecks across IPC receive, result conversion, and panel slicing.
