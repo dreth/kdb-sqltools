@@ -2,7 +2,9 @@
 
 ## Unreleased
 
-- qText plain text output now renders normal list/object results fully by default, with only a large character safety cap for very large output.
+## 0.3.15
+
+- qText now renders normal list/object outputs fully by default, including `tables[]`-style metadata lists, with only a large character safety cap for very large output.
 
 ## 0.3.14
 
