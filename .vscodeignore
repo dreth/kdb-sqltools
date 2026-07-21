@@ -23,6 +23,7 @@ node_modules/uplot/dist/uPlot.iife.js
 node_modules/**/README.md
 node_modules/**/readme.md
 node_modules/**/.github/**
+node_modules/**/.jekyll-metadata
 node_modules/ssh2/examples/**
 node_modules/ssh2/test/**
 test/**

@@ -932,7 +932,7 @@
 <tbody>
 <tr>
 <td>Chart button</td>
-<td>Opens the uPlot-powered chart UI for the current visible result. After the chart panel is open, it provides compact chart type, x, optional <code>Group by</code>, and y controls for line, scatter, step, bar, and box charts, plus auto-thinned readable x-axis labels, cursor tooltip, drag zoom, debounced and explicit <code>Refine zoom</code>, reset zoom, splitter resize, legend toggling, persisted selections for matching column signatures, and PNG export after render. Changing controls leaves the old rendered chart visible until <code>Render</code> is pressed.</td>
+<td>Opens the uPlot-powered chart UI for the current visible result. Line, scatter, step, clustered bar, and box use numeric y selections; real candlestick charts instead show explicit, distinct numeric <code>Open</code>, <code>High</code>, <code>Low</code>, and <code>Close</code> selectors. All types use numeric/temporal x. <code>Group by</code> is available only for line, scatter, step, and bar; box and candlestick hide it with an explanatory status. The panel also provides auto-thinned readable x-axis labels, OHLC-aware tooltips, drag zoom, debounced and explicit <code>Refine zoom</code>, reset zoom, splitter resize, legend toggling, compatible selection persistence, and PNG export after render. Changing controls leaves the old rendered chart visible until <code>Render</code> is pressed.</td>
 </tr>
 <tr>
 <td>Settings menu</td>
@@ -1011,7 +1011,7 @@
 </tr>
 </tbody>
 </table>
-<p>Use <code>grid</code> for the existing synthetic table form, or <code>qText</code> for deterministic q-like output in a plain text viewer. Settings JSON also accepts <code>table</code> as an alias for <code>grid</code>, and <code>text</code> as an alias for <code>qText</code>.</p>
+<p>Use <code>grid</code> for the existing synthetic table form, or <code>qText</code> for deterministic q-like output in a plain text viewer. <code>qText</code> renders normal list/object output fully, including metadata lists such as <code>tables[]</code>, and only applies a large character safety cap for very large text; capped output is marked with <code>[truncated]</code>. Settings JSON also accepts <code>table</code> as an alias for <code>grid</code>, and <code>text</code> as an alias for <code>qText</code>.</p>
 <p>Example:</p>
 <div class="highlight"><pre><span></span><code><span class="p">{</span>
 <span class="w">  </span><span class="nt">&quot;kdb-sqltools.results.kdbPanel.dictionaryDisplayStrategy&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;qText&quot;</span><span class="p">,</span>

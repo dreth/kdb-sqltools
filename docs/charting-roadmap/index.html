@@ -575,10 +575,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
 
         <li class="md-nav__item">
-  <a href="#current-status" class="md-nav__link">
+  <a href="#current-architecture" class="md-nav__link">
     <span class="md-ellipsis">
 
-        Current status
+        Current architecture
 
     </span>
   </a>
@@ -586,10 +586,10 @@
 </li>
 
         <li class="md-nav__item">
-  <a href="#library-recommendation" class="md-nav__link">
+  <a href="#renderer-roles" class="md-nav__link">
     <span class="md-ellipsis">
 
-        Library recommendation
+        Renderer roles
 
     </span>
   </a>
@@ -597,10 +597,10 @@
 </li>
 
         <li class="md-nav__item">
-  <a href="#local-data-server" class="md-nav__link">
+  <a href="#shipped-data-reduction" class="md-nav__link">
     <span class="md-ellipsis">
 
-        Local data server
+        Shipped data reduction
 
     </span>
   </a>
@@ -608,22 +608,33 @@
 </li>
 
         <li class="md-nav__item">
-  <a href="#future-uplot-resampling-design" class="md-nav__link">
+  <a href="#current-validation-boundaries" class="md-nav__link">
     <span class="md-ellipsis">
 
-        Future uPlot resampling design
+        Current validation boundaries
 
     </span>
   </a>
 
-    <nav class="md-nav" aria-label="Future uPlot resampling design">
+</li>
+
+        <li class="md-nav__item">
+  <a href="#future-priorities" class="md-nav__link">
+    <span class="md-ellipsis">
+
+        Future priorities
+
+    </span>
+  </a>
+
+    <nav class="md-nav" aria-label="Future priorities">
       <ul class="md-nav__list">
 
           <li class="md-nav__item">
-  <a href="#data-model" class="md-nav__link">
+  <a href="#responsiveness-and-cancellation" class="md-nav__link">
     <span class="md-ellipsis">
 
-        Data model
+        Responsiveness and cancellation
 
     </span>
   </a>
@@ -631,10 +642,10 @@
 </li>
 
           <li class="md-nav__item">
-  <a href="#viewport-aware-sampling" class="md-nav__link">
+  <a href="#sampling-quality" class="md-nav__link">
     <span class="md-ellipsis">
 
-        Viewport-aware sampling
+        Sampling quality
 
     </span>
   </a>
@@ -642,10 +653,10 @@
 </li>
 
           <li class="md-nav__item">
-  <a href="#algorithms" class="md-nav__link">
+  <a href="#visual-and-accessibility-qa" class="md-nav__link">
     <span class="md-ellipsis">
 
-        Algorithms
+        Visual and accessibility QA
 
     </span>
   </a>
@@ -653,21 +664,10 @@
 </li>
 
           <li class="md-nav__item">
-  <a href="#edge-cases" class="md-nav__link">
+  <a href="#external-workflows" class="md-nav__link">
     <span class="md-ellipsis">
 
-        Edge cases
-
-    </span>
-  </a>
-
-</li>
-
-          <li class="md-nav__item">
-  <a href="#responsiveness" class="md-nav__link">
-    <span class="md-ellipsis">
-
-        Responsiveness
+        External workflows
 
     </span>
   </a>
@@ -680,21 +680,10 @@
 </li>
 
         <li class="md-nav__item">
-  <a href="#build-phases" class="md-nav__link">
+  <a href="#non-goals" class="md-nav__link">
     <span class="md-ellipsis">
 
-        Build phases
-
-    </span>
-  </a>
-
-</li>
-
-        <li class="md-nav__item">
-  <a href="#non-goals-for-the-first-built-in-chart" class="md-nav__link">
-    <span class="md-ellipsis">
-
-        Non-goals for the first built-in chart
+        Non-goals
 
     </span>
   </a>
@@ -724,130 +713,79 @@
 <h1 id="charting-roadmap">Charting Roadmap</h1>
 <div class="admonition note">
 <p class="admonition-title">Current status</p>
-<p>The first built-in line/time-series chart and the opt-in local data server have shipped. See <a href="../charting/">Charting</a> and <a href="../local-data-server/">Local data server</a> for user-facing behavior. This page now tracks future charting direction.</p>
+<p>Built-in line, scatter, step, clustered bar, box, and real OHLC candlestick charts have shipped, together with extension-side sampling and zoom refinement. See <a href="../charting/">Charting</a> for the supported controls and validation rules. This page tracks architectural boundaries and future work rather than promising additional chart types.</p>
 </div>
-<h2 id="current-status">Current status</h2>
-<p>The extension currently supports q execution, the kdb results panel, copy/export, an opt-in local data server, and a uPlot-powered built-in line/time-series chart with cursor tooltip, drag zoom, reset zoom, legend labels, series toggling, and PNG export.</p>
-<p>Future charting work should stay focused on large kdb time-series results rather than small demo datasets. The design should continue to avoid sending millions of raw points to a VS Code webview.</p>
-<h2 id="library-recommendation">Library recommendation</h2>
+<h2 id="current-architecture">Current architecture</h2>
+<p>The built-in renderer is uPlot-first and optimized for numeric or temporal x data from the kdb results panel. The extension host owns eligibility checks, sorting, grouping, validation, and type-aware data reduction before bounded chart data enters the webview.</p>
+<p>Line, scatter, and step use generic selected numeric y series. Bar uses a dedicated clustered canvas path so selected and grouped series render side by side with positive clamped widths and a zero baseline. Box uses selected numeric y series to compute min, q1, median, q3, and max. Candlestick uses explicit, distinct numeric Open, High, Low, and Close roles and a dedicated wick/body canvas path; it is not four line series.</p>
+<p><code>Group by</code> is implemented only for line, scatter, step, and bar. Box and candlestick do not expose it. Every type requires numeric or temporal x; categorical group values are not silently reused as x.</p>
+<h2 id="renderer-roles">Renderer roles</h2>
 <table>
 <thead>
 <tr>
 <th>Tool</th>
-<th>Recommended role</th>
+<th>Role</th>
 <th>Notes</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td>uPlot</td>
-<td>Shipped built-in VS Code chart renderer.</td>
-<td>Lightweight and fast for line and time-series charts. It keeps the webview dependency small while the extension owns data shaping and downsampling. Future work should add viewport-aware resampling and any advanced interactions that prove necessary.</td>
+<td>Shipped built-in VS Code chart renderer</td>
+<td>Keeps the webview dependency small and provides axes, cursor, legend, zoom state, canvas composition, and PNG export. Dedicated hooks draw clustered bars, box summaries, and candlesticks.</td>
 </tr>
 <tr>
 <td>ECharts</td>
-<td>Rich fallback or prototype candidate.</td>
-<td>Larger than uPlot, but still useful for comparing richer interactions if uPlot cannot support a future requirement cleanly.</td>
+<td>Prototype fallback only</td>
+<td>Consider only if a future verified requirement cannot be implemented safely with the existing uPlot architecture. It is not a current dependency.</td>
 </tr>
 <tr>
 <td>Plotly and plotly-resampler</td>
-<td>External Python/pandas workflow through the local data server.</td>
-<td><code>plotly-resampler</code> is strongest in Python workflows where pandas/NumPy data and callback-driven viewport updates are natural. Pulling Plotly.js into the built-in webview first would add a heavier dependency before proving that the extension needs Plotly-specific chart features.</td>
+<td>External Python/pandas workflow</td>
+<td>Use the opt-in local data server for richer external analysis rather than adding Plotly.js to the built-in webview.</td>
 </tr>
 </tbody>
 </table>
-<p>The default built-in path is now uPlot-first for fast time-series. ECharts remains a practical fallback if the first-class UX needs richer built-in interactions that are not worth building around uPlot. Plotly should stay available through external workflows rather than becoming the default webview dependency.</p>
-<h2 id="local-data-server">Local data server</h2>
-<p>The local data server is now the external-workflow path for pandas, Plotly, and <code>plotly-resampler</code>. Future server work can add richer metadata and streaming or chunked workflows if needed.</p>
-<p>That path makes <code>plotly-resampler</code> useful where it fits best: Python analysis using pandas dataframes and dynamic Plotly figures.</p>
-<h2 id="future-uplot-resampling-design">Future uPlot resampling design</h2>
-<p>The extension already downsamples before data reaches the webview. Future work should make that resampling viewport-aware after uPlot zoom or pan-like interactions, so the webview receives a viewport-sized series plus metadata instead of reusing the initial sampled result for every zoom level.</p>
-<h3 id="data-model">Data model</h3>
+<p>No additional renderer dependency should be added without a concrete requirement, package review, CSP/offline verification, and performance testing against representative kdb results.</p>
+<h2 id="shipped-data-reduction">Shipped data reduction</h2>
+<p>The extension guards the number of source rows scanned, derives the initial sample target from plot width, and retains the raw result extension-side.</p>
 <ul>
-<li>Use the extension's columnar result store as the source for chart arrays.</li>
-<li>Require one x column, preferably temporal or numeric, and one or more numeric y columns.</li>
-<li>For combined results, require a common compatible x/time column.</li>
-<li>Prefer already sorted x data.</li>
-<li>If x is unsorted, build a sorted index or copied sorted arrays for the chart operation without mutating the result table.</li>
-<li>Reject or defer symbol/category x axes for the first version.</li>
+<li>Generic line, scatter, and step data uses min/max bucket sampling to preserve local extremes better than uniform stride.</li>
+<li>Bar data is consolidated into complete distinct-x clusters and, when necessary, evenly thinned without dropping individual series from a retained cluster.</li>
+<li>Box data keeps each numeric y series together long enough to compute min, q1, median, q3, and max for each x value or bucket.</li>
+<li>Candlestick data targets roughly one candle per horizontal pixel and uses financial aggregation: first valid open, maximum high, minimum low, and last valid close per x bucket. The four roles are never sampled independently.</li>
+<li>Drag zoom can request one debounced viewport refinement, and <code>Refine zoom</code> can request it explicitly. <code>Reset zoom</code> restores the original full range.</li>
 </ul>
-<h3 id="viewport-aware-sampling">Viewport-aware sampling</h3>
-<p>Sampling should be driven by the visible x range and panel width:</p>
-<ol>
-<li>Determine the current chart viewport, <code>xMin</code> to <code>xMax</code>.</li>
-<li>Estimate the target point count from the plot width, for example 2 to 4 points per horizontal CSS pixel.</li>
-<li>Read only the x-range window from the columnar store or sorted index.</li>
-<li>Downsample each y series into that target.</li>
-<li>Send the sampled x/y arrays, source row counts, algorithm name, x range, and flags such as nulls or clipped infinities to the webview.</li>
-</ol>
-<p>Zooming and any future panning should request a new sampled window. The raw full result should stay extension-side.</p>
-<h3 id="algorithms">Algorithms</h3>
-<p>Initial candidates:</p>
+<p>The webview receives sampled arrays plus source/eligible/sample counts, the algorithm name, and warnings. It does not rescan data on cursor movement.</p>
+<h2 id="current-validation-boundaries">Current validation boundaries</h2>
+<p>The current chart contract intentionally stays narrow:</p>
 <ul>
-<li>Min/max bucket sampling to preserve spikes and local extremes.</li>
-<li>LTTB or MinMaxLTTB to preserve visual shape better than uniform stride.</li>
+<li>x must be numeric or temporal.</li>
+<li>Generic y and every OHLC role must be numeric.</li>
+<li>Nested lists, objects, and mixed incompatible columns are rejected.</li>
+<li>Candlestick requires four distinct OHLC columns and rejects retained rows with missing/non-finite values or inconsistent high/low bounds.</li>
+<li>Bar width must come from usable positive x spacing. Compatible duplicate-x rows align into one cluster, multiple finite values for the same generated series and x are rejected, and clusters too dense to distinguish safely are skipped with a status rather than overlapped.</li>
+<li>Category and generated-series caps keep grouped charts bounded.</li>
 </ul>
-<p>Later candidates:</p>
+<p>These rules prevent the renderer from inventing semantics for malformed or ambiguous data.</p>
+<h2 id="future-priorities">Future priorities</h2>
+<h3 id="responsiveness-and-cancellation">Responsiveness and cancellation</h3>
+<p>Continue hardening chart request versioning and cancellation so stale sorting, sampling, zoom refinement, reruns, and panel disposal do not waste extension-host work. Any CPU-heavy additions should yield or move off the critical path where practical.</p>
+<h3 id="sampling-quality">Sampling quality</h3>
+<p>Benchmark the shipped type-aware reducers on representative sorted and unsorted kdb results, duplicate timestamps, sparse and dense ranges, gaps, infinities, mixed temporal units, positive/negative bars, and large OHLC data. Consider alternative generic reducers such as LTTB only if measurements show a real improvement without weakening predictable bounds.</p>
+<p>Candlestick aggregation must remain financial. A future reducer must preserve first open, maximum high, minimum low, and last close for every bucket.</p>
+<h3 id="visual-and-accessibility-qa">Visual and accessibility QA</h3>
+<p>Keep dense-axis label thinning, tooltip precision, keyboard-usable controls, light/dark theme contrast, high-DPI canvas export, and clustered bar/candle width behavior under regression coverage. Visual review should include overlapping timestamps, nearly identical x values, zero/negative bars, flat candles, and large candle counts.</p>
+<h3 id="external-workflows">External workflows</h3>
+<p>The tokenized localhost data server remains the path for pandas, Plotly, plotly-resampler, notebooks, and other richer analysis. Future server work may add bounded metadata or chunking where a concrete external workflow requires it.</p>
+<h2 id="non-goals">Non-goals</h2>
 <ul>
-<li>Average buckets for aggregate views.</li>
-<li>OHLC buckets for price-style data.</li>
-<li>User-selectable sampling modes where the result semantics make that worthwhile.</li>
-</ul>
-<p>Uniform stride should not be the default for large time-series because it can hide short spikes.</p>
-<h3 id="edge-cases">Edge cases</h3>
-<p>The first implementation should define behavior for:</p>
-<ul>
-<li>Null y values.</li>
-<li>Positive and negative infinity.</li>
-<li>Duplicate timestamps.</li>
-<li>Unsorted x values.</li>
-<li>Mixed temporal units or incompatible x columns across results.</li>
-<li>Very sparse ranges where downsampling is unnecessary.</li>
-<li>Very dense ranges where many source rows collapse into one pixel bucket.</li>
-<li>Non-numeric y columns.</li>
-</ul>
-<p>Symbols, categories, nested lists, and general object columns should not be eligible for the first built-in line chart.</p>
-<h3 id="responsiveness">Responsiveness</h3>
-<p>Large resampling jobs should use cancellation and versioning:</p>
-<ul>
-<li>Each chart request gets a result version and viewport version.</li>
-<li>Old work is cancelled or ignored when a newer zoom, pan, sort, rerun, or result tab switch arrives.</li>
-<li>CPU-heavy work should yield or run in workers where practical.</li>
-<li>The webview should show sampled-count metadata so users know they are seeing a downsampled view.</li>
-</ul>
-<h2 id="build-phases">Build phases</h2>
-<ol>
-<li>Local data server. Shipped.</li>
-<li>Serve current result, selection, visible columns, row slices, and metadata from localhost.</li>
-<li>Document Python/pandas usage, including Plotly and plotly-resampler workflows.</li>
-<li>Keep the server opt-in and guarded by tokenized URLs.</li>
-<li>Charting spike. Shipped.</li>
-<li>Compare uPlot, ECharts, and Plotly.js inside a VS Code webview.</li>
-<li>Benchmark bundle size, first render, zoom/pan latency, tooltip behavior, memory, and extension-to-webview transfer cost.</li>
-<li>Test small, medium, and large time-series results with and without downsampling.</li>
-<li>First built-in chart. Shipped in bounded form with uPlot.</li>
-<li>Line/time-series only.</li>
-<li>User selects one x column and one or more y columns.</li>
-<li>Auto downsampling based on plot width.</li>
-<li>Cursor tooltip, drag zoom, reset zoom, legend, series toggling, and sampled/full row-count metadata.</li>
-<li>PNG export for the rendered canvas.</li>
-<li>Docs and tests.</li>
-<li>Update user docs for any shipped charting behavior.</li>
-<li>Add fixtures for sorted and unsorted x values, nulls, infinities, duplicate timestamps, and dense ranges.</li>
-<li>Add performance checks for large result downsampling.</li>
-<li>Keep table copy/export semantics separate from chart export semantics.</li>
-<li>Future charting.</li>
-<li>Add viewport-aware resampling for zoomed ranges.</li>
-<li>Evaluate pan-like navigation only if it can request bounded extension-side samples.</li>
-<li>Keep advanced interactions scoped to line/time-series workflows.</li>
-</ol>
-<h2 id="non-goals-for-the-first-built-in-chart">Non-goals for the first built-in chart</h2>
-<ul>
-<li>General BI dashboarding.</li>
-<li>Category, bar, pie, heatmap, or nested data charts.</li>
-<li>Streaming live updates.</li>
+<li>General BI dashboards.</li>
+<li>Invented or placeholder chart types.</li>
+<li>Streaming live updates in the current chart panel.</li>
 <li>Plotly.js as the default built-in dependency.</li>
 <li>Sending complete million-row series to the webview by default.</li>
+<li>Treating categorical, nested, or object data as numeric chart values.</li>
 </ul>
 
 

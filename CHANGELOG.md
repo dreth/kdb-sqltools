@@ -1,5 +1,11 @@
 # Change Log
 
+## 0.3.17
+
+- Added real OHLC candlestick charts with explicit, distinct numeric `Open`, `High`, `Low`, and `Close` selectors; strict row and range validation; financial first-open/max-high/min-low/last-close bucket aggregation; and dedicated uPlot canvas rendering for candle wicks, bodies, tooltips, and PNG export.
+- Audited the line, scatter, step, bar, and box controls and rendering rules. Grouped generic series now align by x and omit empty combinations, line/step sampling retains representative source gaps, bars cluster series side by side with positive clamped widths and a zero baseline, and dense boxes are skipped rather than overlapped; box and candlestick modes hide unsupported grouping controls.
+- Hardened type-specific chart selection persistence so only compatible roles are restored for a matching visible-column signature and older generic selections degrade safely.
+
 ## 0.3.16
 
 - Kept `Ctrl+Enter` / `Cmd+Enter` in `.q` editors routed to the kdb panel for both single-line and multi-line selections.

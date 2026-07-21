@@ -16,7 +16,7 @@ Set these in VS Code User or Workspace settings JSON.
 | `kdb-sqltools.results.kdbPanel.objectDisplayStrategy` | `grid` | `grid`, `qText`, `table`, `text` | Top-level plain object display. |
 | `kdb-sqltools.performance.trace` | `false` | `true`, `false` | Logs query timing and memory snapshots to the extension host console with the `[kdb-sqltools:perf]` prefix. |
 
-There is no setting that auto-starts the local data server. Start it explicitly from the kdb panel `Tools` area or the Command Palette.
+There is no setting that auto-starts the local data server. Start it explicitly from the kdb panel `Settings` area or the Command Palette.
 
 Array display examples:
 
@@ -42,8 +42,8 @@ True q tables and keyed tables always use the grid. Function source is shown onl
 | Setting | Default | Use |
 | --- | --- | --- |
 | `kdb-sqltools.results.kdbPanel.chartMaxSourceRows` | `2000000` | Maximum source rows scanned for built-in charting before rejecting a chart request. The minimum is `1`; there is no hard upper bound. |
-| `kdb-sqltools.results.kdbPanel.chartDecimalPlaces` | `4` | Decimal places for chart numeric axis ticks, tooltips, legend/live values, and box statistics. Values are clamped to `0` through `12`; very large or very small nonzero numbers use scientific notation with this precision. |
-| `kdb-sqltools.results.kdbPanel.chartZoomMinSampledPoints` | `3000` | Minimum visible sampled points before a settled drag zoom auto-refines when more source rows may exist in that x range. The minimum is `1`. |
+| `kdb-sqltools.results.kdbPanel.chartDecimalPlaces` | `4` | Decimal places for chart numeric axis ticks, tooltips, legend/live values, box statistics, and candlestick OHLC values. Values are clamped to `0` through `12`; very large or very small nonzero numbers use scientific notation with this precision. |
+| `kdb-sqltools.results.kdbPanel.chartZoomMinSampledPoints` | `3000` | Minimum visible sampled points before a reduced chart's settled drag zoom auto-refines when more source rows may exist in that x range. The minimum is `1`. |
 | `kdb-sqltools.results.kdbPanel.chartZoomMaxSampledPoints` | `7000` | Maximum sampled points returned for a refined zoom range. Values below `chartZoomMinSampledPoints` are clamped up to that minimum. |
 
 Very large values can make chart rendering slow or temporarily block the extension host, especially with multiple y columns. For very large data, prefer the local data server or sliced results.

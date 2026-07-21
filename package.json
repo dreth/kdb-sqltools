@@ -2,7 +2,7 @@
   "name": "kdb-sqltools",
   "displayName": "SQLTools kdb Driver",
   "description": "SQLTools driver for kdb+/q using q IPC over TCP",
-  "version": "0.3.16",
+  "version": "0.3.17",
   "engines": {
     "vscode": "^1.42.0"
   },
@@ -582,13 +582,13 @@
           "default": 4,
           "minimum": 0,
           "maximum": 12,
-          "description": "Decimal places for chart numeric labels, including numeric axis ticks, tooltips, legend/live values, and box statistics. Very large or very small nonzero values use scientific notation with this precision."
+          "description": "Decimal places for chart numeric labels, including numeric axis ticks, tooltips, legend/live values, and box statistics; candlestick OHLC values use the same precision. Very large or very small nonzero values use scientific notation with this precision."
         },
         "kdb-sqltools.results.kdbPanel.chartZoomMinSampledPoints": {
           "type": "integer",
           "default": 3000,
           "minimum": 1,
-          "description": "Minimum visible sampled points before the built-in chart auto-refines a settled zoom range when more source rows may exist in that range."
+          "description": "Minimum visible sampled points before a reduced built-in chart auto-refines a settled zoom range when more source rows may exist in that range."
         },
         "kdb-sqltools.results.kdbPanel.chartZoomMaxSampledPoints": {
           "type": "integer",
