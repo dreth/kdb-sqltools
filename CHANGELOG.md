@@ -1,6 +1,6 @@
 # Change Log
 
-## Unreleased
+## 0.3.16
 
 - Kept `Ctrl+Enter` / `Cmd+Enter` in `.q` editors routed to the kdb panel for both single-line and multi-line selections.
 - Fixed `Reset zoom` to restore the original full chart range after manual or automatic zoom refinements.
