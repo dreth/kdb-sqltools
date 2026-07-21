@@ -16,7 +16,7 @@ SQLTools remains required for connections and q execution. Charting uses the cur
 
 Changing chart settings does not remove the currently rendered chart. The panel shows `Chart settings changed — Render to update` until you press `Render`; export still applies to the rendered chart.
 
-uPlot powers the built-in chart. Supported interactions are cursor/crosshair tooltip values, drag-select zoom, debounced zoom refinement, explicit zoom refinement, reset zoom, legend labels with live values, legend series toggling, splitter resizing between chart and table, and PNG export. `Reset zoom` restores the full rendered x domain immediately from the data already in the webview; it does not rescan or re-request chart data.
+uPlot powers the built-in chart. Supported interactions are cursor/crosshair tooltip values, drag-select zoom, debounced zoom refinement, explicit zoom refinement, reset zoom, legend labels with live values, legend series toggling, splitter resizing between chart and table, and PNG export. `Reset zoom` restores the original full x-range and disables again at that baseline, even after manual or automatic zoom refinement.
 
 X-axis labels are auto-thinned to keep dense numeric and timestamp axes readable while preserving useful grid lines where possible. Timestamp labels use shorter adaptive formats after zoom, and edge labels may be suppressed to avoid clipping. Hover and cursor/crosshair tooltip values still show the precise x value for the selected point.
 

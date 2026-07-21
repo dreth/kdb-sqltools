@@ -98,6 +98,8 @@ Default kdb-panel runs open a new result tab unless you set `"kdb-sqltools.resul
 
 Default keybindings in q files are `Ctrl+Enter` / `Cmd+Enter` for selection replace, `Ctrl+Shift+Enter` / `Cmd+Shift+Enter` for selection in a new result tab, `Ctrl+Alt+Enter` / `Cmd+Alt+Enter` for whole-script replace, and `Ctrl+Alt+C` / `Cmd+Alt+C` for `Run Selection and Chart`. Change them in VS Code's Keyboard Shortcuts UI or `keybindings.json`; extension settings cannot define arbitrary VS Code keybindings. The `kdb+: Open kdb Keyboard Shortcuts` command opens the Keyboard Shortcuts UI.
 
+In `.q` editors, `Ctrl+Enter` / `Cmd+Enter` always routes both single-line and multi-line selections to the kdb panel in replace mode.
+
 Running kdb-panel commands keeps focus in the q editor while the result tab updates.
 
 While a run is loading, the panel shows `Cancel` next to the spinner and the VS Code progress notification is cancellable. Canceling stops the extension from waiting for that run, tears down the active q IPC connection, and leaves a canceled state in the panel. Server-side interruption is best-effort: q or gateway work that already started may not stop immediately.

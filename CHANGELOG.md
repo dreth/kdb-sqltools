@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Kept `Ctrl+Enter` / `Cmd+Enter` in `.q` editors routed to the kdb panel for both single-line and multi-line selections.
+- Fixed `Reset zoom` to restore the original full chart range after manual or automatic zoom refinements.
+
 ## 0.3.15
 
 - qText now renders normal list/object outputs fully by default, including `tables[]`-style metadata lists, with only a large character safety cap for very large output.

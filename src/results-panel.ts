@@ -130,6 +130,11 @@ interface SavedChartSelection {
   groupByColumn?: string;
 }
 
+interface ChartRange {
+  readonly min: number;
+  readonly max: number;
+}
+
 interface KdbPanelShowOptions {
   autoChart?: boolean;
 }
@@ -2694,6 +2699,9 @@ export class KdbResultsPanel {
       let chartRendered = null;
       let chartUPlot = null;
       let chartZoomed = false;
+      let chartFullXRange = null;
+      let chartRequestIsRefinement = false;
+      let chartZoomStateSuspended = false;
       let chartControlsDirty = false;
       let chartResizeState = null;
       let chartHeight = 280;
@@ -2704,6 +2712,7 @@ export class KdbResultsPanel {
       const CHART_MIN_HEIGHT = 180;
       const CHART_MAX_HEIGHT = 720;
       const CHART_AUTO_REFINE_DELAY_MS = 450;
+      ${chartRangeIsZoomed.toString()}
       window.addEventListener('message', event => {
         const msg = event.data || {};
         if (msg.type === 'loading') {
@@ -3359,6 +3368,8 @@ export class KdbResultsPanel {
         chartPanel.hidden = true;
         chartSplitter.hidden = true;
         latestChartRequestId += 1;
+        chartRequestIsRefinement = false;
+        clearChartZoomBaseline();
         chartData = null;
         chartRendered = null;
         chartControlsDirty = false;
@@ -3375,6 +3386,8 @@ export class KdbResultsPanel {
       function resetChartState(messageText) {
         latestChartRequestId += 1;
         chartOptionsRequestId += 1;
+        chartRequestIsRefinement = false;
+        clearChartZoomBaseline();
         chartOptions = { xColumns: [], yColumns: [], groupColumns: [], warnings: [] };
         chartData = null;
         chartRendered = null;
@@ -3466,6 +3479,8 @@ export class KdbResultsPanel {
       }
 
       function renderChartOptions() {
+        chartRequestIsRefinement = false;
+        clearChartZoomBaseline();
         chartXColumn.textContent = '';
         chartGroupColumn.textContent = '';
         chartYColumns.textContent = '';
@@ -3589,6 +3604,8 @@ export class KdbResultsPanel {
       }
 
       function onChartControlChanged() {
+        chartRequestIsRefinement = false;
+        clearChartZoomBaseline();
         chartControlsDirty = true;
         hideChartTooltip();
         chartStatus.textContent = chartControlStatusMessage();
@@ -3597,8 +3614,15 @@ export class KdbResultsPanel {
 
       function clearChartRendered() {
         chartRendered = null;
-        chartZoomed = false;
+        clearChartZoomBaseline();
         updateChartControls();
+      }
+
+      function clearChartZoomBaseline() {
+        chartFullXRange = null;
+        chartZoomed = false;
+        chartLastAutoRefineKey = '';
+        clearChartAutoRefineTimer();
       }
 
       function selectedChartYColumns() {
@@ -3649,6 +3673,10 @@ export class KdbResultsPanel {
         if (!chartCanRender()) {
           chartStatus.textContent = chartControlStatusMessage();
           return;
+        }
+        chartRequestIsRefinement = !!xRange;
+        if (!chartRequestIsRefinement) {
+          clearChartZoomBaseline();
         }
         latestChartRequestId += 1;
         chartRendered = null;
@@ -3799,6 +3827,8 @@ export class KdbResultsPanel {
         if (toNonNegativeInteger(msg.requestId, -1) !== latestChartRequestId || chartControlsDirty) {
           return;
         }
+        chartRequestIsRefinement = false;
+        clearChartZoomBaseline();
         chartStatus.textContent = String(msg.message || 'Chart failed.');
         chartData = null;
         chartRendered = null;
@@ -3839,15 +3869,23 @@ export class KdbResultsPanel {
           return;
         }
 
+        chartZoomStateSuspended = true;
         destroyChartPlot();
         try {
           chartUPlot = new window.uPlot(chartUPlotOptions(dimensions), chartAlignedData(), chartPlot);
           chartRendered = { version: chartData.version, requestId: chartData.requestId };
-          chartZoomed = false;
+          if (!chartRequestIsRefinement) {
+            const renderedXRange = chartXScaleRange(chartUPlot);
+            chartFullXRange = renderedXRange
+              ? Object.freeze({ min: renderedXRange.min, max: renderedXRange.max })
+              : null;
+          }
+          chartZoomStateSuspended = false;
           updateChartZoomState(chartUPlot);
           notifyChartRendered();
           updateChartControls();
         } catch (error) {
+          chartZoomStateSuspended = false;
           destroyChartPlot();
           chartStatus.textContent = 'Chart render failed: ' + chartErrorMessage(error);
           clearChartRendered();
@@ -4274,28 +4312,39 @@ export class KdbResultsPanel {
         chartTooltip.hidden = true;
       }
 
+      function chartXScaleRange(self) {
+        const scale = self && self.scales && self.scales.x;
+        if (!scale || !Number.isFinite(scale.min) || !Number.isFinite(scale.max) || scale.max <= scale.min) {
+          return null;
+        }
+        return { min: scale.min, max: scale.max };
+      }
+
       function resetChartZoom() {
         if (!chartUPlot) {
           return;
         }
-        const xRange = chartInitialXRange();
+        const xRange = chartFullXRange;
         if (!xRange) {
-          chartZoomed = false;
           clearChartSelection();
           hideChartTooltip();
           clearChartAutoRefineTimer();
-          updateChartControls();
+          updateChartZoomState(chartUPlot);
           return;
         }
-        chartUPlot.batch(() => {
-          chartUPlot.setScale('x', { min: xRange.min, max: xRange.max });
-          chartUPlot.setScale('y', { min: null, max: null });
-        });
-        chartZoomed = false;
+        chartZoomStateSuspended = true;
+        try {
+          chartUPlot.batch(() => {
+            chartUPlot.setScale('x', { min: xRange.min, max: xRange.max });
+            chartUPlot.setScale('y', { min: null, max: null });
+          });
+        } finally {
+          chartZoomStateSuspended = false;
+        }
         clearChartSelection();
         hideChartTooltip();
         clearChartAutoRefineTimer();
-        updateChartControls();
+        updateChartZoomState(chartUPlot);
       }
 
       function clearChartSelection() {
@@ -4305,16 +4354,10 @@ export class KdbResultsPanel {
       }
 
       function updateChartZoomState(self) {
-        const xRange = chartInitialXRange();
-        const scale = self && self.scales && self.scales.x;
-        if (!xRange || !scale || !Number.isFinite(scale.min) || !Number.isFinite(scale.max)) {
-          chartZoomed = false;
-          clearChartAutoRefineTimer();
-          updateChartControls();
+        if (chartZoomStateSuspended) {
           return;
         }
-        const tolerance = Math.max(1e-9, Math.abs(xRange.max - xRange.min) * 1e-9);
-        chartZoomed = Math.abs(scale.min - xRange.min) > tolerance || Math.abs(scale.max - xRange.max) > tolerance;
+        chartZoomed = chartRangeIsZoomed(chartFullXRange, chartXScaleRange(self));
         if (chartZoomed) {
           queueChartAutoRefine();
         } else {
@@ -4324,20 +4367,13 @@ export class KdbResultsPanel {
       }
 
       function currentChartZoomRange() {
-        if (!chartUPlot || !chartUPlot.scales || !chartUPlot.scales.x) {
+        const initial = chartFullXRange;
+        const current = chartXScaleRange(chartUPlot);
+        if (!initial || !current || !chartRangeIsZoomed(initial, current)) {
           return null;
         }
-        const initial = chartInitialXRange();
-        const scale = chartUPlot.scales.x;
-        if (!initial || !Number.isFinite(scale.min) || !Number.isFinite(scale.max) || scale.max <= scale.min) {
-          return null;
-        }
-        const tolerance = Math.max(1e-9, Math.abs(initial.max - initial.min) * 1e-9);
-        if (Math.abs(scale.min - initial.min) <= tolerance && Math.abs(scale.max - initial.max) <= tolerance) {
-          return null;
-        }
-        const min = Math.max(scale.min, Math.min(initial.min, initial.max));
-        const max = Math.min(scale.max, Math.max(initial.min, initial.max));
+        const min = Math.max(current.min, Math.min(initial.min, initial.max));
+        const max = Math.min(current.max, Math.max(initial.min, initial.max));
         return max > min ? { min, max } : null;
       }
 
@@ -6349,6 +6385,21 @@ function sameColumnNames(left: string[] | undefined, right: string[]): boolean {
     }
   }
   return true;
+}
+
+export function chartRangeIsZoomed(full: ChartRange | null | undefined, current: ChartRange | null | undefined): boolean {
+  if (!full || !current ||
+    !Number.isFinite(full.min) ||
+    !Number.isFinite(full.max) ||
+    !Number.isFinite(current.min) ||
+    !Number.isFinite(current.max) ||
+    full.max <= full.min ||
+    current.max <= current.min) {
+    return false;
+  }
+
+  const tolerance = Math.max(1e-9, Math.abs(full.max - full.min) * 1e-9);
+  return Math.abs(current.min - full.min) > tolerance || Math.abs(current.max - full.max) > tolerance;
 }
 
 function chartSelectionStorageKey(columns: string[]): string {
