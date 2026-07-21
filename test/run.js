@@ -1238,15 +1238,39 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('values: (self, splits) => chartThinnedXAxisLabels(self, splits)'), true);
   assert.strictEqual(resultsPanelSource.includes('drag: { setScale: true, x: true, y: false, dist: 5 }'), true);
   assert.strictEqual(resultsPanelSource.includes('function resetChartZoom()'), true);
+  assert.strictEqual(resultsPanelSource.includes('let chartFullXRange = null;'), true);
   const resetChartZoomSource = resultsPanelSource.slice(
     resultsPanelSource.indexOf('function resetChartZoom()'),
     resultsPanelSource.indexOf('function updateChartZoomState')
   );
-  assert.strictEqual(resetChartZoomSource.includes('const xRange = chartInitialXRange();'), true);
+  assert.strictEqual(resetChartZoomSource.includes('const xRange = chartFullXRange;'), true);
   assert.strictEqual(resetChartZoomSource.includes("chartUPlot.setScale('x', { min: xRange.min, max: xRange.max });"), true);
   assert.strictEqual(resetChartZoomSource.includes("chartUPlot.setScale('x', { min: null, max: null });"), false);
+  assert.strictEqual(resetChartZoomSource.includes('updateChartZoomState(chartUPlot);'), true);
+  assert.strictEqual(resetChartZoomSource.includes('chartZoomed = false;'), false);
   assert.strictEqual(resetChartZoomSource.includes('clearChartSelection();'), true);
   assert.strictEqual(resetChartZoomSource.includes('vscode.postMessage'), false);
+  const chartZoomStateSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function updateChartZoomState'),
+    resultsPanelSource.indexOf('function queueChartAutoRefine')
+  );
+  assert.strictEqual(chartZoomStateSource.includes('chartRangeIsZoomed(chartFullXRange, chartXScaleRange(self))'), true);
+  assert.strictEqual(chartZoomStateSource.includes('const initial = chartFullXRange;'), true);
+  assert.strictEqual(chartZoomStateSource.includes('chartInitialXRange()'), false);
+  const chartRequestSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function requestChartDataForRange'),
+    resultsPanelSource.indexOf('function exportChartPng')
+  );
+  assert.strictEqual(chartRequestSource.includes('chartRequestIsRefinement = !!xRange;'), true);
+  assert.strictEqual(chartRequestSource.includes('if (!chartRequestIsRefinement) {'), true);
+  assert.ok(chartRequestSource.indexOf('if (!chartRequestIsRefinement) {') < chartRequestSource.indexOf('clearChartZoomBaseline();'));
+  const drawChartSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function drawChart()'),
+    resultsPanelSource.indexOf('function chartDimensions()')
+  );
+  assert.strictEqual(drawChartSource.includes('if (!chartRequestIsRefinement) {'), true);
+  assert.strictEqual(drawChartSource.includes('const renderedXRange = chartXScaleRange(chartUPlot);'), true);
+  assert.ok(drawChartSource.indexOf('chartZoomStateSuspended = false;') < drawChartSource.lastIndexOf('updateChartZoomState(chartUPlot);'));
   assert.strictEqual(resultsPanelSource.includes('function formatChartNumber(value)'), true);
   assert.strictEqual(resultsPanelSource.includes('const places = clampInteger(settings.chartDecimalPlaces, 0, 12);'), true);
   assert.strictEqual(resultsPanelSource.includes('normalized.toExponential(places)'), true);
@@ -1324,6 +1348,23 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(commandTitle('kdb-sqltools.reportBug'), 'Report Bug');
   assert.strictEqual(commandTitle('kdb-sqltools.requestFeature'), 'Request Feature');
   assert.strictEqual(commandTitle('kdb-sqltools.giveFeedback'), 'Give Feedback');
+  const qCtrlEnterWhen = 'editorTextFocus && (editorLangId == q || resourceExtname == .q)';
+  const qCtrlEnterBindingIndex = packageJson.contributes.keybindings.findIndex(binding =>
+    binding.command === 'kdb-sqltools.runSelectionOrBlockInKdbPanelReplace'
+  );
+  assert.deepStrictEqual(
+    packageJson.contributes.keybindings.slice(qCtrlEnterBindingIndex - 2, qCtrlEnterBindingIndex),
+    [
+      { command: '-sqltools.executeQuery', key: 'ctrl+enter', mac: 'cmd+enter', when: qCtrlEnterWhen },
+      { command: '-sqltools.executeCurrentQuery', key: 'ctrl+enter', mac: 'cmd+enter', when: qCtrlEnterWhen },
+    ]
+  );
+  assert.deepStrictEqual(packageJson.contributes.keybindings[qCtrlEnterBindingIndex], {
+    command: 'kdb-sqltools.runSelectionOrBlockInKdbPanelReplace',
+    key: 'ctrl+enter',
+    mac: 'cmd+enter',
+    when: qCtrlEnterWhen,
+  });
   assert.strictEqual(keybinding('kdb-sqltools.runSelectionOrBlockInKdbPanelReplace').key, 'ctrl+enter');
   assert.strictEqual(keybinding('kdb-sqltools.runSelectionOrBlockInKdbPanelReplace').mac, 'cmd+enter');
   assert.strictEqual(keybinding('kdb-sqltools.runSelectionOrBlockInNewKdbPanel').key, 'ctrl+shift+enter');
@@ -1711,6 +1752,10 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelInternals.chartZoomMaxSampledPointsSettingValue(undefined, 8000), 8000);
   assert.strictEqual(resultsPanelInternals.chartZoomMaxSampledPointsSettingValue(10, 12), 12);
   assert.strictEqual(resultsPanelInternals.chartZoomMaxSampledPointsSettingValue(50.9, 12), 50);
+  assert.strictEqual(resultsPanelInternals.chartRangeIsZoomed({ min: 0, max: 100 }, { min: 0, max: 100 }), false);
+  assert.strictEqual(resultsPanelInternals.chartRangeIsZoomed({ min: 0, max: 100 }, { min: 1e-8, max: 100 - 1e-8 }), false);
+  assert.strictEqual(resultsPanelInternals.chartRangeIsZoomed({ min: 0, max: 100 }, { min: 10, max: 90 }), true);
+  assert.strictEqual(resultsPanelInternals.chartRangeIsZoomed({ min: 0, max: 100 }, null), false);
   assert.strictEqual(resultsPanelInternals.chartColumnSignature(['time', 'sym', 'price']), '["time","sym","price"]');
   assert.ok(resultsPanelInternals.chartSelectionStorageKey(['time', 'sym', 'price']).startsWith('kdb-sqltools.results.kdbPanel.chartSelection.v1.'));
   assert.strictEqual(
@@ -1869,7 +1914,8 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(chartingDocsSource.includes('cursor/crosshair tooltip'), true);
   assert.strictEqual(chartingDocsSource.includes('drag-select zoom'), true);
   assert.strictEqual(chartingDocsSource.includes('Reset zoom'), true);
-  assert.strictEqual(chartingDocsSource.includes('restores the full rendered x domain'), true);
+  assert.strictEqual(chartingDocsSource.includes('restores the original full x-range'), true);
+  assert.strictEqual(chartingDocsSource.includes('disables again at that baseline'), true);
   assert.strictEqual(chartingDocsSource.includes('kdb-sqltools.results.kdbPanel.chartDecimalPlaces'), true);
   assert.strictEqual(chartingDocsSource.includes('kdb-sqltools.results.kdbPanel.chartZoomMinSampledPoints'), true);
   assert.strictEqual(chartingDocsSource.includes('kdb-sqltools.results.kdbPanel.chartZoomMaxSampledPoints'), true);
@@ -2651,7 +2697,7 @@ function panelFormatElapsedMs(milliseconds, display) {
 function loadResultsPanelInternals() {
   const filename = path.join(__dirname, '..', 'out', 'results-panel.js');
   const source = fs.readFileSync(filename, 'utf8') +
-    '\nmodule.exports.__test = { chartColumnSignature, chartDecimalPlacesSettingValue, chartMaxSourceRowsSettingValue, chartPngBytesFromDataUrl, chartSelectionStorageKey, chartZoomMaxSampledPointsSettingValue, chartZoomMinSampledPointsSettingValue, columnarToXlsx, normalizePanelSettingUpdate, panelSettingConfigKey, panelSizeSettingValue };';
+    '\nmodule.exports.__test = { chartColumnSignature, chartDecimalPlacesSettingValue, chartMaxSourceRowsSettingValue, chartPngBytesFromDataUrl, chartRangeIsZoomed, chartSelectionStorageKey, chartZoomMaxSampledPointsSettingValue, chartZoomMinSampledPointsSettingValue, columnarToXlsx, normalizePanelSettingUpdate, panelSettingConfigKey, panelSizeSettingValue };';
   const testModule = new Module(filename, module);
   testModule.filename = filename;
   testModule.paths = Module._nodeModulePaths(path.dirname(filename));

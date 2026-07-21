@@ -33,6 +33,8 @@ Cancellation is best-effort on the server side. Depending on the q process, gate
 | `Ctrl+Alt+Enter` | `Cmd+Alt+Enter` | `kdb+: Run q Script in kdb Panel (Replace)` | Run the whole file and reuse an existing kdb result tab. |
 | `Ctrl+Alt+C` | `Cmd+Alt+C` | `kdb+: Run Selection and Chart` | Run the selected text, or current physical line, in replace mode and open/render the chart panel. |
 
+In `.q` editors, `Ctrl+Enter` / `Cmd+Enter` always routes both single-line and multi-line selections to the kdb panel in replace mode.
+
 Use `kdb+: Open kdb Keyboard Shortcuts` to edit these bindings in VS Code. Extension settings cannot define arbitrary VS Code keybindings.
 
 ## Commands

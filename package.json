@@ -246,6 +246,18 @@
     ],
     "keybindings": [
       {
+        "command": "-sqltools.executeQuery",
+        "key": "ctrl+enter",
+        "mac": "cmd+enter",
+        "when": "editorTextFocus && (editorLangId == q || resourceExtname == .q)"
+      },
+      {
+        "command": "-sqltools.executeCurrentQuery",
+        "key": "ctrl+enter",
+        "mac": "cmd+enter",
+        "when": "editorTextFocus && (editorLangId == q || resourceExtname == .q)"
+      },
+      {
         "command": "kdb-sqltools.runSelectionOrBlockInKdbPanelReplace",
         "key": "ctrl+enter",
         "mac": "cmd+enter",
