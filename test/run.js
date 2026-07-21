@@ -24,12 +24,16 @@ const {
   CHART_ZOOM_MAX_SAMPLED_POINTS,
   CHART_ZOOM_MIN_SAMPLED_POINTS,
   ChartDataError,
+  aggregateCandlestickPoints,
   boxChartTargetGroupCount,
   boxStats,
   buildChartData,
   buildLineChartData,
+  candlestickTargetPointCount,
   chartColumnOptions,
   chartTargetPointCount,
+  chartTypeCapabilities,
+  normalizeChartType,
 } = require('../out/charting');
 const { currentQBlock, selectedTextOrCurrentBlock, selectedTextOrCurrentLine } = require('../out/q-text');
 const {
@@ -743,6 +747,185 @@ function panelFormatElapsedMs(milliseconds, display) {
   ]);
   assert.deepStrictEqual(chartOptions.yColumns.map(option => option.columnName), ['price', 'size']);
   assert.deepStrictEqual(chartOptions.groupColumns.map(option => `${option.columnName}:${option.kind}`), ['sym:categorical']);
+  assert.strictEqual(normalizeChartType('CANDLESTICK'), 'candlestick');
+  assert.strictEqual(normalizeChartType('unknown'), 'line');
+  assert.deepStrictEqual(chartTypeCapabilities('line'), {
+    usesGenericY: true,
+    supportsGroupBy: true,
+    usesOhlc: false,
+  });
+  assert.deepStrictEqual(chartTypeCapabilities('box'), {
+    usesGenericY: true,
+    supportsGroupBy: false,
+    usesOhlc: false,
+  });
+  assert.deepStrictEqual(chartTypeCapabilities('candlestick'), {
+    usesGenericY: false,
+    supportsGroupBy: false,
+    usesOhlc: true,
+  });
+
+  const candleTable = rowsToColumnarPanelResult(
+    [
+      { ts: '2024-01-02', open: 20, high: 24, low: 18, close: 21, sym: 'A' },
+      { ts: '2024-01-01', open: 10, high: 13, low: 9, close: 12, sym: 'A' },
+      { ts: '2024-01-02', open: 21, high: 25, low: 17, close: 23, sym: 'A' },
+    ],
+    ['ts', 'open', 'high', 'low', 'close', 'sym']
+  );
+  const candleRequest = {
+    chartType: 'candlestick',
+    version: 3,
+    requestId: 11,
+    xColumn: 'ts',
+    openColumn: 'open',
+    highColumn: 'high',
+    lowColumn: 'low',
+    closeColumn: 'close',
+    width: 800,
+  };
+  const candleChart = buildChartData(candleTable, candleRequest);
+  assert.strictEqual(candleChart.chartType, 'candlestick');
+  assert.strictEqual(candleChart.sorted, true);
+  assert.deepStrictEqual(candleChart.ohlcColumns, {
+    open: 'open',
+    high: 'high',
+    low: 'low',
+    close: 'close',
+  });
+  assert.deepStrictEqual(candleChart.candlesticks, [
+    { x: Date.parse('2024-01-01'), xText: '2024-01-01', open: 10, high: 13, low: 9, close: 12 },
+    { x: Date.parse('2024-01-02'), xText: '2024-01-02', open: 20, high: 25, low: 17, close: 23 },
+  ]);
+  assert.deepStrictEqual(candleChart.series.map(series => series.columnName), ['OHLC']);
+  assert.deepStrictEqual(candleChart.series[0].values, [12, 23]);
+  assert.strictEqual(candleChart.algorithm, 'ohlc-exact/2');
+  assert.deepStrictEqual(candleChart.xDomain, {
+    min: Date.parse('2024-01-01'),
+    max: Date.parse('2024-01-02'),
+  });
+  assert.ok(candleChart.warnings.some(warning => /distinct x candles/.test(warning)));
+  const numericXCandleChart = buildChartData(rowsToColumnarPanelResult(
+    [{ x: 1, open: 10, high: 12, low: 8, close: 11 }],
+    ['x', 'open', 'high', 'low', 'close']
+  ), { ...candleRequest, xColumn: 'x' });
+  assert.strictEqual(numericXCandleChart.xKind, 'numeric');
+  assert.deepStrictEqual(numericXCandleChart.x, [1]);
+  assert.throws(
+    () => buildChartData(candleTable, { ...candleRequest, openColumn: '' }),
+    /Select a numeric Open column/
+  );
+  assert.throws(
+    () => buildChartData(candleTable, { ...candleRequest, closeColumn: 'open' }),
+    /four distinct numeric columns/
+  );
+  assert.throws(
+    () => buildChartData(candleTable, { ...candleRequest, openColumn: 'sym' }),
+    /Open column sym is not eligible as a numeric column/
+  );
+  assert.throws(
+    () => buildChartData(candleTable, { ...candleRequest, groupByColumn: 'sym' }),
+    /Group by is not supported for candlestick charts/
+  );
+
+  const missingCandleTable = rowsToColumnarPanelResult(
+    [
+      { x: 1, open: null, high: 12, low: 8, close: 11 },
+      { x: 2, open: 11, high: 13, low: 10, close: 12 },
+    ],
+    ['x', 'open', 'high', 'low', 'close']
+  );
+  assert.throws(
+    () => buildChartData(missingCandleTable, { ...candleRequest, xColumn: 'x' }),
+    /Open column open is missing at row 1/
+  );
+  const lateInvalidCandleTable = createColumnarPanelResult(
+    ['x', 'open', 'high', 'low', 'close'],
+    201,
+    (rowIndex, columnIndex) => {
+      if (columnIndex === 0) {
+        return rowIndex;
+      }
+      if (columnIndex === 1) {
+        return rowIndex === 200 ? 'not-a-number' : 10;
+      }
+      return columnIndex === 2 ? 12 : columnIndex === 3 ? 8 : 11;
+    }
+  );
+  assert.throws(
+    () => buildChartData(lateInvalidCandleTable, { ...candleRequest, xColumn: 'x' }),
+    /Open column open must contain a finite numeric value at row 201/
+  );
+  const badHighCandleTable = rowsToColumnarPanelResult(
+    [{ x: 1, open: 10, high: 9, low: 7, close: 8 }],
+    ['x', 'open', 'high', 'low', 'close']
+  );
+  assert.throws(
+    () => buildChartData(badHighCandleTable, { ...candleRequest, xColumn: 'x' }),
+    /High 9 must be greater than or equal to Open and Close/
+  );
+  const reversedHighLowCandleTable = rowsToColumnarPanelResult(
+    [{ x: 1, open: 10, high: 9, low: 11, close: 10 }],
+    ['x', 'open', 'high', 'low', 'close']
+  );
+  assert.throws(
+    () => buildChartData(reversedHighLowCandleTable, { ...candleRequest, xColumn: 'x' }),
+    /High 9 must be greater than or equal to Low 11/
+  );
+  const badLowCandleTable = rowsToColumnarPanelResult(
+    [{ x: 1, open: 10, high: 13, low: 11, close: 12 }],
+    ['x', 'open', 'high', 'low', 'close']
+  );
+  assert.throws(
+    () => buildChartData(badLowCandleTable, { ...candleRequest, xColumn: 'x' }),
+    /Low 11 must be less than or equal to Open and Close/
+  );
+
+  const aggregatedCandles = aggregateCandlestickPoints([
+    { rowIndex: 0, x: 1, xText: '1', open: 10, high: 12, low: null, close: 11 },
+    { rowIndex: 1, x: 1, xText: '1', open: null, high: 15, low: 8, close: 13 },
+    { rowIndex: 2, x: 2, xText: '2', open: 14, high: 18, low: 12, close: 17 },
+    { rowIndex: 3, x: 3, xText: '3', open: 20, high: 23, low: 19, close: 22 },
+    { rowIndex: 4, x: 4, xText: '4', open: 22, high: 26, low: 21, close: 25 },
+  ], 2);
+  assert.strictEqual(aggregatedCandles.exactPointCount, 4);
+  assert.strictEqual(aggregatedCandles.algorithm, 'ohlc-bucket/2');
+  assert.deepStrictEqual(aggregatedCandles.xDomain, { min: 1, max: 4 });
+  assert.deepStrictEqual(aggregatedCandles.candlesticks, [
+    { x: 1.5, xText: '1..2', open: 10, high: 18, low: 8, close: 17 },
+    { x: 3.5, xText: '3..4', open: 20, high: 26, low: 19, close: 25 },
+  ]);
+  const irregularCandles = aggregateCandlestickPoints([
+    { x: 0, xText: '0', open: 10, high: 12, low: 9, close: 11 },
+    { x: 1, xText: '1', open: 11, high: 13, low: 10, close: 12 },
+    { x: 2, xText: '2', open: 12, high: 14, low: 11, close: 13 },
+    { x: 100000, xText: '100000', open: 20, high: 23, low: 19, close: 22 },
+  ], 2);
+  assert.deepStrictEqual(irregularCandles.xDomain, { min: 0, max: 100000 });
+  assert.deepStrictEqual(irregularCandles.candlesticks.map(candle => candle.x), [1, 100000]);
+  assert.deepStrictEqual(irregularCandles.candlesticks.map(candle => candle.xText), ['0..2', '100000']);
+  const oneIrregularCandle = aggregateCandlestickPoints([
+    { x: 0, xText: '0', open: 10, high: 12, low: 9, close: 11 },
+    { x: 100000, xText: '100000', open: 20, high: 23, low: 19, close: 22 },
+  ], 1);
+  assert.deepStrictEqual(oneIrregularCandle.xDomain, { min: 0, max: 100000 });
+  assert.strictEqual(oneIrregularCandle.candlesticks[0].x, 50000);
+  assert.strictEqual(candlestickTargetPointCount(800), 800);
+  assert.strictEqual(candlestickTargetPointCount(800, 300), 300);
+  const denseCandleChart = buildChartData(createColumnarPanelResult(
+    ['x', 'open', 'high', 'low', 'close'],
+    350,
+    (rowIndex, columnIndex) => {
+      if (columnIndex === 0) {
+        return rowIndex;
+      }
+      const open = rowIndex + 10;
+      return columnIndex === 1 ? open : columnIndex === 2 ? open + 2 : columnIndex === 3 ? open - 2 : open + 1;
+    }
+  ), { ...candleRequest, xColumn: 'x', width: 100 });
+  assert.strictEqual(denseCandleChart.sampledPointCount, 100);
+  assert.strictEqual(denseCandleChart.algorithm, 'ohlc-bucket/100');
+
   const unsortedChart = buildLineChartData(chartTable, {
     version: 2,
     requestId: 3,
@@ -784,6 +967,108 @@ function panelFormatElapsedMs(milliseconds, display) {
   ]);
   assert.deepStrictEqual(groupedChart.series[0].values, [200, null, null, null]);
   assert.deepStrictEqual(groupedChart.series[2].values, [null, null, 100, null]);
+  assert.deepStrictEqual(groupedChart.series[0].gapFlags, [false, false, false, false]);
+  assert.deepStrictEqual(groupedChart.series[2].gapFlags, [false, false, false, false]);
+  const groupedGapTable = rowsToColumnarPanelResult(
+    [
+      { x: 1, value: null, group: 'A' },
+      { x: 2, value: 2, group: 'B' },
+      { x: 3, value: 3, group: 'A' },
+    ],
+    ['x', 'value', 'group']
+  );
+  const groupedGapChart = buildChartData(groupedGapTable, {
+    chartType: 'line',
+    version: 2,
+    requestId: 51,
+    xColumn: 'x',
+    yColumns: ['value'],
+    groupByColumn: 'group',
+    width: 800,
+  });
+  assert.deepStrictEqual(groupedGapChart.series.map(series => series.columnName), ['value [A]', 'value [B]']);
+  assert.deepStrictEqual(groupedGapChart.series[0].values, [null, null, 3]);
+  assert.deepStrictEqual(groupedGapChart.series[0].gapFlags, [true, false, false]);
+  assert.deepStrictEqual(groupedGapChart.series[1].values, [null, 2, null]);
+  assert.deepStrictEqual(groupedGapChart.series[1].gapFlags, [false, false, false]);
+  const alignedGroupedChart = buildChartData(rowsToColumnarPanelResult(
+    [
+      { x: 1, value: 10, group: 'A' },
+      { x: 1, value: 20, group: 'B' },
+      { x: 2, value: 30, group: 'A' },
+      { x: 2, value: 40, group: 'B' },
+    ],
+    ['x', 'value', 'group']
+  ), {
+    chartType: 'line',
+    version: 2,
+    requestId: 511,
+    xColumn: 'x',
+    yColumns: ['value'],
+    groupByColumn: 'group',
+    width: 800,
+  });
+  assert.deepStrictEqual(alignedGroupedChart.x, [1, 2]);
+  assert.deepStrictEqual(alignedGroupedChart.series.map(series => series.values), [[10, 30], [20, 40]]);
+  assert.ok(alignedGroupedChart.warnings.some(warning => /aligned 4 grouped rows into 2 distinct x positions/.test(warning)));
+  assert.throws(
+    () => buildChartData(rowsToColumnarPanelResult(
+      [
+        { x: 1, value: 10, group: 'A' },
+        { x: 1, value: 11, group: 'A' },
+        { x: 1, value: 20, group: 'B' },
+      ],
+      ['x', 'value', 'group']
+    ), {
+      chartType: 'step',
+      version: 2,
+      requestId: 512,
+      xColumn: 'x',
+      yColumns: ['value'],
+      groupByColumn: 'group',
+      width: 800,
+    }),
+    /Step chart grouping has multiple finite values for value \[A\] at x 1/
+  );
+  const groupedWithoutEmptySeries = buildChartData(rowsToColumnarPanelResult(
+    [
+      { x: 1, value: null, group: 'empty' },
+      { x: 2, value: 2, group: 'finite' },
+    ],
+    ['x', 'value', 'group']
+  ), {
+    chartType: 'scatter',
+    version: 2,
+    requestId: 513,
+    xColumn: 'x',
+    yColumns: ['value'],
+    groupByColumn: 'group',
+    width: 800,
+  });
+  assert.deepStrictEqual(groupedWithoutEmptySeries.series.map(series => series.columnName), ['value [finite]']);
+  assert.ok(groupedWithoutEmptySeries.warnings.some(warning => /omitted 1 category with no finite selected y values/.test(warning)));
+  const sparseGroupYColumns = Array.from({ length: 10 }, (_value, index) => `y${index}`);
+  const sparseGroupedChart = buildChartData(rowsToColumnarPanelResult(
+    Array.from({ length: 10 }, (_value, groupIndex) => {
+      const row = { x: groupIndex, group: `g${groupIndex}` };
+      sparseGroupYColumns.forEach((columnName, yIndex) => {
+        row[columnName] = yIndex === groupIndex ? groupIndex + 1 : null;
+      });
+      return row;
+    }),
+    ['x'].concat(sparseGroupYColumns, ['group'])
+  ), {
+    chartType: 'scatter',
+    version: 2,
+    requestId: 514,
+    xColumn: 'x',
+    yColumns: sparseGroupYColumns,
+    groupByColumn: 'group',
+    width: 800,
+  });
+  assert.strictEqual(sparseGroupedChart.series.length, 10, 'sparse finite combinations should determine the generated-series cap');
+  assert.deepStrictEqual(sparseGroupedChart.series.map(series => series.columnName), sparseGroupYColumns.map((columnName, index) => `${columnName} [g${index}]`));
+  assert.ok(sparseGroupedChart.warnings.some(warning => /omitted 90 group\/Y combinations with no finite values/.test(warning)));
   const zoomRangeChart = buildChartData(chartTable, {
     chartType: 'line',
     version: 2,
@@ -809,6 +1094,66 @@ function panelFormatElapsedMs(milliseconds, display) {
     /Group by is not supported/
   );
 
+  const groupedBarTable = rowsToColumnarPanelResult(
+    [
+      { x: 1, value: 10, group: 'A' },
+      { x: 1, value: 20, group: 'B' },
+      { x: 2, value: 30, group: 'A' },
+      { x: 2, value: 40, group: 'B' },
+    ],
+    ['x', 'value', 'group']
+  );
+  const groupedBarChart = buildChartData(groupedBarTable, {
+    chartType: 'bar',
+    version: 2,
+    requestId: 52,
+    xColumn: 'x',
+    yColumns: ['value'],
+    groupByColumn: 'group',
+    width: 800,
+  });
+  assert.deepStrictEqual(groupedBarChart.x, [1, 2]);
+  assert.deepStrictEqual(groupedBarChart.series.map(series => series.values), [[10, 30], [20, 40]]);
+  assert.deepStrictEqual(groupedBarChart.series.map(series => series.gapFlags), [[false, false], [false, false]]);
+  assert.strictEqual(groupedBarChart.algorithm, 'bar-cluster/2');
+  assert.ok(groupedBarChart.warnings.some(warning => /distinct x clusters without stacking overlapping bars/.test(warning)));
+  const duplicateGroupedBarTable = rowsToColumnarPanelResult(
+    [
+      { x: 1, value: 10, group: 'A' },
+      { x: 1, value: 11, group: 'A' },
+      { x: 1, value: 20, group: 'B' },
+    ],
+    ['x', 'value', 'group']
+  );
+  assert.throws(
+    () => buildChartData(duplicateGroupedBarTable, {
+      chartType: 'bar',
+      version: 2,
+      requestId: 53,
+      xColumn: 'x',
+      yColumns: ['value'],
+      groupByColumn: 'group',
+      width: 800,
+    }),
+    /multiple finite values for value \[A\] at x 1/
+  );
+  const oneBarCluster = buildChartData(rowsToColumnarPanelResult(
+    [{ x: 1, value: 10 }, { x: 2, value: 20 }],
+    ['x', 'value']
+  ), {
+    chartType: 'bar',
+    version: 2,
+    requestId: 54,
+    xColumn: 'x',
+    yColumns: ['value'],
+    width: 1,
+    maxSampledPoints: 1,
+  });
+  assert.deepStrictEqual(oneBarCluster.x, [1]);
+  assert.deepStrictEqual(oneBarCluster.xDomain, { min: 1, max: 2 });
+  assert.deepStrictEqual(oneBarCluster.series[0].values, [10]);
+  assert.strictEqual(oneBarCluster.algorithm, 'bar-cluster-even/1');
+
   const spikeTable = createColumnarPanelResult(['x', 'y'], 100, (rowIndex, columnIndex) => {
     if (columnIndex === 0) {
       return rowIndex;
@@ -826,6 +1171,18 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(sampledChart.algorithm, 'minmax-bucket/10');
   assert.ok(sampledChart.sampledPointCount <= 10);
   assert.ok(sampledChart.series[0].values.includes(999), 'min/max chart sampling should preserve spikes');
+  const sampledGapChart = buildLineChartData(createColumnarPanelResult(['x', 'y'], 100, (rowIndex, columnIndex) => {
+    return columnIndex === 0 ? rowIndex : (rowIndex === 55 ? null : rowIndex);
+  }), {
+    version: 1,
+    requestId: 2,
+    xColumn: 'x',
+    yColumns: ['y'],
+    width: 10,
+    maxSampledPoints: 10,
+  });
+  assert.ok(sampledGapChart.sampledPointCount <= 10);
+  assert.ok(sampledGapChart.series[0].values.includes(null), 'min/max chart sampling should retain a source gap sample');
   assert.ok(chartTargetPointCount(1000) < 1000000, 'chart target should not send million-point series by default');
   const zoomAllRowsTable = createColumnarPanelResult(['x', 'y'], 5000, (rowIndex, columnIndex) => {
     return columnIndex === 0 ? rowIndex : rowIndex * 2;
@@ -930,7 +1287,23 @@ function panelFormatElapsedMs(milliseconds, display) {
     max: 3,
   });
   assert.strictEqual(boxChart.boxSeries[1].stats[1].count, 2);
+  assert.deepStrictEqual(boxChart.xDomain, { min: 1, max: 2 });
   assert.ok(boxChart.warnings.some(warning => /skipped for box statistics/.test(warning)));
+  const irregularBoxChart = buildChartData(createColumnarPanelResult(['x', 'y'], 121, (rowIndex, columnIndex) => {
+    const x = rowIndex === 120 ? 100000 : rowIndex;
+    return columnIndex === 0 ? x : x + 1;
+  }), {
+    chartType: 'box',
+    version: 7,
+    requestId: 81,
+    xColumn: 'x',
+    yColumns: ['y'],
+    width: 320,
+  });
+  assert.strictEqual(irregularBoxChart.algorithm, 'box-bucket/120');
+  assert.deepStrictEqual(irregularBoxChart.xDomain, { min: 0, max: 100000 });
+  assert.strictEqual(irregularBoxChart.x[irregularBoxChart.x.length - 1], (119 + 100000) / 2);
+  assert.strictEqual(irregularBoxChart.xText[irregularBoxChart.xText.length - 1], '119..100000');
   const binnedBoxChart = buildChartData(spikeTable, {
     chartType: 'box',
     version: 1,
@@ -944,6 +1317,28 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(binnedBoxChart.sampledPointCount, 8);
   assert.strictEqual(binnedBoxChart.algorithm, 'box-bucket/8');
   assert.ok(binnedBoxChart.warnings.some(warning => /x buckets/.test(warning)));
+  const repeatedBoxRows = [];
+  for (let index = 0; index < 17; index++) {
+    repeatedBoxRows.push({ x: 1, value: index + 1 });
+  }
+  for (let x = 2; x <= 10; x++) {
+    repeatedBoxRows.push({ x, value: x * 10 });
+  }
+  const repeatedXBoxChart = buildChartData(rowsToColumnarPanelResult(
+    repeatedBoxRows,
+    ['x', 'value']
+  ), {
+    chartType: 'box',
+    version: 1,
+    requestId: 10,
+    xColumn: 'x',
+    yColumns: ['value'],
+    width: 20,
+    maxSampledPoints: 8,
+  });
+  assert.strictEqual(repeatedXBoxChart.sampledPointCount, 8);
+  assert.ok(repeatedXBoxChart.x.every((value, index, values) => index === 0 || value > values[index - 1]), 'box buckets must not split or repeat an equal x run');
+  assert.ok(repeatedXBoxChart.boxSeries[0].stats[0].count >= 17, 'the repeated x run must stay in one complete box bucket');
 
   assert.strictEqual(DEFAULT_LOCAL_DATA_SERVER_PORT, 7742);
   assert.strictEqual(LOCAL_DATA_SERVER_HOST, '127.0.0.1');
@@ -1174,7 +1569,7 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(chartButtonSource.includes('Open chart</button>'), false);
   assert.strictEqual(toolbarSource.includes('id="chartType"'), false);
   assert.ok(resultsPanelSource.indexOf('id="chartPanel"') < resultsPanelSource.indexOf('id="chartType"'));
-  assert.deepStrictEqual(htmlSelectOptions(resultsPanelSource, 'chartType'), ['line', 'scatter', 'step', 'bar', 'box']);
+  assert.deepStrictEqual(htmlSelectOptions(resultsPanelSource, 'chartType'), ['line', 'scatter', 'step', 'bar', 'box', 'candlestick']);
   assert.strictEqual(settingsMenuSource.includes('<summary id="settingsSummary" aria-label="Settings menu">Settings</summary>'), true);
   assert.strictEqual(settingsMenuSource.includes('role="group" aria-label="Settings controls"'), true);
   assert.strictEqual(resultsPanelSource.includes('overflow-x: hidden;'), true);
@@ -1228,10 +1623,114 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('message.xMin = xRange.min;'), true);
   assert.strictEqual(resultsPanelSource.includes('Chart settings changed — Render to update.'), true);
   assert.strictEqual(resultsPanelSource.includes("chartData.chartType === 'box'"), true);
-  assert.strictEqual(resultsPanelSource.includes("Group by is not supported for box charts."), true);
+  assert.strictEqual(resultsPanelSource.includes('Box charts use numeric Y columns; Group by is unavailable.'), true);
   assert.strictEqual(resultsPanelSource.includes('window.uPlot.paths.stepped'), true);
-  assert.strictEqual(resultsPanelSource.includes('window.uPlot.paths.bars'), true);
+  assert.strictEqual(resultsPanelSource.includes('function drawChartBars(self)'), true);
   assert.strictEqual(resultsPanelSource.includes('function drawChartBoxes(self)'), true);
+  assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="chartGroupField"'), 1);
+  assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="chartOhlcColumns"'), 1);
+  assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="chartOpenColumn"'), 1);
+  assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="chartHighColumn"'), 1);
+  assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="chartLowColumn"'), 1);
+  assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="chartCloseColumn"'), 1);
+  assert.strictEqual(resultsPanelSource.includes('role="group" aria-label="Candlestick OHLC columns"'), true);
+  assert.strictEqual(resultsPanelSource.includes('aria-label="Open column"'), true);
+  assert.strictEqual(resultsPanelSource.includes('aria-label="High column"'), true);
+  assert.strictEqual(resultsPanelSource.includes('aria-label="Low column"'), true);
+  assert.strictEqual(resultsPanelSource.includes('aria-label="Close column"'), true);
+  const chartTypeControlsSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function updateChartTypeControls()'),
+    resultsPanelSource.indexOf('function chartTypeSupportsGroup')
+  );
+  assert.strictEqual(chartTypeControlsSource.includes('chartGroupField.hidden = !supportsGroup;'), true);
+  assert.strictEqual(chartTypeControlsSource.includes('chartGroupColumn.disabled = !supportsGroup'), true);
+  assert.strictEqual(chartTypeControlsSource.includes('chartYColumns.hidden = candlestick;'), true);
+  assert.strictEqual(chartTypeControlsSource.includes('input.disabled = candlestick;'), true);
+  assert.strictEqual(chartTypeControlsSource.includes('chartOhlcColumns.hidden = !candlestick;'), true);
+  const chartTypeSupportSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function chartTypeSupportsGroup'),
+    resultsPanelSource.indexOf('function onChartTypeChanged')
+  );
+  assert.strictEqual(chartTypeSupportSource.includes("type === 'line' || type === 'scatter' || type === 'step' || type === 'bar'"), true);
+  assert.strictEqual(chartTypeSupportSource.includes("type === 'box'"), false);
+  assert.strictEqual(chartTypeSupportSource.includes("type === 'candlestick'"), false);
+  const chartTypeChangeSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function onChartTypeChanged()'),
+    resultsPanelSource.indexOf('function onChartControlChanged()')
+  );
+  assert.strictEqual(chartTypeChangeSource.includes('updateChartTypeControls();'), true);
+  assert.strictEqual(chartTypeChangeSource.includes('destroyChartPlot'), false);
+  assert.strictEqual(chartTypeChangeSource.includes('drawChart'), false);
+  const chartControlChangeSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function onChartControlChanged()'),
+    resultsPanelSource.indexOf('function clearChartRendered()')
+  );
+  assert.strictEqual(chartControlChangeSource.includes('destroyChartPlot'), false);
+  assert.strictEqual(chartControlChangeSource.includes('clearChartRendered'), false);
+  assert.strictEqual(chartControlChangeSource.includes('chartRendered = null'), false);
+  const selectedChartYSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function selectedChartYColumns()'),
+    resultsPanelSource.indexOf('function selectedChartGroupColumn()')
+  );
+  assert.strictEqual(selectedChartYSource.includes("selectedChartType() === 'candlestick'"), true);
+  assert.strictEqual(selectedChartYSource.includes('return [];'), true);
+  assert.strictEqual(resultsPanelSource.includes('Group by is unavailable for candlesticks.'), true);
+  const chartAlignedDataSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function chartAlignedData()'),
+    resultsPanelSource.indexOf('function chartUPlotOptions')
+  );
+  assert.strictEqual(chartAlignedDataSource.includes('series.gapFlags[index] === true ? null : undefined'), true);
+  assert.strictEqual(resultsPanelSource.includes('Number.isFinite(Number(item)) ? Number(item) : null'), false);
+  const candlestickDrawSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function drawChartCandlesticks(self)'),
+    resultsPanelSource.indexOf('function chartCandlestickColors()')
+  );
+  assert.strictEqual(candlestickDrawSource.includes("chartData.chartType !== 'candlestick'"), true);
+  assert.strictEqual(candlestickDrawSource.includes('candle.high'), true);
+  assert.strictEqual(candlestickDrawSource.includes('candle.low'), true);
+  assert.strictEqual(candlestickDrawSource.includes('candle.open'), true);
+  assert.strictEqual(candlestickDrawSource.includes('candle.close'), true);
+  assert.strictEqual(candlestickDrawSource.includes('ctx.moveTo(center, highY);'), true);
+  assert.strictEqual(candlestickDrawSource.includes('ctx.lineTo(center, lowY);'), true);
+  assert.strictEqual(candlestickDrawSource.includes('rising ? colors.hollow : color'), true);
+  assert.strictEqual(candlestickDrawSource.includes('Math.max(1 * pxRatio, Math.min(18 * pxRatio'), true);
+  assert.strictEqual(resultsPanelSource.includes("draw: type === 'candlestick'\n              ? [drawChartCandlesticks]"), true);
+  const candleTooltipSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function updateChartTooltipFromUPlot(self)'),
+    resultsPanelSource.indexOf('function chartOhlcTooltipLabel')
+  );
+  assert.strictEqual(candleTooltipSource.includes("chartData.chartType === 'candlestick'"), true);
+  assert.strictEqual(candleTooltipSource.includes("chartOhlcTooltipLabel('Open'"), true);
+  assert.strictEqual(candleTooltipSource.includes("chartOhlcTooltipLabel('High'"), true);
+  assert.strictEqual(candleTooltipSource.includes("chartOhlcTooltipLabel('Low'"), true);
+  assert.strictEqual(candleTooltipSource.includes("chartOhlcTooltipLabel('Close'"), true);
+  const barDrawSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function drawChartBars(self)'),
+    resultsPanelSource.indexOf('function chartBarClusterWidthPixels')
+  );
+  assert.strictEqual(barDrawSource.includes("chartData.chartType !== 'bar'"), true);
+  assert.strictEqual(barDrawSource.includes("self.valToPos(0, 'y', true)"), true);
+  assert.strictEqual(barDrawSource.includes('slotWidth * seriesIndex + slotWidth / 2'), true);
+  assert.strictEqual(barDrawSource.includes('const maxBodyWidth = Math.max(Number.EPSILON, slotWidth * 0.86);'), true);
+  assert.strictEqual(barDrawSource.includes('const barWidth = Math.max(Number.EPSILON, Math.min(28 * pxRatio, maxBodyWidth));'), true);
+  assert.strictEqual(barDrawSource.includes('Math.min(28 * pxRatio, maxBodyWidth)'), true);
+  assert.strictEqual(barDrawSource.includes('Dense bar clusters too narrow to distinguish were skipped'), true);
+  assert.strictEqual(resultsPanelSource.includes('window.uPlot.paths.bars'), false);
+  const chartYScaleSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function chartYScaleRange(min, max)'),
+    resultsPanelSource.indexOf('function chartCandlestickYRange()')
+  );
+  assert.strictEqual(chartYScaleSource.includes("chartData.chartType === 'bar'"), true);
+  assert.strictEqual(chartYScaleSource.includes('low = Math.min(0, low);'), true);
+  assert.strictEqual(chartYScaleSource.includes('high = Math.max(0, high);'), true);
+  const boxDrawSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function drawChartBoxes(self)'),
+    resultsPanelSource.indexOf('function drawOneBox')
+  );
+  assert.strictEqual(boxDrawSource.includes('slotWidth < 1.75 * pxRatio'), true);
+  assert.strictEqual(boxDrawSource.includes('Dense box groups too narrow to distinguish were skipped'), true);
+  assert.strictEqual(boxDrawSource.includes('slotWidth * 0.72'), true);
+  assert.strictEqual(boxDrawSource.includes('slotWidth - Math.max(1, pxRatio)'), true);
   assert.strictEqual(resultsPanelSource.includes('function chartThinnedXAxisLabels(self, splits)'), true);
   assert.strictEqual(resultsPanelSource.includes('function chartTemporalTickLabel(self, value)'), true);
   assert.strictEqual(resultsPanelSource.includes('function chartMaxVisibleXAxisLabels(self, labels)'), true);
@@ -1295,6 +1794,14 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('const CHART_AUTO_REFINE_DELAY_MS = 450;'), true);
   assert.strictEqual(resultsPanelSource.includes('chartLastAutoRefineKey'), true);
   assert.strictEqual(resultsPanelSource.includes('function chartVisibleSamplePointCount(range)'), true);
+  assert.strictEqual(resultsPanelSource.includes('function normalizeChartXDomain(value)'), true);
+  assert.strictEqual(resultsPanelSource.includes('chartData && chartData.xDomain ? chartData.xDomain'), true);
+  const chartAutoRefineThresholdSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function chartAutoRefineMinVisiblePoints()'),
+    resultsPanelSource.indexOf('function chartZoomMaxSampledPoints()')
+  );
+  assert.strictEqual(chartAutoRefineThresholdSource.includes('Math.max(1, chartData.sampledPointCount)'), true);
+  assert.strictEqual(chartAutoRefineThresholdSource.includes('Math.min(configuredMinimum, availableSample)'), true);
   assert.strictEqual(resultsPanelSource.includes('message.minSampledPoints = chartZoomMinSampledPoints();'), true);
   assert.strictEqual(resultsPanelSource.includes('message.maxSampledPoints = chartZoomMaxSampledPoints();'), true);
   assert.strictEqual(packageJson.dependencies.uplot, '^1.6.32');
@@ -1302,7 +1809,7 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes("vscode.postMessage({ type: 'startLocalDataServer' })"), true);
   assert.strictEqual(resultsPanelSource.includes("type: 'requestChart'"), true);
   assert.strictEqual(resultsPanelSource.includes('buildChartData(table'), true);
-  assert.strictEqual(chartingSource.includes("export type ChartType = 'line' | 'scatter' | 'step' | 'bar' | 'box';"), true);
+  assert.strictEqual(chartingSource.includes("export type ChartType = 'line' | 'scatter' | 'step' | 'bar' | 'box' | 'candlestick';"), true);
   assert.strictEqual(chartingSource.includes("export type ChartGroupColumnKind = 'categorical';"), true);
   assert.strictEqual(chartingSource.includes('export const CHART_MAX_GROUPS = 12;'), true);
   assert.strictEqual(chartingSource.includes('export function boxStats'), true);
@@ -1762,6 +2269,85 @@ function panelFormatElapsedMs(milliseconds, display) {
     resultsPanelInternals.chartSelectionStorageKey(['time', 'sym', 'price']),
     resultsPanelInternals.chartSelectionStorageKey(['time', 'sym', 'price'])
   );
+  assert.notStrictEqual(
+    resultsPanelInternals.chartSelectionStorageKey(['time', 'sym', 'price']),
+    resultsPanelInternals.chartSelectionStorageKey(['time', 'price', 'sym'])
+  );
+  const persistedChartOptions = {
+    xColumns: [
+      { columnName: 'time', columnIndex: 0, kind: 'temporal' },
+      { columnName: 'open', columnIndex: 1, kind: 'numeric' },
+    ],
+    yColumns: [
+      { columnName: 'open', columnIndex: 1, kind: 'numeric' },
+      { columnName: 'high', columnIndex: 2, kind: 'numeric' },
+      { columnName: 'low', columnIndex: 3, kind: 'numeric' },
+      { columnName: 'close', columnIndex: 4, kind: 'numeric' },
+      { columnName: 'price', columnIndex: 5, kind: 'numeric' },
+    ],
+    groupColumns: [{ columnName: 'sym', columnIndex: 6, kind: 'categorical' }],
+    warnings: [],
+  };
+  assert.deepStrictEqual(resultsPanelInternals.normalizeSavedChartSelection({
+    chartType: 'line',
+    xColumn: 'time',
+    yColumns: ['price'],
+    groupByColumn: 'sym',
+  }), {
+    chartType: 'line',
+    xColumn: 'time',
+    yColumns: ['price'],
+    groupByColumn: 'sym',
+  });
+  assert.strictEqual(resultsPanelInternals.normalizeSavedChartSelection({
+    chartType: 'candlestick',
+    xColumn: 'time',
+    yColumns: ['open', 'high', 'low', 'close'],
+  }), null, 'old generic Y selections must not be reinterpreted as OHLC roles');
+  const savedCandleSelection = resultsPanelInternals.normalizeSavedChartSelection({
+    chartType: 'candlestick',
+    xColumn: 'time',
+    yColumns: ['price'],
+    groupByColumn: 'sym',
+    openColumn: 'open',
+    highColumn: 'high',
+    lowColumn: 'low',
+    closeColumn: 'close',
+  });
+  assert.deepStrictEqual(savedCandleSelection, {
+    chartType: 'candlestick',
+    xColumn: 'time',
+    yColumns: [],
+    openColumn: 'open',
+    highColumn: 'high',
+    lowColumn: 'low',
+    closeColumn: 'close',
+  });
+  assert.deepStrictEqual(
+    resultsPanelInternals.compatibleChartSelection(savedCandleSelection, persistedChartOptions),
+    savedCandleSelection
+  );
+  assert.strictEqual(resultsPanelInternals.compatibleChartSelection({
+    ...savedCandleSelection,
+    closeColumn: 'open',
+  }, persistedChartOptions), null);
+  assert.deepStrictEqual(resultsPanelInternals.normalizeSavedChartSelection({
+    chartType: 'box',
+    xColumn: 'time',
+    yColumns: ['price'],
+    groupByColumn: 'sym',
+  }), {
+    chartType: 'box',
+    xColumn: 'time',
+    yColumns: ['price'],
+    groupByColumn: undefined,
+  });
+  const renderedPanelHtml = resultsPanelInternals.renderResultsPanelHtml(path.join(__dirname, '..'));
+  const inlineScriptStart = renderedPanelHtml.lastIndexOf('<script nonce="');
+  const inlineScriptBodyStart = renderedPanelHtml.indexOf('>', inlineScriptStart) + 1;
+  const inlineScriptEnd = renderedPanelHtml.indexOf('</script>', inlineScriptBodyStart);
+  assert.ok(inlineScriptStart >= 0 && inlineScriptBodyStart > inlineScriptStart && inlineScriptEnd > inlineScriptBodyStart);
+  assert.doesNotThrow(() => new Function(renderedPanelHtml.slice(inlineScriptBodyStart, inlineScriptEnd)), 'webview inline script should parse');
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('cellWidth', '1000.9'), { key: 'cellWidth', value: 600 });
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('rowHeight', 19), { key: 'rowHeight', value: 20 });
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('fontSize', 'abc'), null);
@@ -1891,7 +2477,7 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('id="settingsLocalDataServerFullExportCellLimit"'), true);
   assert.strictEqual(packageJson.contributes.configuration.properties['kdb-sqltools.results.copyExportConfirmCellThreshold'].minimum, 1);
   assert.strictEqual(packageJson.contributes.configuration.properties['kdb-sqltools.results.localDataServerFullExportCellLimit'].minimum, 1);
-  assert.strictEqual(packageJson.version, '0.3.16');
+  assert.strictEqual(packageJson.version, '0.3.17');
   assert.strictEqual(chartingDocsSource.includes('Press the top-level `Chart` button.'), true);
   assert.strictEqual(chartingDocsSource.includes('kdb+: Run Selection and Chart'), true);
   assert.strictEqual(runningDocsSource.includes('| `Ctrl+Alt+C` | `Cmd+Alt+C` | `kdb+: Run Selection and Chart`'), true);
@@ -2697,7 +3283,7 @@ function panelFormatElapsedMs(milliseconds, display) {
 function loadResultsPanelInternals() {
   const filename = path.join(__dirname, '..', 'out', 'results-panel.js');
   const source = fs.readFileSync(filename, 'utf8') +
-    '\nmodule.exports.__test = { chartColumnSignature, chartDecimalPlacesSettingValue, chartMaxSourceRowsSettingValue, chartPngBytesFromDataUrl, chartRangeIsZoomed, chartSelectionStorageKey, chartZoomMaxSampledPointsSettingValue, chartZoomMinSampledPointsSettingValue, columnarToXlsx, normalizePanelSettingUpdate, panelSettingConfigKey, panelSizeSettingValue };';
+    '\nmodule.exports.__test = { chartColumnSignature, chartDecimalPlacesSettingValue, chartMaxSourceRowsSettingValue, chartPngBytesFromDataUrl, chartRangeIsZoomed, chartSelectionStorageKey, chartZoomMaxSampledPointsSettingValue, chartZoomMinSampledPointsSettingValue, columnarToXlsx, compatibleChartSelection, normalizePanelSettingUpdate, normalizeSavedChartSelection, panelSettingConfigKey, panelSizeSettingValue, renderResultsPanelHtml: extensionPath => KdbResultsPanel.prototype.html.call({}, { extensionPath }, { cspSource: "vscode-webview:", asWebviewUri: uri => String(uri && uri.fsPath || "") }) };';
   const testModule = new Module(filename, module);
   testModule.filename = filename;
   testModule.paths = Module._nodeModulePaths(path.dirname(filename));

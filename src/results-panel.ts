@@ -128,6 +128,10 @@ interface SavedChartSelection {
   xColumn: string;
   yColumns: string[];
   groupByColumn?: string;
+  openColumn?: string;
+  highColumn?: string;
+  lowColumn?: string;
+  closeColumn?: string;
 }
 
 interface ChartRange {
@@ -869,6 +873,10 @@ export class KdbResultsPanel {
         xColumn: typeof message.xColumn === 'string' ? message.xColumn : '',
         yColumns: Array.isArray(message.yColumns) ? message.yColumns.map(String) : [],
         groupByColumn: typeof message.groupByColumn === 'string' ? message.groupByColumn : '',
+        openColumn: typeof message.openColumn === 'string' ? message.openColumn : '',
+        highColumn: typeof message.highColumn === 'string' ? message.highColumn : '',
+        lowColumn: typeof message.lowColumn === 'string' ? message.lowColumn : '',
+        closeColumn: typeof message.closeColumn === 'string' ? message.closeColumn : '',
         xMin,
         xMax,
         width: Number(message.width) || 0,
@@ -2139,12 +2147,28 @@ export class KdbResultsPanel {
       max-width: 180px;
       min-width: 120px;
     }
+    .chart-field[hidden],
+    .chart-y-list[hidden],
+    .chart-ohlc-fields[hidden] {
+      display: none;
+    }
     .chart-y-list {
       display: inline-flex;
       flex-wrap: wrap;
       gap: 6px;
       min-width: 0;
       max-width: min(520px, 100%);
+    }
+    .chart-ohlc-fields {
+      display: inline-flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+    .chart-ohlc-fields .chart-field select {
+      min-width: 104px;
+      max-width: 150px;
     }
     .chart-y-list .checkbox {
       max-width: 180px;
@@ -2525,12 +2549,19 @@ export class KdbResultsPanel {
         <option value="step">Step</option>
         <option value="bar">Bar</option>
         <option value="box">Box</option>
+        <option value="candlestick">Candlestick</option>
       </select></label>
       <label class="chart-field"><span>X</span><select id="chartXColumn" disabled></select></label>
-      <label class="chart-field"><span>Group by</span><select id="chartGroupColumn" disabled>
+      <label id="chartGroupField" class="chart-field"><span>Group by</span><select id="chartGroupColumn" aria-label="Group by column" disabled>
         <option value="">None</option>
       </select></label>
       <div id="chartYColumns" class="chart-y-list" role="group" aria-label="Y columns"></div>
+      <div id="chartOhlcColumns" class="chart-ohlc-fields" role="group" aria-label="Candlestick OHLC columns" hidden>
+        <label class="chart-field"><span>Open</span><select id="chartOpenColumn" aria-label="Open column" disabled></select></label>
+        <label class="chart-field"><span>High</span><select id="chartHighColumn" aria-label="High column" disabled></select></label>
+        <label class="chart-field"><span>Low</span><select id="chartLowColumn" aria-label="Low column" disabled></select></label>
+        <label class="chart-field"><span>Close</span><select id="chartCloseColumn" aria-label="Close column" disabled></select></label>
+      </div>
       <button id="renderChart" disabled>Render</button>
       <button id="exportChart" hidden disabled>Export PNG</button>
       <button id="resetChartZoom" disabled>Reset zoom</button>
@@ -2658,8 +2689,14 @@ export class KdbResultsPanel {
       const chartPanel = document.getElementById('chartPanel');
       const chartType = document.getElementById('chartType');
       const chartXColumn = document.getElementById('chartXColumn');
+      const chartGroupField = document.getElementById('chartGroupField');
       const chartGroupColumn = document.getElementById('chartGroupColumn');
       const chartYColumns = document.getElementById('chartYColumns');
+      const chartOhlcColumns = document.getElementById('chartOhlcColumns');
+      const chartOpenColumn = document.getElementById('chartOpenColumn');
+      const chartHighColumn = document.getElementById('chartHighColumn');
+      const chartLowColumn = document.getElementById('chartLowColumn');
+      const chartCloseColumn = document.getElementById('chartCloseColumn');
       const renderChart = document.getElementById('renderChart');
       const exportChart = document.getElementById('exportChart');
       const resetChartZoomButton = document.getElementById('resetChartZoom');
@@ -2854,9 +2891,13 @@ export class KdbResultsPanel {
         vscode.postMessage({ type: 'cancelRunningQuery', version: data.version });
       });
       openChart.addEventListener('click', openChartPanel);
-      chartType.addEventListener('change', onChartControlChanged);
+      chartType.addEventListener('change', onChartTypeChanged);
       chartXColumn.addEventListener('change', onChartControlChanged);
       chartGroupColumn.addEventListener('change', onChartControlChanged);
+      chartOpenColumn.addEventListener('change', onChartControlChanged);
+      chartHighColumn.addEventListener('change', onChartControlChanged);
+      chartLowColumn.addEventListener('change', onChartControlChanged);
+      chartCloseColumn.addEventListener('change', onChartControlChanged);
       renderChart.addEventListener('click', requestChartData);
       exportChart.addEventListener('click', exportChartPng);
       resetChartZoomButton.addEventListener('click', resetChartZoom);
@@ -3401,6 +3442,10 @@ export class KdbResultsPanel {
         chartXColumn.textContent = '';
         chartGroupColumn.textContent = '';
         chartYColumns.textContent = '';
+        chartOpenColumn.textContent = '';
+        chartHighColumn.textContent = '';
+        chartLowColumn.textContent = '';
+        chartCloseColumn.textContent = '';
         chartStatus.textContent = messageText || '';
         chartLegend.textContent = '';
         hideChartTooltip();
@@ -3484,6 +3529,10 @@ export class KdbResultsPanel {
         chartXColumn.textContent = '';
         chartGroupColumn.textContent = '';
         chartYColumns.textContent = '';
+        chartOpenColumn.textContent = '';
+        chartHighColumn.textContent = '';
+        chartLowColumn.textContent = '';
+        chartCloseColumn.textContent = '';
         chartXColumn.disabled = chartOptions.xColumns.length === 0;
         chartOptions.xColumns.forEach(option => {
           const element = document.createElement('option');
@@ -3525,14 +3574,45 @@ export class KdbResultsPanel {
           chartYColumns.appendChild(label);
         });
 
+        populateCandlestickColumnSelect(chartOpenColumn, 'Open');
+        populateCandlestickColumnSelect(chartHighColumn, 'High');
+        populateCandlestickColumnSelect(chartLowColumn, 'Low');
+        populateCandlestickColumnSelect(chartCloseColumn, 'Close');
+        chartOpenColumn.value = defaultCandlestickColumn('open');
+        chartHighColumn.value = defaultCandlestickColumn('high');
+        chartLowColumn.value = defaultCandlestickColumn('low');
+        chartCloseColumn.value = defaultCandlestickColumn('close');
+        updateChartTypeControls();
+
         const warnings = chartOptions.warnings.length > 0 ? ' ' + chartOptions.warnings.join(' ') : '';
         if (chartOptions.xColumns.length === 0 || chartOptions.yColumns.length === 0) {
           chartStatus.textContent = 'No eligible chart columns.' + warnings;
         } else {
-          chartStatus.textContent = 'Choose chart type, x and y columns.' + warnings;
+          chartStatus.textContent = chartControlStatusMessage() + warnings;
         }
         chartControlsDirty = false;
         updateChartControls();
+      }
+
+      function populateCandlestickColumnSelect(select, role) {
+        const placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = 'Select ' + role;
+        select.appendChild(placeholder);
+        chartOptions.yColumns.forEach(option => {
+          const element = document.createElement('option');
+          element.value = option.columnName;
+          element.textContent = option.columnName;
+          select.appendChild(element);
+        });
+      }
+
+      function defaultCandlestickColumn(role) {
+        const expected = String(role || '').trim().toLowerCase();
+        const matches = chartOptions.yColumns.filter(option => {
+          return String(option.columnName || '').trim().toLowerCase() === expected;
+        });
+        return matches.length === 1 ? matches[0].columnName : '';
       }
 
       function applySavedChartSelection(value) {
@@ -3541,24 +3621,47 @@ export class KdbResultsPanel {
         }
         const type = normalizeChartType(value.chartType);
         const xColumn = String(value.xColumn || '');
-        const yColumns = Array.isArray(value.yColumns) ? value.yColumns.map(String).filter(Boolean) : [];
-        if (!chartOptions.xColumns.some(option => option.columnName === xColumn) || yColumns.length === 0) {
+        if (!chartOptions.xColumns.some(option => option.columnName === xColumn)) {
           return false;
         }
         const yLookup = columnNameLookup(chartOptions.yColumns.map(option => option.columnName));
-        const retainedY = yColumns.filter(column => yLookup[column]);
-        if (retainedY.length === 0) {
-          return false;
+        let roles = null;
+        let retainedY = [];
+        if (type === 'candlestick') {
+          roles = [
+            String(value.openColumn || ''),
+            String(value.highColumn || ''),
+            String(value.lowColumn || ''),
+            String(value.closeColumn || '')
+          ];
+          if (roles.some(column => !column || !yLookup[column]) || new Set(roles).size !== roles.length) {
+            return false;
+          }
+        } else {
+          const yColumns = Array.isArray(value.yColumns) ? value.yColumns.map(String).filter(Boolean) : [];
+          retainedY = yColumns.filter(column => yLookup[column]);
+          if (retainedY.length === 0) {
+            return false;
+          }
         }
 
         chartType.value = type;
         chartXColumn.value = xColumn;
-        const groupByColumn = type === 'box' ? '' : String(value.groupByColumn || '');
+        if (roles) {
+          chartOpenColumn.value = roles[0];
+          chartHighColumn.value = roles[1];
+          chartLowColumn.value = roles[2];
+          chartCloseColumn.value = roles[3];
+        } else {
+          chartYColumns.querySelectorAll('input[type="checkbox"]').forEach(input => {
+            input.checked = retainedY.indexOf(String(input.value || '')) !== -1;
+          });
+        }
+
+        const groupByColumn = chartTypeSupportsGroup(type) ? String(value.groupByColumn || '') : '';
         const hasGroup = groupByColumn && chartOptions.groupColumns.some(option => option.columnName === groupByColumn);
         chartGroupColumn.value = hasGroup ? groupByColumn : '';
-        chartYColumns.querySelectorAll('input[type="checkbox"]').forEach(input => {
-          input.checked = retainedY.indexOf(String(input.value || '')) !== -1;
-        });
+        updateChartTypeControls();
         chartControlsDirty = false;
         updateChartControls();
         return true;
@@ -3573,12 +3676,16 @@ export class KdbResultsPanel {
       }
 
       function chartCanRender() {
-        return !chartPanel.hidden &&
+        const baseReady = !chartPanel.hidden &&
           hasTableCells() &&
           chartOptions.xColumns.length > 0 &&
-          selectedChartYColumns().length > 0 &&
-          String(chartXColumn.value || '').length > 0 &&
-          !(selectedChartType() === 'box' && selectedChartGroupColumn());
+          String(chartXColumn.value || '').length > 0;
+        if (!baseReady) {
+          return false;
+        }
+        return selectedChartType() === 'candlestick'
+          ? !candlestickControlValidationMessage()
+          : selectedChartYColumns().length > 0;
       }
 
       function chartCanExport() {
@@ -3594,13 +3701,75 @@ export class KdbResultsPanel {
       }
 
       function chartControlStatusMessage() {
-        if (selectedChartType() === 'box' && selectedChartGroupColumn()) {
-          return 'Group by is not supported for box charts.';
+        const type = selectedChartType();
+        if (!String(chartXColumn.value || '')) {
+          return 'Select one numeric or temporal X column.';
         }
-        if (!chartCanRender()) {
+        if (type === 'candlestick') {
+          const validation = candlestickControlValidationMessage();
+          if (validation) {
+            return validation + ' Group by is unavailable for candlesticks.';
+          }
+          return 'Candlestick uses distinct numeric Open, High, Low, Close columns; Group by is unavailable. ' +
+            (chartRendered ? 'Render to apply changed settings.' : 'Press Render to create chart.');
+        }
+        if (selectedChartYColumns().length === 0) {
           return 'Select one x column and at least one numeric y column.';
         }
-        return chartRendered ? 'Chart settings changed — Render to update.' : 'Press Render to create chart.';
+        const note = type === 'box' ? 'Box charts use numeric Y columns; Group by is unavailable. ' : '';
+        return note + (chartRendered ? 'Chart settings changed — Render to update.' : 'Press Render to create chart.');
+      }
+
+      function candlestickControlValidationMessage() {
+        const roles = selectedCandlestickColumns();
+        const entries = [
+          ['Open', roles.open],
+          ['High', roles.high],
+          ['Low', roles.low],
+          ['Close', roles.close]
+        ];
+        const missing = entries.filter(entry => !entry[1]).map(entry => entry[0]);
+        if (missing.length > 0) {
+          return 'Select numeric ' + missing.join(', ') + ' column' + (missing.length === 1 ? '' : 's') + '.';
+        }
+        const names = entries.map(entry => entry[1]);
+        if (new Set(names).size !== names.length) {
+          return 'Open, High, Low, and Close must use four distinct numeric columns.';
+        }
+        const numericLookup = columnNameLookup(chartOptions.yColumns.map(option => option.columnName));
+        const invalid = entries.filter(entry => !numericLookup[entry[1]]).map(entry => entry[0]);
+        if (invalid.length > 0) {
+          return invalid.join(', ') + ' must select numeric columns available in this result.';
+        }
+        return '';
+      }
+
+      function updateChartTypeControls() {
+        const type = selectedChartType();
+        const candlestick = type === 'candlestick';
+        const supportsGroup = chartTypeSupportsGroup(type);
+        chartGroupField.hidden = !supportsGroup;
+        chartGroupColumn.disabled = !supportsGroup || chartOptions.groupColumns.length === 0;
+        if (!supportsGroup) {
+          chartGroupColumn.value = '';
+        }
+        chartYColumns.hidden = candlestick;
+        chartYColumns.querySelectorAll('input[type="checkbox"]').forEach(input => {
+          input.disabled = candlestick;
+        });
+        chartOhlcColumns.hidden = !candlestick;
+        [chartOpenColumn, chartHighColumn, chartLowColumn, chartCloseColumn].forEach(select => {
+          select.disabled = !candlestick || chartOptions.yColumns.length === 0;
+        });
+      }
+
+      function chartTypeSupportsGroup(type) {
+        return type === 'line' || type === 'scatter' || type === 'step' || type === 'bar';
+      }
+
+      function onChartTypeChanged() {
+        updateChartTypeControls();
+        onChartControlChanged();
       }
 
       function onChartControlChanged() {
@@ -3626,6 +3795,9 @@ export class KdbResultsPanel {
       }
 
       function selectedChartYColumns() {
+        if (selectedChartType() === 'candlestick') {
+          return [];
+        }
         const values = [];
         chartYColumns.querySelectorAll('input[type="checkbox"]').forEach(input => {
           if (input.checked) {
@@ -3636,7 +3808,16 @@ export class KdbResultsPanel {
       }
 
       function selectedChartGroupColumn() {
-        return String(chartGroupColumn.value || '');
+        return chartTypeSupportsGroup(selectedChartType()) ? String(chartGroupColumn.value || '') : '';
+      }
+
+      function selectedCandlestickColumns() {
+        return {
+          open: String(chartOpenColumn.value || ''),
+          high: String(chartHighColumn.value || ''),
+          low: String(chartLowColumn.value || ''),
+          close: String(chartCloseColumn.value || '')
+        };
       }
 
       function selectedChartType() {
@@ -3645,7 +3826,7 @@ export class KdbResultsPanel {
 
       function normalizeChartType(value) {
         const text = String(value || '').toLowerCase();
-        return text === 'scatter' || text === 'step' || text === 'bar' || text === 'box'
+        return text === 'scatter' || text === 'step' || text === 'bar' || text === 'box' || text === 'candlestick'
           ? text
           : 'line';
       }
@@ -3693,6 +3874,10 @@ export class KdbResultsPanel {
           xColumn: String(chartXColumn.value || ''),
           yColumns: selectedChartYColumns(),
           groupByColumn: selectedChartGroupColumn(),
+          openColumn: selectedCandlestickColumns().open,
+          highColumn: selectedCandlestickColumns().high,
+          lowColumn: selectedCandlestickColumns().low,
+          closeColumn: selectedCandlestickColumns().close,
           width: Math.max(320, Math.floor(chartCanvasWrap.clientWidth || 800))
         };
         if (xRange) {
@@ -3750,38 +3935,70 @@ export class KdbResultsPanel {
           chartControlsDirty) {
           return;
         }
-        chartData = normalizeChartData(value);
+        const normalized = normalizeChartData(value);
+        if (normalized.chartType === 'candlestick' && normalized.invalidCandlestickCount > 0) {
+          chartStatus.textContent = 'Candlestick data contains ' + formatUiCount(normalized.invalidCandlestickCount) +
+            ' invalid OHLC point' + (normalized.invalidCandlestickCount === 1 ? '' : 's') +
+            '; check finite Open, High, Low, Close values and High/Low bounds.';
+          chartData = null;
+          chartRendered = null;
+          chartControlsDirty = false;
+          drawChart();
+          return;
+        }
+        chartData = normalized;
         chartRendered = null;
         chartControlsDirty = false;
         const warnings = chartData.warnings.length > 0 ? ' ' + chartData.warnings.join(' ') : '';
         const grouped = chartData.groupByColumn ? ' grouped by ' + chartData.groupByColumn : '';
-        chartStatus.textContent = chartData.chartType === 'box'
-          ? 'Showing ' + formatUiCount(chartData.sampledPointCount) +
-            ' box groups from ' + formatUiCount(chartData.eligibleRowCount) +
-            ' eligible rows (' + chartData.algorithm + ').' + warnings
-          : 'Showing ' + formatUiCount(chartData.sampledPointCount) +
-            ' of ' + formatUiCount(chartData.eligibleRowCount) +
-            ' eligible rows' + grouped + ' (' + chartData.algorithm + ').' + warnings;
+        chartStatus.textContent = chartData.chartType === 'candlestick'
+          ? 'Showing ' + formatUiCount(chartData.candlesticks.length) +
+            ' candles from ' + formatUiCount(chartData.eligibleRowCount) +
+            ' eligible rows (' + chartData.algorithm + '). Group by is unavailable.' + warnings
+          : chartData.chartType === 'box'
+            ? 'Showing ' + formatUiCount(chartData.sampledPointCount) +
+              ' box groups from ' + formatUiCount(chartData.eligibleRowCount) +
+              ' eligible rows (' + chartData.algorithm + '). Group by is unavailable.' + warnings
+            : 'Showing ' + formatUiCount(chartData.sampledPointCount) +
+              ' of ' + formatUiCount(chartData.eligibleRowCount) +
+              ' eligible rows' + grouped + ' (' + chartData.algorithm + ').' + warnings;
         drawChart();
       }
 
       function normalizeChartData(value) {
+        const type = normalizeChartType(value.chartType);
+        const normalizedCandlesticks = Array.isArray(value.candlesticks)
+          ? value.candlesticks.map(normalizeCandlestick)
+          : [];
+        const invalidCandlestickCount = normalizedCandlesticks.filter(candle => !candle).length;
+        const candlesticks = normalizedCandlesticks.filter(Boolean);
+        const x = type === 'candlestick' && candlesticks.length > 0
+          ? candlesticks.map(candle => candle.x)
+          : (Array.isArray(value.x) ? value.x.filter(item => typeof item === 'number' && Number.isFinite(item)) : []);
+        const xText = type === 'candlestick' && candlesticks.length > 0
+          ? candlesticks.map(candle => candle.xText)
+          : (Array.isArray(value.xText) ? value.xText.map(String) : []);
+        const xDomain = normalizeChartXDomain(value.xDomain);
         return {
           version: toNonNegativeInteger(value.version, 0),
           requestId: toNonNegativeInteger(value.requestId, 0),
-          chartType: normalizeChartType(value.chartType),
+          chartType: type,
           xColumn: String(value.xColumn || ''),
-          groupByColumn: value.groupByColumn ? String(value.groupByColumn) : '',
+          groupByColumn: chartTypeSupportsGroup(type) && value.groupByColumn ? String(value.groupByColumn) : '',
           xKind: value.xKind === 'temporal' ? 'temporal' : 'numeric',
-          x: Array.isArray(value.x) ? value.x.map(Number).filter(Number.isFinite) : [],
-          xText: Array.isArray(value.xText) ? value.xText.map(String) : [],
+          x,
+          xText,
+          xDomain,
           series: Array.isArray(value.series) ? value.series.map(series => {
             return {
               columnName: String(series && series.columnName || ''),
               sourceColumnName: String(series && series.sourceColumnName || ''),
               groupValue: String(series && series.groupValue || ''),
               values: Array.isArray(series && series.values)
-                ? series.values.map(item => Number.isFinite(Number(item)) ? Number(item) : null)
+                ? series.values.map(item => typeof item === 'number' && Number.isFinite(item) ? item : null)
+                : [],
+              gapFlags: Array.isArray(series && series.gapFlags)
+                ? series.gapFlags.map(flag => flag === true)
                 : []
             };
           }).filter(series => series.columnName) : [],
@@ -3793,12 +4010,60 @@ export class KdbResultsPanel {
                 : []
             };
           }).filter(series => series.columnName) : [],
+          ohlcColumns: normalizeOhlcColumns(value.ohlcColumns),
+          candlesticks,
+          invalidCandlestickCount,
           sourceRowCount: toNonNegativeInteger(value.sourceRowCount, 0),
           eligibleRowCount: toNonNegativeInteger(value.eligibleRowCount, 0),
           sampledPointCount: toNonNegativeInteger(value.sampledPointCount, 0),
           algorithm: String(value.algorithm || 'none'),
           sorted: value.sorted === true,
           warnings: Array.isArray(value.warnings) ? value.warnings.map(String) : []
+        };
+      }
+
+      function normalizeOhlcColumns(value) {
+        return {
+          open: String(value && value.open || ''),
+          high: String(value && value.high || ''),
+          low: String(value && value.low || ''),
+          close: String(value && value.close || '')
+        };
+      }
+
+      function normalizeChartXDomain(value) {
+        const min = value && value.min;
+        const max = value && value.max;
+        return typeof min === 'number' && Number.isFinite(min) &&
+          typeof max === 'number' && Number.isFinite(max) && max >= min
+          ? { min, max }
+          : null;
+      }
+
+      function normalizeCandlestick(value) {
+        if (!value || typeof value !== 'object') {
+          return null;
+        }
+        const x = value.x;
+        const open = value.open;
+        const high = value.high;
+        const low = value.low;
+        const close = value.close;
+        if (typeof x !== 'number' || !Number.isFinite(x) ||
+          typeof open !== 'number' || !Number.isFinite(open) ||
+          typeof high !== 'number' || !Number.isFinite(high) ||
+          typeof low !== 'number' || !Number.isFinite(low) ||
+          typeof close !== 'number' || !Number.isFinite(close) ||
+          high < Math.max(open, close, low) || low > Math.min(open, close, high)) {
+          return null;
+        }
+        return {
+          x,
+          xText: String(value.xText || ''),
+          open,
+          high,
+          low,
+          close
         };
       }
 
@@ -3845,7 +4110,10 @@ export class KdbResultsPanel {
           clearChartRendered();
           return;
         }
-        if (!chartData || chartData.x.length === 0 || chartData.series.length === 0) {
+        if (!chartData || chartData.x.length === 0 ||
+          (chartData.chartType === 'candlestick'
+            ? chartData.candlesticks.length === 0
+            : chartData.series.length === 0)) {
           destroyChartPlot();
           clearChartRendered();
           return;
@@ -3901,12 +4169,21 @@ export class KdbResultsPanel {
       }
 
       function chartAlignedData() {
+        if (chartData.chartType === 'candlestick') {
+          return [
+            chartData.candlesticks.map(candle => candle.x),
+            chartData.candlesticks.map(candle => candle.close)
+          ];
+        }
         const aligned = [chartData.x.slice()];
         chartData.series.forEach(series => {
           const values = [];
+          const hasGapFlags = Array.isArray(series.gapFlags) && series.gapFlags.length > 0;
           for (let index = 0; index < chartData.x.length; index++) {
             const value = series.values[index];
-            values.push(Number.isFinite(value) ? value : null);
+            values.push(Number.isFinite(value)
+              ? value
+              : (hasGapFlags ? (series.gapFlags[index] === true ? null : undefined) : null));
           }
           aligned.push(values);
         });
@@ -3922,33 +4199,44 @@ export class KdbResultsPanel {
           label: chartData.xColumn,
           value: (_self, _rawValue, _seriesIndex, index) => index === null || index === undefined ? '' : chartXLabel(index)
         }];
-        chartData.series.forEach((item, index) => {
-          const color = colors[index % colors.length];
-          const config = {
-            label: item.columnName,
-            stroke: color,
-            width: type === 'scatter' || type === 'bar' || type === 'box' ? 0 : 1.5,
+        if (type === 'candlestick') {
+          const candleColors = chartCandlestickColors();
+          series.push({
+            label: 'OHLC',
+            stroke: candleColors.up,
+            width: 0,
             spanGaps: false,
-            points: chartSeriesPoints(type, color),
-            value: (_self, rawValue, _seriesIndex, valueIndex) => chartSeriesValueLabel(type, index, rawValue, valueIndex)
-          };
-          if (type === 'step') {
-            const stepped = window.uPlot && window.uPlot.paths && window.uPlot.paths.stepped;
-            if (typeof stepped !== 'function') {
-              throw new Error('Step renderer is unavailable.');
+            points: {
+              show: false,
+              width: 1,
+              stroke: candleColors.up,
+              fill: candleColors.hollow
+            },
+            value: (_self, _rawValue, _seriesIndex, valueIndex) => chartCandlestickValueLabel(valueIndex)
+          });
+        } else {
+          chartData.series.forEach((item, index) => {
+            const color = colors[index % colors.length];
+            const config = {
+              label: item.columnName,
+              stroke: color,
+              width: type === 'scatter' || type === 'bar' || type === 'box' ? 0 : 1.5,
+              spanGaps: false,
+              points: chartSeriesPoints(type, color),
+              value: (_self, rawValue, _seriesIndex, valueIndex) => chartSeriesValueLabel(type, index, rawValue, valueIndex)
+            };
+            if (type === 'step') {
+              const stepped = window.uPlot && window.uPlot.paths && window.uPlot.paths.stepped;
+              if (typeof stepped !== 'function') {
+                throw new Error('Step renderer is unavailable.');
+              }
+              config.paths = stepped({ align: 1 });
+            } else if (type === 'bar') {
+              config.fill = chartAlphaColor(color, 0.42);
             }
-            config.paths = stepped({ align: 1 });
-          } else if (type === 'bar') {
-            const bars = chartBarPathBuilder(index, chartData.series.length);
-            if (!bars) {
-              throw new Error('Bar renderer is unavailable.');
-            }
-            config.paths = bars;
-            config.fill = chartAlphaColor(color, 0.42);
-            config.fillTo = 0;
-          }
-          series.push(config);
-        });
+            series.push(config);
+          });
+        }
 
         return {
           width: dimensions.width,
@@ -4000,7 +4288,9 @@ export class KdbResultsPanel {
             }
           },
           hooks: {
-            draw: type === 'box' ? [drawChartBoxes] : [],
+            draw: type === 'candlestick'
+              ? [drawChartCandlesticks]
+              : (type === 'bar' ? [drawChartBars] : (type === 'box' ? [drawChartBoxes] : [])),
             setCursor: [updateChartTooltipFromUPlot],
             setScale: [updateChartZoomState],
             setSeries: [() => updateChartControls()]
@@ -4031,41 +4321,102 @@ export class KdbResultsPanel {
         return Number.isFinite(rawValue) ? formatChartNumber(rawValue) : 'null';
       }
 
-      function chartBarPathBuilder(seriesIndex, seriesCount) {
-        const bars = window.uPlot && window.uPlot.paths && window.uPlot.paths.bars;
-        if (typeof bars !== 'function') {
-          return null;
+      function chartCandlestickValueLabel(valueIndex) {
+        if (!chartData || valueIndex === null || valueIndex === undefined) {
+          return '';
         }
-        return bars({
-          align: 1,
-          size: [1, 28, 1],
-          gap: 1,
-          disp: {
-            x0: {
-              unit: 1,
-              values: () => chartBarLeftValues(seriesIndex, seriesCount)
-            },
-            size: {
-              unit: 1,
-              values: () => chartBarSizeValues(seriesCount)
-            }
+        const candle = chartData.candlesticks[valueIndex];
+        return candle
+          ? 'O ' + formatChartNumber(candle.open) +
+            ' H ' + formatChartNumber(candle.high) +
+            ' L ' + formatChartNumber(candle.low) +
+            ' C ' + formatChartNumber(candle.close)
+          : '';
+      }
+
+      function drawChartBars(self) {
+        if (!chartData || chartData.chartType !== 'bar' || chartData.series.length === 0) {
+          return;
+        }
+        const ctx = self.ctx;
+        const pxRatio = chartPxRatio();
+        const colors = chartColors();
+        const seriesCount = Math.max(1, chartData.series.length);
+        const zeroBaseline = self.valToPos(0, 'y', true);
+        let skippedDenseBars = false;
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(self.bbox.left, self.bbox.top, self.bbox.width, self.bbox.height);
+        ctx.clip();
+        chartData.x.forEach((xValue, xIndex) => {
+          const center = self.valToPos(xValue, 'x', true);
+          const localGap = chartLocalXGapPixels(self, xIndex, 44 * pxRatio);
+          if (localGap * 0.78 / seriesCount < 0.75 * pxRatio) {
+            skippedDenseBars = true;
+            return;
           }
+          const clusterWidth = chartBarClusterWidthPixels(self, xIndex, seriesCount);
+          const slotWidth = clusterWidth / seriesCount;
+          if (slotWidth < 0.75 * pxRatio) {
+            skippedDenseBars = true;
+            return;
+          }
+          const maxBodyWidth = Math.max(Number.EPSILON, slotWidth * 0.86);
+          const barWidth = Math.max(Number.EPSILON, Math.min(28 * pxRatio, maxBodyWidth));
+          chartData.series.forEach((series, seriesIndex) => {
+            const plotSeries = self.series[seriesIndex + 1];
+            if (plotSeries && plotSeries.show === false) {
+              return;
+            }
+            const value = series.values[xIndex];
+            if (!Number.isFinite(value) || value === 0) {
+              return;
+            }
+            const valueY = self.valToPos(value, 'y', true);
+            const top = Math.min(valueY, zeroBaseline);
+            const height = Math.max(1 * pxRatio, Math.abs(zeroBaseline - valueY));
+            const seriesCenter = center - clusterWidth / 2 + slotWidth * seriesIndex + slotWidth / 2;
+            const left = seriesCenter - barWidth / 2;
+            const color = colors[seriesIndex % colors.length];
+            ctx.fillStyle = chartAlphaColor(color, 0.55);
+            ctx.strokeStyle = color;
+            ctx.lineWidth = Math.max(1, pxRatio);
+            ctx.fillRect(left, top, barWidth, height);
+            ctx.strokeRect(left, top, barWidth, height);
+          });
         });
+        ctx.restore();
+        if (skippedDenseBars && chartStatus.textContent.indexOf('Dense bar clusters') === -1) {
+          chartStatus.textContent += ' Dense bar clusters too narrow to distinguish were skipped; refine zoom to inspect them.';
+        }
       }
 
-      function chartBarLeftValues(seriesIndex, seriesCount) {
-        const width = chartBarWidthValue(seriesCount);
-        const groupWidth = width * Math.max(1, seriesCount);
-        return chartData.x.map(value => value - groupWidth / 2 + width * seriesIndex);
+      function chartBarClusterWidthPixels(self, xIndex, seriesCount) {
+        const pxRatio = chartPxRatio();
+        const localGap = chartLocalXGapPixels(self, xIndex, 44 * pxRatio);
+        const minimum = 1 * pxRatio;
+        return Math.max(minimum, Math.min(72 * pxRatio, localGap * 0.78));
       }
 
-      function chartBarSizeValues(seriesCount) {
-        const width = chartBarWidthValue(seriesCount);
-        return chartData.x.map(() => width);
-      }
-
-      function chartBarWidthValue(seriesCount) {
-        return chartNominalXStep() * 0.78 / Math.max(1, seriesCount);
+      function chartLocalXGapPixels(self, xIndex, fallback) {
+        if (!chartData || chartData.x.length <= 1) {
+          return Math.max(1, fallback);
+        }
+        const center = self.valToPos(chartData.x[xIndex], 'x', true);
+        let gap = Infinity;
+        if (xIndex > 0) {
+          const previous = Math.abs(center - self.valToPos(chartData.x[xIndex - 1], 'x', true));
+          if (Number.isFinite(previous) && previous > 0) {
+            gap = Math.min(gap, previous);
+          }
+        }
+        if (xIndex + 1 < chartData.x.length) {
+          const next = Math.abs(self.valToPos(chartData.x[xIndex + 1], 'x', true) - center);
+          if (Number.isFinite(next) && next > 0) {
+            gap = Math.min(gap, next);
+          }
+        }
+        return Number.isFinite(gap) && gap > 0 ? gap : Math.max(1, fallback);
       }
 
       function chartNominalXStep() {
@@ -4089,12 +4440,16 @@ export class KdbResultsPanel {
       }
 
       function chartNeedsXPadding() {
-        return chartData && (chartData.chartType === 'bar' || chartData.chartType === 'box');
+        return chartData && (chartData.chartType === 'bar' || chartData.chartType === 'box' || chartData.chartType === 'candlestick');
       }
 
       function chartPaddedXRange(min, max) {
         let low = Number.isFinite(min) ? min : 0;
         let high = Number.isFinite(max) ? max : low;
+        if (chartData && chartData.xDomain) {
+          low = Math.min(low, chartData.xDomain.min);
+          high = Math.max(high, chartData.xDomain.max);
+        }
         let pad = chartNominalXStep() * 0.55;
         if (!Number.isFinite(pad) || pad <= 0) {
           pad = chartData && chartData.xKind === 'temporal' ? 86400000 : 1;
@@ -4110,7 +4465,7 @@ export class KdbResultsPanel {
       }
 
       function chartInitialXRange() {
-        const range = chartData ? finiteRange(chartData.x) : null;
+        const range = chartData && chartData.xDomain ? chartData.xDomain : (chartData ? finiteRange(chartData.x) : null);
         if (!range) {
           return null;
         }
@@ -4122,11 +4477,13 @@ export class KdbResultsPanel {
       }
 
       function chartNeedsYRange() {
-        return chartData && (chartData.chartType === 'bar' || chartData.chartType === 'box');
+        return chartData && (chartData.chartType === 'bar' || chartData.chartType === 'box' || chartData.chartType === 'candlestick');
       }
 
       function chartYScaleRange(min, max) {
-        const statsRange = chartData && chartData.chartType === 'box' ? chartBoxYRange() : null;
+        const statsRange = chartData && chartData.chartType === 'box'
+          ? chartBoxYRange()
+          : (chartData && chartData.chartType === 'candlestick' ? chartCandlestickYRange() : null);
         let low = statsRange ? statsRange.min : (Number.isFinite(min) ? min : 0);
         let high = statsRange ? statsRange.max : (Number.isFinite(max) ? max : low);
         if (chartData && chartData.chartType === 'bar') {
@@ -4145,6 +4502,16 @@ export class KdbResultsPanel {
         return [low, high];
       }
 
+      function chartCandlestickYRange() {
+        let min = Infinity;
+        let max = -Infinity;
+        chartData.candlesticks.forEach(candle => {
+          min = Math.min(min, candle.low);
+          max = Math.max(max, candle.high);
+        });
+        return min === Infinity ? null : { min, max };
+      }
+
       function chartBoxYRange() {
         let min = Infinity;
         let max = -Infinity;
@@ -4160,6 +4527,55 @@ export class KdbResultsPanel {
         return min === Infinity ? null : { min, max };
       }
 
+      function drawChartCandlesticks(self) {
+        if (!chartData || chartData.chartType !== 'candlestick' || chartData.candlesticks.length === 0) {
+          return;
+        }
+        const plotSeries = self.series[1];
+        if (plotSeries && plotSeries.show === false) {
+          return;
+        }
+        const ctx = self.ctx;
+        const pxRatio = chartPxRatio();
+        const colors = chartCandlestickColors();
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(self.bbox.left, self.bbox.top, self.bbox.width, self.bbox.height);
+        ctx.clip();
+        chartData.candlesticks.forEach((candle, index) => {
+          const center = self.valToPos(candle.x, 'x', true);
+          const localGap = chartLocalXGapPixels(self, index, 16 * pxRatio);
+          const bodyWidth = Math.max(1 * pxRatio, Math.min(18 * pxRatio, localGap * 0.68));
+          const highY = self.valToPos(candle.high, 'y', true);
+          const lowY = self.valToPos(candle.low, 'y', true);
+          const openY = self.valToPos(candle.open, 'y', true);
+          const closeY = self.valToPos(candle.close, 'y', true);
+          const rising = candle.close >= candle.open;
+          const color = rising ? colors.up : colors.down;
+          const bodyTop = Math.min(openY, closeY);
+          const bodyHeight = Math.max(1 * pxRatio, Math.abs(closeY - openY));
+          const bodyLeft = center - bodyWidth / 2;
+          ctx.strokeStyle = color;
+          ctx.lineWidth = Math.max(1, pxRatio);
+          ctx.beginPath();
+          ctx.moveTo(center, highY);
+          ctx.lineTo(center, lowY);
+          ctx.stroke();
+          ctx.fillStyle = rising ? colors.hollow : color;
+          ctx.fillRect(bodyLeft, bodyTop, bodyWidth, bodyHeight);
+          ctx.strokeRect(bodyLeft, bodyTop, bodyWidth, bodyHeight);
+        });
+        ctx.restore();
+      }
+
+      function chartCandlestickColors() {
+        return {
+          up: cssColor('--vscode-charts-green', '#2ea043'),
+          down: cssColor('--vscode-charts-red', '#d73a49'),
+          hollow: cssColor('--vscode-editor-background', '#1e1e1e')
+        };
+      }
+
       function drawChartBoxes(self) {
         if (!chartData || chartData.chartType !== 'box' || !chartData.boxSeries.length) {
           return;
@@ -4170,7 +4586,17 @@ export class KdbResultsPanel {
         const groupWidth = chartBoxGroupWidth(self) * pxRatio;
         const seriesCount = Math.max(1, chartData.boxSeries.length);
         const slotWidth = groupWidth / seriesCount;
-        const boxWidth = Math.max(3 * pxRatio, Math.min(28 * pxRatio, slotWidth * 0.72));
+        if (slotWidth < 1.75 * pxRatio) {
+          if (chartStatus.textContent.indexOf('Dense box groups') === -1) {
+            chartStatus.textContent += ' Dense box groups too narrow to distinguish were skipped; refine zoom or select fewer Y columns.';
+          }
+          return;
+        }
+        const boxWidth = Math.max(Number.EPSILON, Math.min(
+          28 * pxRatio,
+          slotWidth * 0.72,
+          slotWidth - Math.max(1, pxRatio)
+        ));
         ctx.save();
         ctx.beginPath();
         ctx.rect(self.bbox.left, self.bbox.top, self.bbox.width, self.bbox.height);
@@ -4239,7 +4665,7 @@ export class KdbResultsPanel {
         if (!Number.isFinite(minGap)) {
           return 36;
         }
-        return Math.max(8, Math.min(52, minGap * 0.72));
+        return Math.max(Number.EPSILON, Math.min(52, minGap * 0.72));
       }
 
       function chartBoxStatsAt(seriesIndex, valueIndex) {
@@ -4278,26 +4704,37 @@ export class KdbResultsPanel {
           return;
         }
         const lines = [chartData.xColumn + ': ' + chartXLabel(index)];
-        chartData.series.forEach((series, seriesIndex) => {
-          const plotSeries = self.series[seriesIndex + 1];
-          if (plotSeries && plotSeries.show === false) {
-            return;
+        if (chartData.chartType === 'candlestick') {
+          const plotSeries = self.series[1];
+          const candle = chartData.candlesticks[index];
+          if (!plotSeries || plotSeries.show !== false) {
+            lines.push(chartOhlcTooltipLabel('Open', chartData.ohlcColumns.open) + ': ' + formatChartNumber(candle.open));
+            lines.push(chartOhlcTooltipLabel('High', chartData.ohlcColumns.high) + ': ' + formatChartNumber(candle.high));
+            lines.push(chartOhlcTooltipLabel('Low', chartData.ohlcColumns.low) + ': ' + formatChartNumber(candle.low));
+            lines.push(chartOhlcTooltipLabel('Close', chartData.ohlcColumns.close) + ': ' + formatChartNumber(candle.close));
           }
-          if (chartData.chartType === 'box') {
-            const stats = chartBoxStatsAt(seriesIndex, index);
-            lines.push(series.columnName + ': ' + (stats
-              ? 'n=' + formatUiCount(stats.count) +
-                ' min ' + formatChartNumber(stats.min) +
-                ' q1 ' + formatChartNumber(stats.q1) +
-                ' med ' + formatChartNumber(stats.median) +
-                ' q3 ' + formatChartNumber(stats.q3) +
-                ' max ' + formatChartNumber(stats.max)
-              : 'null'));
-          } else {
-            const value = series.values[index];
-            lines.push(series.columnName + ': ' + (Number.isFinite(value) ? formatChartNumber(value) : 'null'));
-          }
-        });
+        } else {
+          chartData.series.forEach((series, seriesIndex) => {
+            const plotSeries = self.series[seriesIndex + 1];
+            if (plotSeries && plotSeries.show === false) {
+              return;
+            }
+            if (chartData.chartType === 'box') {
+              const stats = chartBoxStatsAt(seriesIndex, index);
+              lines.push(series.columnName + ': ' + (stats
+                ? 'n=' + formatUiCount(stats.count) +
+                  ' min ' + formatChartNumber(stats.min) +
+                  ' q1 ' + formatChartNumber(stats.q1) +
+                  ' med ' + formatChartNumber(stats.median) +
+                  ' q3 ' + formatChartNumber(stats.q3) +
+                  ' max ' + formatChartNumber(stats.max)
+                : 'null'));
+            } else {
+              const value = series.values[index];
+              lines.push(series.columnName + ': ' + (Number.isFinite(value) ? formatChartNumber(value) : 'null'));
+            }
+          });
+        }
         chartTooltip.textContent = lines.join('\\n');
         chartTooltip.hidden = false;
         const wrapRect = chartCanvasWrap.getBoundingClientRect();
@@ -4305,7 +4742,11 @@ export class KdbResultsPanel {
         const left = overRect.left - wrapRect.left + Number(self.cursor.left || 0) + 12;
         const top = overRect.top - wrapRect.top + Number(self.cursor.top || 0) + 12;
         chartTooltip.style.left = Math.min(Math.max(4, wrapRect.width - 260), Math.max(4, left)) + 'px';
-        chartTooltip.style.top = Math.min(Math.max(4, wrapRect.height - 80), Math.max(4, top)) + 'px';
+        chartTooltip.style.top = Math.min(Math.max(4, wrapRect.height - (chartData.chartType === 'candlestick' ? 128 : 80)), Math.max(4, top)) + 'px';
+      }
+
+      function chartOhlcTooltipLabel(role, columnName) {
+        return columnName ? role + ' (' + columnName + ')' : role;
       }
 
       function hideChartTooltip() {
@@ -4379,12 +4820,12 @@ export class KdbResultsPanel {
 
       function queueChartAutoRefine() {
         const range = currentChartZoomRange();
-        if (!range || !chartCanExport() || chartControlsDirty) {
+        if (!range || !chartCanExport() || chartControlsDirty || !chartDataCanAutoRefine()) {
           clearChartAutoRefineTimer();
           return;
         }
         const visiblePoints = chartVisibleSamplePointCount(range);
-        if (visiblePoints >= chartZoomMinSampledPoints() || chartData.eligibleRowCount <= visiblePoints) {
+        if (visiblePoints >= chartAutoRefineMinVisiblePoints() || chartData.eligibleRowCount <= visiblePoints) {
           clearChartAutoRefineTimer();
           return;
         }
@@ -4434,6 +4875,22 @@ export class KdbResultsPanel {
         return positiveIntegerSetting(settings.chartZoomMinSampledPoints, DEFAULT_SETTINGS.chartZoomMinSampledPoints);
       }
 
+      function chartAutoRefineMinVisiblePoints() {
+        const configuredMinimum = chartZoomMinSampledPoints();
+        const availableSample = chartData ? Math.max(1, chartData.sampledPointCount) : configuredMinimum;
+        return Math.min(configuredMinimum, availableSample);
+      }
+
+      function chartDataCanAutoRefine() {
+        if (!chartData) {
+          return false;
+        }
+        return chartData.algorithm.indexOf('minmax-bucket/') === 0 ||
+          chartData.algorithm.indexOf('bar-cluster-even/') === 0 ||
+          chartData.algorithm.indexOf('box-bucket/') === 0 ||
+          chartData.algorithm.indexOf('ohlc-bucket/') === 0;
+      }
+
       function chartZoomMaxSampledPoints() {
         return Math.max(
           chartZoomMinSampledPoints(),
@@ -4461,11 +4918,16 @@ export class KdbResultsPanel {
       }
 
       function currentChartSelection() {
+        const roles = selectedCandlestickColumns();
         return {
           chartType: selectedChartType(),
           xColumn: String(chartXColumn.value || ''),
           yColumns: selectedChartYColumns(),
-          groupByColumn: selectedChartGroupColumn()
+          groupByColumn: selectedChartGroupColumn(),
+          openColumn: roles.open,
+          highColumn: roles.high,
+          lowColumn: roles.low,
+          closeColumn: roles.close
         };
       }
 
@@ -6427,14 +6889,36 @@ function normalizeSavedChartSelection(value: any): SavedChartSelection | null {
   const xColumn = typeof value.xColumn === 'string' ? value.xColumn : '';
   const yColumns = uniqueChartColumnNames(Array.isArray(value.yColumns) ? value.yColumns.map(String) : []);
   const groupByColumn = typeof value.groupByColumn === 'string' ? value.groupByColumn : '';
-  if (!xColumn || yColumns.length === 0) {
+  const openColumn = typeof value.openColumn === 'string' ? value.openColumn : '';
+  const highColumn = typeof value.highColumn === 'string' ? value.highColumn : '';
+  const lowColumn = typeof value.lowColumn === 'string' ? value.lowColumn : '';
+  const closeColumn = typeof value.closeColumn === 'string' ? value.closeColumn : '';
+  if (!xColumn) {
+    return null;
+  }
+  if (chartType === 'candlestick') {
+    const roles = [openColumn, highColumn, lowColumn, closeColumn];
+    if (roles.some(column => !column) || new Set(roles).size !== roles.length) {
+      return null;
+    }
+    return {
+      chartType,
+      xColumn,
+      yColumns: [],
+      openColumn,
+      highColumn,
+      lowColumn,
+      closeColumn,
+    };
+  }
+  if (yColumns.length === 0) {
     return null;
   }
   return {
     chartType,
     xColumn,
     yColumns,
-    groupByColumn: groupByColumn || undefined,
+    groupByColumn: chartType === 'box' ? undefined : (groupByColumn || undefined),
   };
 }
 
@@ -6443,12 +6927,32 @@ function compatibleChartSelection(selection: SavedChartSelection, options: Retur
   if (!xOption) {
     return null;
   }
+  const chartType = normalizeChartType(selection.chartType);
   const yLookup = columnNameLookup(options.yColumns.map(option => option.columnName));
+  if (chartType === 'candlestick') {
+    const roles = [
+      String(selection.openColumn || ''),
+      String(selection.highColumn || ''),
+      String(selection.lowColumn || ''),
+      String(selection.closeColumn || ''),
+    ];
+    if (roles.some(column => !yLookup[column]) || new Set(roles).size !== roles.length) {
+      return null;
+    }
+    return {
+      chartType,
+      xColumn: xOption.columnName,
+      yColumns: [],
+      openColumn: roles[0],
+      highColumn: roles[1],
+      lowColumn: roles[2],
+      closeColumn: roles[3],
+    };
+  }
   const yColumns = uniqueChartColumnNames(selection.yColumns).filter(column => yLookup[column]);
   if (yColumns.length === 0) {
     return null;
   }
-  const chartType = normalizeChartType(selection.chartType);
   const groupLookup = columnNameLookup(options.groupColumns.map(option => option.columnName));
   const groupByColumn = chartType === 'box' ? '' : (selection.groupByColumn && groupLookup[selection.groupByColumn]
     ? selection.groupByColumn

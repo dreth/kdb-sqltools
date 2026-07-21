@@ -824,7 +824,7 @@
 </tr>
 </tbody>
 </table>
-<p>There is no setting that auto-starts the local data server. Start it explicitly from the kdb panel <code>Tools</code> area or the Command Palette.</p>
+<p>There is no setting that auto-starts the local data server. Start it explicitly from the kdb panel <code>Settings</code> area or the Command Palette.</p>
 <p>Array display examples:</p>
 <table>
 <thead>
@@ -863,7 +863,7 @@
 </tr>
 <tr>
 <td><code>qText</code></td>
-<td>Deterministic q-like output in a plain text viewer.</td>
+<td>Deterministic q-like output in a plain text viewer. Normal list/object output is rendered fully; only very large text hits a character safety cap and shows <code>[truncated]</code>.</td>
 </tr>
 <tr>
 <td><code>table</code></td>
@@ -894,12 +894,12 @@
 <tr>
 <td><code>kdb-sqltools.results.kdbPanel.chartDecimalPlaces</code></td>
 <td><code>4</code></td>
-<td>Decimal places for chart numeric axis ticks, tooltips, legend/live values, and box statistics. Values are clamped to <code>0</code> through <code>12</code>; very large or very small nonzero numbers use scientific notation with this precision.</td>
+<td>Decimal places for chart numeric axis ticks, tooltips, legend/live values, box statistics, and candlestick OHLC values. Values are clamped to <code>0</code> through <code>12</code>; very large or very small nonzero numbers use scientific notation with this precision.</td>
 </tr>
 <tr>
 <td><code>kdb-sqltools.results.kdbPanel.chartZoomMinSampledPoints</code></td>
 <td><code>3000</code></td>
-<td>Minimum visible sampled points before a settled drag zoom auto-refines when more source rows may exist in that x range. The minimum is <code>1</code>.</td>
+<td>Minimum visible sampled points before a reduced chart's settled drag zoom auto-refines when more source rows may exist in that x range. The minimum is <code>1</code>.</td>
 </tr>
 <tr>
 <td><code>kdb-sqltools.results.kdbPanel.chartZoomMaxSampledPoints</code></td>
