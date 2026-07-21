@@ -18,7 +18,11 @@ python3 -m venv /tmp/kdb-docs-venv
 pip install -r mkdocs-src/requirements.txt
 mkdocs build --strict
 python .github/scripts/clean-mkdocs-output.py docs
+git diff --exit-code -- docs
+test -z "$(git status --porcelain -- docs)"
 ```
+
+The final two commands run the same generated-docs verification gate as the Pages workflow.
 
 For local preview:
 
