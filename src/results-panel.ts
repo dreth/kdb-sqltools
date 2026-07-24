@@ -13,6 +13,10 @@ import {
   normalizeChartType,
 } from './charting';
 import {
+  chartLegendToggleKey,
+  updateHiddenChartSeriesKeys,
+} from './chart-series-state';
+import {
   ArrayDisplayFormat,
   CellRange,
   CellTextOptions,
@@ -2740,6 +2744,8 @@ export class KdbResultsPanel {
       let chartRequestIsRefinement = false;
       let chartZoomStateSuspended = false;
       let chartControlsDirty = false;
+      let chartHiddenSeriesKeys = [];
+      let chartRenderedSeriesKeys = [];
       let chartResizeState = null;
       let chartHeight = 280;
       let chartAutoRenderPending = false;
@@ -2750,6 +2756,8 @@ export class KdbResultsPanel {
       const CHART_MAX_HEIGHT = 720;
       const CHART_AUTO_REFINE_DELAY_MS = 450;
       ${chartRangeIsZoomed.toString()}
+      ${chartLegendToggleKey.toString()}
+      ${updateHiddenChartSeriesKeys.toString()}
       window.addEventListener('message', event => {
         const msg = event.data || {};
         if (msg.type === 'loading') {
@@ -2904,6 +2912,12 @@ export class KdbResultsPanel {
       refineChartZoomButton.addEventListener('click', refineChartZoom);
       closeChart.addEventListener('click', closeChartPanel);
       chartCanvasWrap.addEventListener('mouseleave', hideChartTooltip);
+      chartCanvasWrap.addEventListener('dblclick', event => {
+        if (chartZoomed && chartCanExport()) {
+          event.preventDefault();
+          resetChartZoom();
+        }
+      });
       chartSplitter.addEventListener('mousedown', startChartResize);
       viewport.addEventListener('scroll', requestRender);
       viewport.addEventListener('contextmenu', () => {
@@ -3432,6 +3446,8 @@ export class KdbResultsPanel {
         chartOptions = { xColumns: [], yColumns: [], groupColumns: [], warnings: [] };
         chartData = null;
         chartRendered = null;
+        chartHiddenSeriesKeys = [];
+        chartRenderedSeriesKeys = [];
         chartControlsDirty = false;
         chartAutoRenderPending = false;
         chartLastAutoRefineKey = '';
@@ -4137,10 +4153,13 @@ export class KdbResultsPanel {
           return;
         }
 
+        const nextSeriesKeys = chartSeriesKeys(chartData);
         chartZoomStateSuspended = true;
         destroyChartPlot();
+        chartRenderedSeriesKeys = nextSeriesKeys;
         try {
           chartUPlot = new window.uPlot(chartUPlotOptions(dimensions), chartAlignedData(), chartPlot);
+          decorateChartLegendAccessibility(chartUPlot);
           chartRendered = { version: chartData.version, requestId: chartData.requestId };
           if (!chartRequestIsRefinement) {
             const renderedXRange = chartXScaleRange(chartUPlot);
@@ -4203,6 +4222,7 @@ export class KdbResultsPanel {
           const candleColors = chartCandlestickColors();
           series.push({
             label: 'OHLC',
+            show: chartHiddenSeriesKeys.indexOf(chartRenderedSeriesKeys[0]) === -1,
             stroke: candleColors.up,
             width: 0,
             spanGaps: false,
@@ -4219,6 +4239,7 @@ export class KdbResultsPanel {
             const color = colors[index % colors.length];
             const config = {
               label: item.columnName,
+              show: chartHiddenSeriesKeys.indexOf(chartRenderedSeriesKeys[index]) === -1,
               stroke: color,
               width: type === 'scatter' || type === 'bar' || type === 'box' ? 0 : 1.5,
               spanGaps: false,
@@ -4293,9 +4314,101 @@ export class KdbResultsPanel {
               : (type === 'bar' ? [drawChartBars] : (type === 'box' ? [drawChartBoxes] : [])),
             setCursor: [updateChartTooltipFromUPlot],
             setScale: [updateChartZoomState],
-            setSeries: [() => updateChartControls()]
+            setSeries: [self => {
+              captureChartSeriesVisibility(self);
+              syncChartLegendAccessibility(self);
+              updateChartControls();
+            }]
           }
         };
+      }
+
+      function chartSeriesKeys(value) {
+        if (!value) {
+          return [];
+        }
+        if (value.chartType === 'candlestick') {
+          const roles = value.ohlcColumns || {};
+          return ['candlestick\\u0000' +
+            String(roles.open || '') + '\\u0000' +
+            String(roles.high || '') + '\\u0000' +
+            String(roles.low || '') + '\\u0000' +
+            String(roles.close || '')];
+        }
+        return (Array.isArray(value.series) ? value.series : []).map(series => {
+          return String(series.sourceColumnName || series.columnName || '') + '\\u0000' +
+            String(series.groupValue || '') + '\\u0000' +
+            String(series.columnName || '');
+        });
+      }
+
+      function captureChartSeriesVisibility(self) {
+        if (!self || chartRenderedSeriesKeys.length === 0) {
+          return;
+        }
+        const hiddenRenderedKeys = [];
+        chartRenderedSeriesKeys.forEach((key, index) => {
+          const series = self.series && self.series[index + 1];
+          if (series && series.show === false) {
+            hiddenRenderedKeys.push(key);
+          }
+        });
+        chartHiddenSeriesKeys = updateHiddenChartSeriesKeys(
+          chartHiddenSeriesKeys,
+          chartRenderedSeriesKeys,
+          hiddenRenderedKeys
+        );
+      }
+
+      function decorateChartLegendAccessibility(self) {
+        if (!self || !chartLegend) {
+          return;
+        }
+        const labels = Array.from(chartLegend.querySelectorAll('.u-series > th'));
+        const offset = labels.length === self.series.length ? 0 : 1;
+        labels.forEach((label, labelIndex) => {
+          const seriesIndex = labelIndex + offset;
+          if (seriesIndex < 1 || seriesIndex >= self.series.length) {
+            return;
+          }
+          label.tabIndex = 0;
+          label.setAttribute('role', 'button');
+          label.setAttribute(
+            'aria-label',
+            'Toggle chart series ' + String(self.series[seriesIndex].label || seriesIndex)
+          );
+          label.dataset.kxSeriesIndex = String(seriesIndex);
+          if (label.dataset.kxKeyboardToggle !== 'true') {
+            label.dataset.kxKeyboardToggle = 'true';
+            label.addEventListener('keydown', event => {
+              if (!chartLegendToggleKey(event.key)) {
+                return;
+              }
+              event.preventDefault();
+              event.stopPropagation();
+              const index = Number(label.dataset.kxSeriesIndex);
+              if (Number.isSafeInteger(index) && index > 0 && index < self.series.length) {
+                self.setSeries(index, { show: self.series[index].show === false });
+              }
+            });
+          }
+        });
+        syncChartLegendAccessibility(self);
+      }
+
+      function syncChartLegendAccessibility(self) {
+        if (!self || !chartLegend) {
+          return;
+        }
+        chartLegend.querySelectorAll('.u-series > th').forEach(label => {
+          const seriesIndex = Number(label.dataset.kxSeriesIndex);
+          if (Number.isSafeInteger(seriesIndex) && seriesIndex > 0 && seriesIndex < self.series.length) {
+            label.setAttribute(
+              'aria-pressed',
+              self.series[seriesIndex].show === false ? 'false' : 'true'
+            );
+          }
+        });
       }
 
       function chartSeriesPoints(type, color) {
@@ -4939,6 +5052,7 @@ export class KdbResultsPanel {
       }
 
       function destroyChartPlot() {
+        captureChartSeriesVisibility(chartUPlot);
         if (chartUPlot && typeof chartUPlot.destroy === 'function') {
           try {
             chartUPlot.destroy();
@@ -4947,6 +5061,7 @@ export class KdbResultsPanel {
           }
         }
         chartUPlot = null;
+        chartRenderedSeriesKeys = [];
         chartZoomed = false;
         clearChartAutoRefineTimer();
         if (chartPlot) {

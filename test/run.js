@@ -35,6 +35,10 @@ const {
   chartTypeCapabilities,
   normalizeChartType,
 } = require('../out/charting');
+const {
+  chartLegendToggleKey,
+  updateHiddenChartSeriesKeys,
+} = require('../out/chart-series-state');
 const { currentQBlock, selectedTextOrCurrentBlock, selectedTextOrCurrentLine } = require('../out/q-text');
 const {
   allCellsRange,
@@ -1465,6 +1469,22 @@ function panelFormatElapsedMs(milliseconds, display) {
   const packageSource = fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8');
   const commandTitle = commandId => packageJson.contributes.commands.find(command => command.command === commandId).title;
   const keybinding = commandId => packageJson.contributes.keybindings.find(binding => binding.command === commandId);
+  let hiddenSeriesKeys = updateHiddenChartSeriesKeys([], ['price', 'size'], ['price']);
+  assert.deepStrictEqual(hiddenSeriesKeys, ['price']);
+  hiddenSeriesKeys = updateHiddenChartSeriesKeys(hiddenSeriesKeys, ['size'], []);
+  assert.deepStrictEqual(
+    hiddenSeriesKeys,
+    ['price'],
+    'a temporarily absent hidden series must survive a zoom/refinement render'
+  );
+  hiddenSeriesKeys = updateHiddenChartSeriesKeys(hiddenSeriesKeys, ['price', 'size'], ['price', 'size']);
+  assert.deepStrictEqual(hiddenSeriesKeys, ['price', 'size']);
+  hiddenSeriesKeys = updateHiddenChartSeriesKeys(hiddenSeriesKeys, ['price', 'size'], ['size']);
+  assert.deepStrictEqual(hiddenSeriesKeys, ['size'], 'showing a rendered series removes only its hidden identity');
+  assert.strictEqual(chartLegendToggleKey('Enter'), true);
+  assert.strictEqual(chartLegendToggleKey(' '), true);
+  assert.strictEqual(chartLegendToggleKey('Spacebar'), true);
+  assert.strictEqual(chartLegendToggleKey('ArrowDown'), false);
   assert.strictEqual(resultsPanelSource.includes('innerHTML'), false, 'kdb results panel must not render grid cells via innerHTML');
   assert.strictEqual(resultsPanelSource.includes(' style="'), false, 'kdb results panel must not rely on inline style attributes for virtual grid positioning');
   assert.strictEqual(resultsPanelSource.includes('createElement'), true, 'kdb results panel should create positioned grid cells as DOM nodes');
@@ -1617,6 +1637,24 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('localResourceRoots: [uplotDistRoot]'), true);
   assert.strictEqual(resultsPanelSource.includes('script-src ${cspSource}'), true);
   assert.strictEqual(resultsPanelSource.includes('new window.uPlot(chartUPlotOptions(dimensions), chartAlignedData(), chartPlot)'), true);
+  assert.strictEqual(resultsPanelSource.includes('let chartHiddenSeriesKeys = [];'), true);
+  assert.strictEqual(resultsPanelSource.includes('let chartRenderedSeriesKeys = [];'), true);
+  assert.strictEqual(resultsPanelSource.includes('function chartSeriesKeys(value)'), true);
+  assert.strictEqual(resultsPanelSource.includes('function captureChartSeriesVisibility(self)'), true);
+  assert.strictEqual(resultsPanelSource.includes('captureChartSeriesVisibility(chartUPlot);'), true);
+  assert.strictEqual(resultsPanelSource.includes('show: chartHiddenSeriesKeys.indexOf(chartRenderedSeriesKeys[0]) === -1'), true);
+  assert.strictEqual(resultsPanelSource.includes('show: chartHiddenSeriesKeys.indexOf(chartRenderedSeriesKeys[index]) === -1'), true);
+  assert.strictEqual(resultsPanelSource.includes('const nextSeriesKeys = chartSeriesKeys(chartData);'), true);
+  assert.strictEqual(resultsPanelSource.includes('chartRenderedSeriesKeys = nextSeriesKeys;'), true);
+  assert.strictEqual(resultsPanelSource.includes('captureChartSeriesVisibility(self);'), true);
+  assert.strictEqual(resultsPanelSource.includes('function decorateChartLegendAccessibility(self)'), true);
+  assert.strictEqual(resultsPanelSource.includes('label.tabIndex = 0;'), true);
+  assert.strictEqual(resultsPanelSource.includes("label.setAttribute('role', 'button');"), true);
+  assert.strictEqual(resultsPanelSource.includes("'aria-pressed'"), true);
+  assert.strictEqual(resultsPanelSource.includes('chartLegendToggleKey(event.key)'), true);
+  assert.strictEqual(resultsPanelSource.includes('syncChartLegendAccessibility(self);'), true);
+  assert.strictEqual(resultsPanelSource.includes("chartCanvasWrap.addEventListener('dblclick'"), true);
+  assert.strictEqual(resultsPanelSource.includes('if (chartZoomed && chartCanExport())'), true);
   assert.strictEqual(resultsPanelSource.includes('function selectedChartType()'), true);
   assert.strictEqual(resultsPanelSource.includes('chartType: selectedChartType()'), true);
   assert.strictEqual(resultsPanelSource.includes('groupByColumn: selectedChartGroupColumn()'), true);
