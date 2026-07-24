@@ -1471,6 +1471,28 @@ function panelFormatElapsedMs(milliseconds, display) {
   const keybinding = commandId => packageJson.contributes.keybindings.find(binding => binding.command === commandId);
   let hiddenSeriesKeys = updateHiddenChartSeriesKeys([], ['price', 'size'], ['price']);
   assert.deepStrictEqual(hiddenSeriesKeys, ['price']);
+  for (const refreshPath of [
+    'zoom',
+    'reset zoom',
+    'refine',
+    'rerender',
+    'resize',
+    'settings change',
+    'chart configuration update',
+  ]) {
+    const renderedKeys = refreshPath === 'refine' ? ['size'] : ['price', 'size'];
+    const hiddenRenderedKeys = renderedKeys.filter(key => hiddenSeriesKeys.includes(key));
+    hiddenSeriesKeys = updateHiddenChartSeriesKeys(
+      hiddenSeriesKeys,
+      renderedKeys,
+      hiddenRenderedKeys
+    );
+    assert.strictEqual(
+      hiddenSeriesKeys.includes('price'),
+      true,
+      `${refreshPath} must not restore a legend-hidden series`
+    );
+  }
   hiddenSeriesKeys = updateHiddenChartSeriesKeys(hiddenSeriesKeys, ['size'], []);
   assert.deepStrictEqual(
     hiddenSeriesKeys,
