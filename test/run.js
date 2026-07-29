@@ -39,6 +39,12 @@ const {
   chartLegendToggleKey,
   updateHiddenChartSeriesKeys,
 } = require('../out/chart-series-state');
+const {
+  chartZoomRangeMatchesRequest,
+  chartZoomRangeKey,
+  chartZoomRequestedRenderRange,
+  reduceChartZoomLifecycle,
+} = require('../out/chart-zoom-state');
 const { currentQBlock, selectedTextOrCurrentBlock, selectedTextOrCurrentLine } = require('../out/q-text');
 const {
   allCellsRange,
@@ -1469,6 +1475,121 @@ function panelFormatElapsedMs(milliseconds, display) {
   const packageSource = fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8');
   const commandTitle = commandId => packageJson.contributes.commands.find(command => command.command === commandId).title;
   const keybinding = commandId => packageJson.contributes.keybindings.find(binding => binding.command === commandId);
+
+  const fullChartSample = {
+    version: 1,
+    requestId: 1,
+    chartType: 'line',
+    x: [0, 50, 100],
+    series: [{ columnName: 'price', values: [10, 20, 30] }],
+    algorithm: 'minmax-bucket/3',
+  };
+  let chartZoomLifecycle = reduceChartZoomLifecycle(null, { type: 'clear', requestId: 0 });
+  chartZoomLifecycle = reduceChartZoomLifecycle(chartZoomLifecycle, {
+    type: 'request',
+    requestId: 1,
+    range: null,
+  });
+  chartZoomLifecycle = reduceChartZoomLifecycle(chartZoomLifecycle, {
+    type: 'response',
+    requestId: 1,
+    data: fullChartSample,
+  });
+  chartZoomLifecycle = reduceChartZoomLifecycle(chartZoomLifecycle, {
+    type: 'rendered',
+    requestId: 1,
+    naturalRange: { min: 0, max: 100 },
+  });
+  assert.strictEqual(chartZoomLifecycle.fullData, fullChartSample);
+  assert.deepStrictEqual(chartZoomLifecycle.fullRange, { min: 0, max: 100 });
+
+  const requestedZoomRange = { min: 20, max: 40 };
+  chartZoomLifecycle = reduceChartZoomLifecycle(chartZoomLifecycle, {
+    type: 'request',
+    requestId: 2,
+    range: requestedZoomRange,
+  });
+  const stateBeforeStaleChartResponse = chartZoomLifecycle;
+  chartZoomLifecycle = reduceChartZoomLifecycle(chartZoomLifecycle, {
+    type: 'response',
+    requestId: 1,
+    data: { ...fullChartSample, x: [-100, 1000] },
+  });
+  assert.strictEqual(chartZoomLifecycle, stateBeforeStaleChartResponse, 'stale chart responses must not alter zoom state');
+
+  const refinedChartSample = {
+    ...fullChartSample,
+    requestId: 2,
+    x: [21, 30, 39],
+    series: [{ columnName: 'price', values: [14, 17, 19] }],
+  };
+  chartZoomLifecycle = reduceChartZoomLifecycle(chartZoomLifecycle, {
+    type: 'response',
+    requestId: 2,
+    data: refinedChartSample,
+  });
+  const refinedNaturalRange = { min: 21, max: 39 };
+  let autoRefineRequestCount = 0;
+  let chartZoomHookSuspended = true;
+  const fakeRefinedPlot = {
+    scales: { x: { ...refinedNaturalRange } },
+    setScale(_scale, range) {
+      this.scales.x = { ...range };
+      updateFakeZoomHook();
+    },
+  };
+  function updateFakeZoomHook() {
+    if (chartZoomHookSuspended) {
+      return;
+    }
+    if (!chartZoomRangeMatchesRequest(chartZoomLifecycle, fakeRefinedPlot.scales.x)) {
+      autoRefineRequestCount += 1;
+    }
+  }
+  const reconstructedRange = chartZoomRequestedRenderRange(chartZoomLifecycle);
+  if (reconstructedRange) {
+    fakeRefinedPlot.setScale('x', reconstructedRange);
+  }
+  chartZoomHookSuspended = false;
+  updateFakeZoomHook();
+  assert.deepStrictEqual(
+    fakeRefinedPlot.scales.x,
+    requestedZoomRange,
+    'refined uPlot must retain the user-requested viewport instead of its natural data domain'
+  );
+  assert.strictEqual(autoRefineRequestCount, 0, 'refined reconstruction must not enqueue another refine');
+  assert.strictEqual(chartZoomRangeKey(fakeRefinedPlot.scales.x), chartZoomRangeKey(requestedZoomRange));
+  assert.strictEqual(chartZoomLifecycle.fullData, fullChartSample, 'refinement must retain the usable full sample');
+
+  chartZoomLifecycle = reduceChartZoomLifecycle(chartZoomLifecycle, { type: 'reset' });
+  assert.strictEqual(chartZoomLifecycle.requestedRange, null);
+  assert.deepStrictEqual(chartZoomLifecycle.fullRange, { min: 0, max: 100 });
+  assert.deepStrictEqual(chartZoomLifecycle.fullData.x, [0, 50, 100]);
+  for (const opaqueChartData of [
+    { chartType: 'bar', series: [{ columnName: 'size', values: [1] }] },
+    { chartType: 'candlestick', candlesticks: [{ x: 0, open: 1, high: 2, low: 0, close: 2 }] },
+  ]) {
+    let opaqueState = reduceChartZoomLifecycle(null, { type: 'request', requestId: 10, range: null });
+    opaqueState = reduceChartZoomLifecycle(opaqueState, { type: 'response', requestId: 10, data: opaqueChartData });
+    opaqueState = reduceChartZoomLifecycle(opaqueState, {
+      type: 'rendered',
+      requestId: 10,
+      naturalRange: { min: 0, max: 1 },
+    });
+    opaqueState = reduceChartZoomLifecycle(opaqueState, {
+      type: 'request',
+      requestId: 11,
+      range: { min: 0.2, max: 0.8 },
+    });
+    opaqueState = reduceChartZoomLifecycle(opaqueState, {
+      type: 'response',
+      requestId: 11,
+      data: { ...opaqueChartData, refined: true },
+    });
+    opaqueState = reduceChartZoomLifecycle(opaqueState, { type: 'reset' });
+    assert.strictEqual(opaqueState.fullData, opaqueChartData, `${opaqueChartData.chartType} baseline must survive refinement`);
+  }
+
   let hiddenSeriesKeys = updateHiddenChartSeriesKeys([], ['price', 'size'], ['price']);
   assert.deepStrictEqual(hiddenSeriesKeys, ['price']);
   for (const refreshPath of [
@@ -1797,12 +1918,16 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('values: (self, splits) => chartThinnedXAxisLabels(self, splits)'), true);
   assert.strictEqual(resultsPanelSource.includes('drag: { setScale: true, x: true, y: false, dist: 5 }'), true);
   assert.strictEqual(resultsPanelSource.includes('function resetChartZoom()'), true);
-  assert.strictEqual(resultsPanelSource.includes('let chartFullXRange = null;'), true);
+  assert.strictEqual(resultsPanelSource.includes('let chartZoomLifecycle = reduceChartZoomLifecycle('), true);
   const resetChartZoomSource = resultsPanelSource.slice(
     resultsPanelSource.indexOf('function resetChartZoom()'),
     resultsPanelSource.indexOf('function updateChartZoomState')
   );
-  assert.strictEqual(resetChartZoomSource.includes('const xRange = chartFullXRange;'), true);
+  assert.strictEqual(resetChartZoomSource.includes('const xRange = chartZoomLifecycle.fullRange;'), true);
+  assert.strictEqual(resetChartZoomSource.includes('const fullData = chartZoomLifecycle.fullData;'), true);
+  assert.strictEqual(resetChartZoomSource.includes("reduceChartZoomLifecycle(chartZoomLifecycle, { type: 'reset' })"), true);
+  assert.strictEqual(resetChartZoomSource.includes('chartData = Object.assign({}, fullData,'), true);
+  assert.strictEqual(resetChartZoomSource.includes('drawChart();'), true);
   assert.strictEqual(resetChartZoomSource.includes("chartUPlot.setScale('x', { min: xRange.min, max: xRange.max });"), true);
   assert.strictEqual(resetChartZoomSource.includes("chartUPlot.setScale('x', { min: null, max: null });"), false);
   assert.strictEqual(resetChartZoomSource.includes('updateChartZoomState(chartUPlot);'), true);
@@ -1813,21 +1938,23 @@ function panelFormatElapsedMs(milliseconds, display) {
     resultsPanelSource.indexOf('function updateChartZoomState'),
     resultsPanelSource.indexOf('function queueChartAutoRefine')
   );
-  assert.strictEqual(chartZoomStateSource.includes('chartRangeIsZoomed(chartFullXRange, chartXScaleRange(self))'), true);
-  assert.strictEqual(chartZoomStateSource.includes('const initial = chartFullXRange;'), true);
+  assert.strictEqual(chartZoomStateSource.includes('chartRangeIsZoomed(chartZoomLifecycle.fullRange, chartXScaleRange(self))'), true);
+  assert.strictEqual(chartZoomStateSource.includes('const initial = chartZoomLifecycle.fullRange;'), true);
   assert.strictEqual(chartZoomStateSource.includes('chartInitialXRange()'), false);
   const chartRequestSource = resultsPanelSource.slice(
     resultsPanelSource.indexOf('function requestChartDataForRange'),
     resultsPanelSource.indexOf('function exportChartPng')
   );
-  assert.strictEqual(chartRequestSource.includes('chartRequestIsRefinement = !!xRange;'), true);
-  assert.strictEqual(chartRequestSource.includes('if (!chartRequestIsRefinement) {'), true);
-  assert.ok(chartRequestSource.indexOf('if (!chartRequestIsRefinement) {') < chartRequestSource.indexOf('clearChartZoomBaseline();'));
+  assert.strictEqual(chartRequestSource.includes("type: 'request'"), true);
+  assert.strictEqual(chartRequestSource.includes('range: xRange'), true);
   const drawChartSource = resultsPanelSource.slice(
     resultsPanelSource.indexOf('function drawChart()'),
     resultsPanelSource.indexOf('function chartDimensions()')
   );
-  assert.strictEqual(drawChartSource.includes('if (!chartRequestIsRefinement) {'), true);
+  assert.strictEqual(drawChartSource.includes('const requestedRange = chartZoomRequestedRenderRange(chartZoomLifecycle);'), true);
+  assert.strictEqual(drawChartSource.includes("chartUPlot.setScale('x', { min: requestedRange.min, max: requestedRange.max });"), true);
+  assert.ok(drawChartSource.indexOf("chartUPlot.setScale('x', { min: requestedRange.min, max: requestedRange.max });") <
+    drawChartSource.indexOf('chartZoomStateSuspended = false;'));
   assert.strictEqual(drawChartSource.includes('const renderedXRange = chartXScaleRange(chartUPlot);'), true);
   assert.ok(drawChartSource.indexOf('chartZoomStateSuspended = false;') < drawChartSource.lastIndexOf('updateChartZoomState(chartUPlot);'));
   assert.strictEqual(resultsPanelSource.includes('function formatChartNumber(value)'), true);
@@ -1853,6 +1980,7 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('function queueChartAutoRefine()'), true);
   assert.strictEqual(resultsPanelSource.includes('const CHART_AUTO_REFINE_DELAY_MS = 450;'), true);
   assert.strictEqual(resultsPanelSource.includes('chartLastAutoRefineKey'), true);
+  assert.strictEqual(resultsPanelSource.includes('chartZoomRangeMatchesRequest(chartZoomLifecycle, range)'), true);
   assert.strictEqual(resultsPanelSource.includes('function chartVisibleSamplePointCount(range)'), true);
   assert.strictEqual(resultsPanelSource.includes('function normalizeChartXDomain(value)'), true);
   assert.strictEqual(resultsPanelSource.includes('chartData && chartData.xDomain ? chartData.xDomain'), true);
@@ -2537,7 +2665,7 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('id="settingsLocalDataServerFullExportCellLimit"'), true);
   assert.strictEqual(packageJson.contributes.configuration.properties['kdb-sqltools.results.copyExportConfirmCellThreshold'].minimum, 1);
   assert.strictEqual(packageJson.contributes.configuration.properties['kdb-sqltools.results.localDataServerFullExportCellLimit'].minimum, 1);
-  assert.strictEqual(packageJson.version, '0.3.17');
+  assert.strictEqual(packageJson.version, '0.3.18');
   assert.strictEqual(chartingDocsSource.includes('Press the top-level `Chart` button.'), true);
   assert.strictEqual(chartingDocsSource.includes('kdb+: Run Selection and Chart'), true);
   assert.strictEqual(runningDocsSource.includes('| `Ctrl+Alt+C` | `Cmd+Alt+C` | `kdb+: Run Selection and Chart`'), true);
