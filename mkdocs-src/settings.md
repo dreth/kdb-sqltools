@@ -43,8 +43,8 @@ True q tables and keyed tables always use the grid. Function source is shown onl
 | --- | --- | --- |
 | `kdb-sqltools.results.kdbPanel.chartMaxSourceRows` | `2000000` | Maximum source rows scanned for built-in charting before rejecting a chart request. The minimum is `1`; there is no hard upper bound. |
 | `kdb-sqltools.results.kdbPanel.chartDecimalPlaces` | `4` | Decimal places for chart numeric axis ticks, tooltips, legend/live values, box statistics, and candlestick OHLC values. Values are clamped to `0` through `12`; very large or very small nonzero numbers use scientific notation with this precision. |
-| `kdb-sqltools.results.kdbPanel.chartZoomMinSampledPoints` | `3000` | Minimum visible sampled points before a reduced chart's settled drag zoom auto-refines when more source rows may exist in that x range. The minimum is `1`. |
-| `kdb-sqltools.results.kdbPanel.chartZoomMaxSampledPoints` | `7000` | Maximum sampled points returned for a refined zoom range. Values below `chartZoomMinSampledPoints` are clamped up to that minimum. |
+| `kdb-sqltools.results.kdbPanel.chartZoomMinSampledPoints` | `3000` | Deprecated compatibility key; ignored. Refined ranges use the fixed 3,000-through-7,000 density contract. |
+| `kdb-sqltools.results.kdbPanel.chartZoomMaxSampledPoints` | `7000` | Deprecated compatibility key; ignored. Ranges above 7,000 eligible rows use a fixed target of about 7,000 points. |
 
 Very large values can make chart rendering slow or temporarily block the extension host, especially with multiple y columns. For very large data, prefer the local data server or sliced results.
 
@@ -53,6 +53,9 @@ Very large values can make chart rendering slow or temporarily block the extensi
 | Setting | Default | Use |
 | --- | --- | --- |
 | `kdb-sqltools.results.density` | `standard` | Active density preset: `compact`, `standard`, or `comfortable`. |
+| `kdb-sqltools.results.columnWidths` | `{}` | Extension-managed sparse map of persisted manual widths keyed by zero-based source-column position. Dragging a column updates only its position. |
+| `kdb-sqltools.results.autoFitColumns` | `true` | Persist the Auto-fit checkbox. When `false`, no automatic width calculation runs. |
+| `kdb-sqltools.results.autoFitMode` | `wholeResult` | Auto-fit scope: stable complete-result `wholeResult`, or viewport-adaptive `visibleRows`. |
 | `kdb-sqltools.results.compact.cellWidth` | `140` | Compact density cell width in pixels. |
 | `kdb-sqltools.results.compact.rowHeight` | `24` | Compact density row height in pixels. |
 | `kdb-sqltools.results.compact.fontSize` | `0` | Compact density font size. `0` uses the VS Code default. |
@@ -65,6 +68,10 @@ Very large values can make chart rendering slow or temporarily block the extensi
 | `kdb-sqltools.results.cellWidth` | `160` | Legacy fallback cell width. Density-specific settings are used first. |
 | `kdb-sqltools.results.rowHeight` | `28` | Legacy fallback row height. Density-specific settings are used first. |
 | `kdb-sqltools.results.fontSize` | `0` | Legacy fallback font size. Density-specific settings are used first. |
+
+`wholeResult` measures the widest displayed header/value in every row, including array/list values outside the virtual viewport, and therefore remains stable while scrolling. `visibleRows` preserves adaptive fitting from the currently rendered rows. Manual positional widths take precedence over auto-fit.
+
+The panel's `Cell width` textbox is an all-column preset control. Changing it or switching density clears/replaces positional manual widths for every data column, including column zero. Dragging a column then writes a new authoritative value for only that source position. The position mapping survives panel and VS Code recreation and does not change when columns are hidden or visually reordered.
 
 ## Copy, export, and warnings
 

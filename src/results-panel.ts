@@ -4,8 +4,6 @@ import * as vscode from 'vscode';
 import JSZip = require('jszip');
 import {
   CHART_MAX_SOURCE_ROWS,
-  CHART_ZOOM_MAX_SAMPLED_POINTS,
-  CHART_ZOOM_MIN_SAMPLED_POINTS,
   ChartDataError,
   ChartType,
   buildChartData,
@@ -17,9 +15,24 @@ import {
   updateHiddenChartSeriesKeys,
 } from './chart-series-state';
 import {
+  GRID_COLUMN_WIDTH_MAX,
+  GRID_COLUMN_WIDTH_MIN,
+  GridAutoFitMode,
+  PositionalColumnWidthPersistenceQueue,
+  PositionalColumnWidths,
+  normalizeGridAutoFitMode,
+  normalizePositionalColumnWidths,
+  resolvedPositionalColumnWidth,
+  sourceColumnPositions,
+  updatePositionalColumnWidth,
+} from './grid-column-widths';
+import {
+  chartZoomAutoRefineQueueAction,
   chartZoomRangeMatchesRequest,
   chartZoomRangeKey,
   chartZoomRequestedRenderRange,
+  chartZoomResponseIsPending,
+  chartZoomShouldRequestRange,
   reduceChartZoomLifecycle,
 } from './chart-zoom-state';
 import {
@@ -81,6 +94,7 @@ interface LoadingState {
 interface KdbPanelMetadata {
   mode: KdbPanelResultMode;
   columns: string[];
+  columnPositions: number[];
   allColumns: string[];
   hiddenColumnCount: number;
   hiddenColumnNames: string[];
@@ -94,6 +108,7 @@ interface KdbPanelMetadata {
   canceled?: boolean;
   version: number;
   settings: KdbPanelSettings;
+  columnWidths: PositionalColumnWidths;
   sort: KdbPanelSortState | null;
   guardrailMessage?: string;
   chartAutoOpen?: boolean;
@@ -111,6 +126,8 @@ interface KdbPanelSortState {
 }
 
 interface KdbPanelSettings {
+  autoFitColumns: boolean;
+  autoFitMode: GridAutoFitMode;
   cellWidth: number;
   rowHeight: number;
   fontSize: number;
@@ -124,8 +141,6 @@ interface KdbPanelSettings {
   localDataServerFullExportCellLimit: number;
   elapsedTimeDisplay: KdbPanelElapsedTimeDisplay;
   chartDecimalPlaces: number;
-  chartZoomMinSampledPoints: number;
-  chartZoomMaxSampledPoints: number;
   arrayDisplayFormat: ArrayDisplayFormat;
   functionDisplayStrategy: KdbPanelQResultDisplayStrategy;
   dictionaryDisplayStrategy: KdbPanelQResultDisplayStrategy;
@@ -182,8 +197,11 @@ const CHART_DECIMAL_PLACES_DEFAULT = 4;
 const CHART_DECIMAL_PLACES_MIN = 0;
 const CHART_DECIMAL_PLACES_MAX = 12;
 const CHART_SELECTION_STATE_PREFIX = 'kdb-sqltools.results.kdbPanel.chartSelection.v1.';
+const AUTO_FIT_YIELD_CELL_INTERVAL = 10000;
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const DEFAULT_PANEL_SETTINGS: KdbPanelSettings = {
+  autoFitColumns: true,
+  autoFitMode: 'wholeResult',
   cellWidth: 160,
   rowHeight: 28,
   fontSize: 0,
@@ -197,8 +215,6 @@ const DEFAULT_PANEL_SETTINGS: KdbPanelSettings = {
   localDataServerFullExportCellLimit: LOCAL_DATA_SERVER_FULL_EXPORT_CELL_LIMIT,
   elapsedTimeDisplay: 'auto',
   chartDecimalPlaces: CHART_DECIMAL_PLACES_DEFAULT,
-  chartZoomMinSampledPoints: CHART_ZOOM_MIN_SAMPLED_POINTS,
-  chartZoomMaxSampledPoints: CHART_ZOOM_MAX_SAMPLED_POINTS,
   arrayDisplayFormat: 'commaSpace',
   functionDisplayStrategy: 'qText',
   dictionaryDisplayStrategy: 'grid',
@@ -222,6 +238,16 @@ const DEFAULT_DENSITY_SIZE_SETTINGS: { [density in KdbPanelDensity]: Pick<KdbPan
     fontSize: 0,
   },
 };
+const positionalColumnWidthPersistence = new PositionalColumnWidthPersistenceQueue(
+  () => persistedColumnWidths(),
+  widths => vscode.workspace.getConfiguration('kdb-sqltools.results').update(
+    'columnWidths',
+    widths,
+    vscode.ConfigurationTarget.Global
+  ),
+  GRID_COLUMN_WIDTH_MIN,
+  GRID_COLUMN_WIDTH_MAX
+);
 
 export class KdbResultsPanel {
   private static panels: KdbResultsPanel[] = [];
@@ -245,6 +271,7 @@ export class KdbResultsPanel {
   private baseVisibleTableCache: { version: number; source: ColumnarPanelResult; table: ColumnarPanelResult } | undefined;
   private visibleTableCache: { version: number; source: ColumnarPanelResult; table: ColumnarPanelResult } | undefined;
   private activeSearchId = 0;
+  private activeAutoFitRequestId = 0;
   private hideLargeResultWarningOnce = false;
   private localDataServer: LocalDataServer | undefined;
   private localDataServerInfo: LocalDataServerInfo | undefined;
@@ -421,6 +448,25 @@ export class KdbResultsPanel {
     });
   }
 
+  public static configurationChanged(event: vscode.ConfigurationChangeEvent): void {
+    if (event.affectsConfiguration('kdb-sqltools.results')) {
+      KdbResultsPanel.postSettingsToOpenPanels();
+    }
+  }
+
+  private static postSettingsToOpenPanels(): void {
+    const settings = panelSettings();
+    const columnWidths = persistedColumnWidths();
+    KdbResultsPanel.panels.forEach(panel => {
+      panel.activeAutoFitRequestId += 1;
+      panel.post({
+        type: 'settings',
+        settings,
+        columnWidths,
+      });
+    });
+  }
+
   private constructor(context: vscode.ExtensionContext, viewColumn: vscode.ViewColumn = initialResultViewColumn()) {
     this.context = context;
     const panelNumber = KdbResultsPanel.nextPanelNumber++;
@@ -473,6 +519,7 @@ export class KdbResultsPanel {
     this.baseVisibleTableCache = undefined;
     this.visibleTableCache = undefined;
     this.activeSearchId += 1;
+    this.activeAutoFitRequestId += 1;
     this.activeChartRequestId += 1;
     this.chartPanelOpen = false;
     this.chartPanelRendered = false;
@@ -576,8 +623,23 @@ export class KdbResultsPanel {
       return;
     }
 
+    if (message.type === 'requestWholeResultAutoFit') {
+      await this.postWholeResultAutoFit(message);
+      return;
+    }
+
     if (message.type === 'searchRows') {
       await this.searchRows(message);
+      return;
+    }
+
+    if (message.type === 'updateColumnWidth') {
+      await this.updateColumnWidth(message);
+      return;
+    }
+
+    if (message.type === 'resetColumnWidths') {
+      await this.resetColumnWidths(message);
       return;
     }
 
@@ -669,6 +731,7 @@ export class KdbResultsPanel {
       return {
         mode: 'text',
         columns: [],
+        columnPositions: [],
         allColumns: [],
         hiddenColumnCount: 0,
         hiddenColumnNames: [],
@@ -682,6 +745,7 @@ export class KdbResultsPanel {
         canceled: result.canceled,
         version: this.version,
         settings,
+        columnWidths: persistedColumnWidths(),
         sort: null,
         chartAutoOpen: false,
       };
@@ -693,6 +757,7 @@ export class KdbResultsPanel {
     return {
       mode: 'table',
       columns,
+      columnPositions: this.visibleColumnPositions(result),
       allColumns: result.table.columns.slice(),
       hiddenColumnCount: result.table.columns.length - columns.length,
       hiddenColumnNames,
@@ -705,6 +770,7 @@ export class KdbResultsPanel {
       canceled: result.canceled,
       version: this.version,
       settings,
+      columnWidths: persistedColumnWidths(),
       sort: this.visibleSortState(result),
       chartAutoOpen: this.pendingAutoChart,
       guardrailMessage: settings.hideLargeResultWarnings || this.hideLargeResultWarningOnce
@@ -875,7 +941,6 @@ export class KdbResultsPanel {
       await yieldToEventLoop();
       const xMin = Number.isFinite(Number(message.xMin)) ? Number(message.xMin) : undefined;
       const xMax = Number.isFinite(Number(message.xMax)) ? Number(message.xMax) : undefined;
-      const zoomSamplePoints = xMin !== undefined && xMax !== undefined ? chartZoomSamplePointSettings() : null;
       const data = buildChartData(table, {
         chartType: normalizeChartType(message.chartType),
         version: requestVersion,
@@ -891,8 +956,6 @@ export class KdbResultsPanel {
         xMax,
         width: Number(message.width) || 0,
         maxSourceRows: chartMaxSourceRowsSetting(),
-        maxSampledPoints: zoomSamplePoints ? zoomSamplePoints.chartZoomMaxSampledPoints : undefined,
-        minSampledPoints: zoomSamplePoints ? zoomSamplePoints.chartZoomMinSampledPoints : undefined,
       });
       if (this.version !== requestVersion || this.activeChartRequestId !== requestId) {
         return;
@@ -1065,6 +1128,10 @@ export class KdbResultsPanel {
     return this.orderedColumnNames(result.table.columns).filter(column => !hidden[column]);
   }
 
+  private visibleColumnPositions(result: KdbPanelTableResult): number[] {
+    return sourceColumnPositions(result.table.columns, this.visibleColumnNames(result));
+  }
+
   private orderedColumnNames(columns: string[]): string[] {
     const available = columnNameLookup(columns);
     const ordered: string[] = [];
@@ -1169,6 +1236,60 @@ export class KdbResultsPanel {
       }
       throw error;
     }
+  }
+
+  private async postWholeResultAutoFit(message: any): Promise<void> {
+    const requestVersion = integerOrNull(message.version);
+    const requestId = integerOrNull(message.requestId);
+    if (requestVersion === null || requestId === null || requestVersion !== this.version) {
+      return;
+    }
+    const currentSettings = panelSettings();
+    if (!currentSettings.autoFitColumns || currentSettings.autoFitMode !== 'wholeResult') {
+      return;
+    }
+    const table = this.visibleTable();
+    if (!table) {
+      return;
+    }
+
+    this.activeAutoFitRequestId = requestId;
+    const textLengths = table.columns.map(column => String(column || '').length);
+    const cellTextOptions = panelCellTextOptions();
+    let scannedCells = 0;
+    for (let rowIndex = 0; rowIndex < table.rowCount; rowIndex++) {
+      for (let columnIndex = 0; columnIndex < table.columns.length; columnIndex++) {
+        textLengths[columnIndex] = Math.max(
+          textLengths[columnIndex],
+          table.cellText(rowIndex, columnIndex, cellTextOptions).length
+        );
+        scannedCells += 1;
+        if (scannedCells % AUTO_FIT_YIELD_CELL_INTERVAL === 0) {
+          await yieldToEventLoop();
+          if (
+            this.disposed ||
+            this.version !== requestVersion ||
+            this.activeAutoFitRequestId !== requestId
+          ) {
+            return;
+          }
+        }
+      }
+    }
+
+    if (
+      this.disposed ||
+      this.version !== requestVersion ||
+      this.activeAutoFitRequestId !== requestId
+    ) {
+      return;
+    }
+    this.post({
+      type: 'wholeResultAutoFit',
+      version: requestVersion,
+      requestId,
+      textLengths,
+    });
   }
 
   private async searchRows(message: any): Promise<void> {
@@ -1683,12 +1804,64 @@ export class KdbResultsPanel {
   private refreshResultView(): void {
     this.version += 1;
     this.firstSliceVersion = 0;
+    this.activeAutoFitRequestId += 1;
     this.baseVisibleTableCache = undefined;
     this.visibleTableCache = undefined;
     this.selectionRange = undefined;
     this.selectionVersion = this.version;
     this.activeChartRequestId += 1;
     this.postResultMetadata();
+  }
+
+  private async updateColumnWidth(message: any): Promise<void> {
+    const requestVersion = integerOrNull(message && message.version);
+    const position = integerOrNull(message && message.position);
+    if (
+      requestVersion === null ||
+      position === null ||
+      requestVersion !== this.version ||
+      position < 0 ||
+      !this.result ||
+      isTextPanelResult(this.result) ||
+      this.visibleColumnPositions(this.result).indexOf(position) === -1
+    ) {
+      return;
+    }
+    const requestedWidth = message.width === null ? null : Number(message.width);
+    if (requestedWidth !== null && !Number.isFinite(requestedWidth)) {
+      return;
+    }
+    await positionalColumnWidthPersistence.update(
+      current => updatePositionalColumnWidth(
+        current,
+        position,
+        requestedWidth,
+        GRID_COLUMN_WIDTH_MIN,
+        GRID_COLUMN_WIDTH_MAX
+      ),
+      widths => this.broadcastColumnWidths(widths)
+    );
+  }
+
+  private async resetColumnWidths(message: any): Promise<void> {
+    const requestVersion = integerOrNull(message && message.version);
+    if (requestVersion === null || requestVersion !== this.version) {
+      return;
+    }
+    await positionalColumnWidthPersistence.update(
+      () => ({}),
+      widths => this.broadcastColumnWidths(widths)
+    );
+  }
+
+  private broadcastColumnWidths(widths: PositionalColumnWidths): void {
+    KdbResultsPanel.panels.forEach(panel => {
+      panel.post({ type: 'columnWidths', columnWidths: widths });
+    });
+  }
+
+  private broadcastPanelSettings(): void {
+    KdbResultsPanel.postSettingsToOpenPanels();
   }
 
   private async updateSetting(message: any): Promise<void> {
@@ -1702,8 +1875,17 @@ export class KdbResultsPanel {
       normalized.key,
       panelDensity(message && message.density ? message.density : config.get<string>('density'))
     );
-    await config.update(settingKey, normalized.value, vscode.ConfigurationTarget.Global);
-    this.post({ type: 'settings', settings: panelSettings() });
+    const settingUpdate = config.update(settingKey, normalized.value, vscode.ConfigurationTarget.Global);
+    const columnWidthReset = normalized.key === 'cellWidth' || normalized.key === 'density'
+      ? positionalColumnWidthPersistence.update(
+        () => ({}),
+        widths => this.broadcastColumnWidths(widths)
+      )
+      : undefined;
+    await (columnWidthReset
+      ? Promise.all([settingUpdate, columnWidthReset])
+      : settingUpdate);
+    this.broadcastPanelSettings();
   }
 
   private isCurrentVersion(version: number): boolean {
@@ -2480,6 +2662,10 @@ export class KdbResultsPanel {
         <details class="settings-section" open>
           <summary class="settings-heading"><span>Preferences</span></summary>
           <label class="checkbox"><input id="autoFit" type="checkbox" disabled>Auto-fit</label>
+          <label class="settings-row"><span>Auto-fit rows</span><select id="autoFitMode" aria-label="Auto-fit row scope">
+            <option value="wholeResult">Whole result</option>
+            <option value="visibleRows">Visible rows</option>
+          </select></label>
           <label class="checkbox"><input id="settingsShowRowIndex" type="checkbox">Show row #</label>
           <label class="checkbox"><input id="settingsIncludeHeaders" type="checkbox">Include headers</label>
           <label class="checkbox"><input id="settingsIncludeRowIndex" type="checkbox">Include row #</label>
@@ -2609,6 +2795,8 @@ export class KdbResultsPanel {
       const MAX_COLUMN_WIDTH = 2000;
       const AUTO_COLUMN_WIDTH_CAP = 1200;
       const DEFAULT_SETTINGS = {
+        autoFitColumns: true,
+        autoFitMode: 'wholeResult',
         cellWidth: 160,
         rowHeight: 28,
         fontSize: 0,
@@ -2622,8 +2810,6 @@ export class KdbResultsPanel {
         localDataServerFullExportCellLimit: 1000000,
         elapsedTimeDisplay: 'auto',
         chartDecimalPlaces: 4,
-        chartZoomMinSampledPoints: ${CHART_ZOOM_MIN_SAMPLED_POINTS},
-        chartZoomMaxSampledPoints: ${CHART_ZOOM_MAX_SAMPLED_POINTS},
         arrayDisplayFormat: 'commaSpace',
         functionDisplayStrategy: 'qText',
         dictionaryDisplayStrategy: 'grid',
@@ -2644,6 +2830,7 @@ export class KdbResultsPanel {
       const includeRowIndex = document.getElementById('includeRowIndex');
       const includeHeaders = document.getElementById('includeHeaders');
       const autoFit = document.getElementById('autoFit');
+      const autoFitMode = document.getElementById('autoFitMode');
       const interactionMode = document.getElementById('interactionMode');
       const sortStatus = document.getElementById('sortStatus');
       const searchInput = document.getElementById('searchInput');
@@ -2732,11 +2919,12 @@ export class KdbResultsPanel {
       let search = emptySearch();
       let settings = normalizeSettings(DEFAULT_SETTINGS);
       let layout = layoutFromSettings(settings);
-      let columnWidthOverrides = Object.create(null);
-      let autoColumnWidths = Object.create(null);
-      let columnWidthSchema = [];
+      let columnWidthOverrides = [];
+      let autoColumnWidths = [];
+      let wholeResultTextLengths = [];
+      let latestAutoFitRequestId = 0;
       let resizeState = null;
-      let autoFitEnabled = true;
+      let autoFitEnabled = settings.autoFitColumns;
       let columnDragState = null;
       let localDataServer = null;
       let latestChartRequestId = 0;
@@ -2755,6 +2943,7 @@ export class KdbResultsPanel {
       let chartHeight = 280;
       let chartAutoRenderPending = false;
       let chartAutoRefineTimer = 0;
+      let chartAutoRefineScheduledRange = null;
       let chartLastAutoRefineKey = '';
       const CHART_PNG_DATA_URL_PREFIX = 'data:image/png;base64,';
       const CHART_MIN_HEIGHT = 180;
@@ -2763,10 +2952,16 @@ export class KdbResultsPanel {
       ${chartRangeIsZoomed.toString()}
       ${chartLegendToggleKey.toString()}
       ${updateHiddenChartSeriesKeys.toString()}
+      ${chartZoomAutoRefineQueueAction.toString()}
       ${chartZoomRangeMatchesRequest.toString()}
       ${chartZoomRangeKey.toString()}
       ${chartZoomRequestedRenderRange.toString()}
+      ${chartZoomResponseIsPending.toString()}
+      ${chartZoomShouldRequestRange.toString()}
       ${reduceChartZoomLifecycle.toString()}
+      ${normalizeGridAutoFitMode.toString()}
+      ${normalizePositionalColumnWidths.toString()}
+      ${resolvedPositionalColumnWidth.toString()}
       window.addEventListener('message', event => {
         const msg = event.data || {};
         if (msg.type === 'loading') {
@@ -2779,11 +2974,24 @@ export class KdbResultsPanel {
           setSearchResults(msg);
         } else if (msg.type === 'settings') {
           applySettings(msg.settings);
+          if (msg.columnWidths && typeof msg.columnWidths === 'object') {
+            applyPersistedColumnWidths(msg.columnWidths);
+          }
           updateSummary();
           updateLargeResultWarning();
           updateActionState();
           updateSelectionLabel();
           renderNow();
+          refreshAutoFitWidths();
+        } else if (msg.type === 'columnWidths') {
+          applyPersistedColumnWidths(msg.columnWidths);
+          if (settings.autoFitMode === 'visibleRows') {
+            updateAutoColumnWidthsFromSlice();
+          }
+          renderColumnSettings();
+          requestRender();
+        } else if (msg.type === 'wholeResultAutoFit') {
+          setWholeResultAutoFit(msg);
         } else if (msg.type === 'copied' && isCurrentVersionMessage(msg)) {
           status.textContent = 'Copied ' + msg.rows + 'x' + msg.columns + ' ' + String(msg.format || '').toUpperCase();
         } else if (msg.type === 'exported' && isCurrentVersionMessage(msg)) {
@@ -2833,7 +3041,10 @@ export class KdbResultsPanel {
       exportButton.addEventListener('click', exportSelection);
       includeHeaders.addEventListener('change', () => updateSetting('includeHeaders', !!includeHeaders.checked));
       includeRowIndex.addEventListener('change', () => updateSetting('includeRowIndex', !!includeRowIndex.checked));
-      autoFit.addEventListener('change', () => setAutoFitEnabled(!!autoFit.checked));
+      autoFit.addEventListener('change', () => updateSetting('autoFitColumns', !!autoFit.checked));
+      autoFitMode.addEventListener('change', () => {
+        updateSetting('autoFitMode', normalizeGridAutoFitMode(autoFitMode.value));
+      });
       interactionMode.addEventListener('change', () => {
         if (dragMode === 'reorder') {
           dragging = false;
@@ -2922,7 +3133,7 @@ export class KdbResultsPanel {
       closeChart.addEventListener('click', closeChartPanel);
       chartCanvasWrap.addEventListener('mouseleave', hideChartTooltip);
       chartCanvasWrap.addEventListener('dblclick', event => {
-        if (chartZoomed && chartCanExport()) {
+        if (chartCanResetZoom()) {
           event.preventDefault();
           resetChartZoom();
         }
@@ -2972,6 +3183,7 @@ export class KdbResultsPanel {
           document.body.style.userSelect = '';
         }
         if (resizeState) {
+          persistColumnWidth(resizeState.column);
           resizeState = null;
           document.body.style.cursor = '';
         }
@@ -3044,17 +3256,18 @@ export class KdbResultsPanel {
 
       function setResultMeta(result) {
         applySettings(result.settings);
+        const shouldAutoRenderChart = result.chartAutoOpen === true;
         const mode = result.mode === 'text' ? 'text' : 'table';
         const nextColumns = Array.isArray(result.columns) ? result.columns.map(String) : [];
-        if (!sameColumnNames(columnWidthSchema, nextColumns)) {
-          columnWidthOverrides = Object.create(null);
-          autoColumnWidths = Object.create(null);
-          columnWidthSchema = nextColumns.slice();
-        }
+        applyPersistedColumnWidths(result.columnWidths);
+        autoColumnWidths = [];
+        wholeResultTextLengths = [];
+        latestAutoFitRequestId += 1;
         data = {
           version: toNonNegativeInteger(result.version, data.version + 1),
           mode,
           columns: nextColumns,
+          columnPositions: normalizeColumnPositions(result.columnPositions, nextColumns.length),
           allColumns: Array.isArray(result.allColumns) ? result.allColumns.map(String) : [],
           hiddenColumnNames: Array.isArray(result.hiddenColumnNames) ? result.hiddenColumnNames.map(String) : [],
           hiddenColumnCount: toNonNegativeInteger(result.hiddenColumnCount, 0),
@@ -3075,7 +3288,6 @@ export class KdbResultsPanel {
         }
         applySettings(settings);
         resetWindowState();
-        chartAutoRenderPending = result.chartAutoOpen === true;
         updateSummary();
         status.textContent = '';
         updateSortStatus();
@@ -3086,12 +3298,14 @@ export class KdbResultsPanel {
         updateActionState();
         updateLocalDataServerControls();
         resetChartState('');
+        chartAutoRenderPending = shouldAutoRenderChart;
         sendSelectionChanged();
         updateSelectionLabel();
         renderColumnSettings();
         showMessage(resultMessageText(data), data.error);
         updateLargeResultWarning();
         renderNow();
+        refreshAutoFitWidths();
         if (chartAutoRenderPending && hasTableCells() && !data.error && !data.canceled) {
           openChartPanel();
         }
@@ -3118,6 +3332,8 @@ export class KdbResultsPanel {
         slice = emptySlice();
         lastRenderedColumns = emptyColumnRange();
         selection = null;
+        resizeState = null;
+        document.body.style.cursor = '';
         dragging = false;
         clearColumnDragState();
         dragMode = '';
@@ -3297,6 +3513,21 @@ export class KdbResultsPanel {
         return matches;
       }
 
+      function normalizeColumnPositions(value, columnCount) {
+        const positions = Array.isArray(value) ? value : [];
+        const count = Math.max(0, Math.floor(Number(columnCount) || 0));
+        const normalized = [];
+        for (let column = 0; column < count; column++) {
+          const position = Number(positions[column]);
+          normalized.push(
+            Number.isFinite(position) && position >= 0
+              ? Math.floor(position)
+              : column
+          );
+        }
+        return normalized;
+      }
+
       function rowLookup(rows) {
         const lookup = Object.create(null);
         rows.forEach(row => {
@@ -3398,7 +3629,7 @@ export class KdbResultsPanel {
         const canExport = chartCanExport();
         exportChart.hidden = !canExport;
         exportChart.disabled = !canExport;
-        resetChartZoomButton.disabled = !canExport || !chartZoomed;
+        resetChartZoomButton.disabled = !chartCanResetZoom();
         refineChartZoomButton.disabled = !chartCanRefineZoom();
         openChart.textContent = chartPanel.hidden ? 'Chart' : (chartControlsDirty ? 'Chart*' : 'Chart');
         openChart.title = chartPanel.hidden ? 'Open chart' : (chartControlsDirty ? 'Chart settings changed — Render to update' : 'Chart open');
@@ -3470,6 +3701,7 @@ export class KdbResultsPanel {
         chartLowColumn.textContent = '';
         chartCloseColumn.textContent = '';
         chartStatus.textContent = messageText || '';
+        clearChartStatusData();
         chartLegend.textContent = '';
         hideChartTooltip();
         updateChartControls();
@@ -3722,6 +3954,14 @@ export class KdbResultsPanel {
         return chartCanExport() && chartZoomed && !chartControlsDirty && !!currentChartZoomRange();
       }
 
+      function chartCanResetZoom() {
+        return !chartPanel.hidden &&
+          !!chartUPlot &&
+          !!chartZoomLifecycle.fullRange &&
+          chartZoomed &&
+          !chartControlsDirty;
+      }
+
       function chartControlStatusMessage() {
         const type = selectedChartType();
         if (!String(chartXColumn.value || '')) {
@@ -3911,8 +4151,6 @@ export class KdbResultsPanel {
         if (xRange) {
           message.xMin = xRange.min;
           message.xMax = xRange.max;
-          message.minSampledPoints = chartZoomMinSampledPoints();
-          message.maxSampledPoints = chartZoomMaxSampledPoints();
         }
         vscode.postMessage(message);
       }
@@ -3960,6 +4198,7 @@ export class KdbResultsPanel {
       function setChartData(value) {
         if (toNonNegativeInteger(value.version, -1) !== data.version ||
           toNonNegativeInteger(value.requestId, -1) !== latestChartRequestId ||
+          !chartZoomResponseIsPending(chartZoomLifecycle, toNonNegativeInteger(value.requestId, -1)) ||
           chartControlsDirty) {
           return;
         }
@@ -3990,19 +4229,47 @@ export class KdbResultsPanel {
         if (!chartData) {
           return;
         }
+        chartStatus.dataset.requestId = String(chartData.requestId);
+        chartStatus.dataset.sourceRowCount = String(chartData.sourceRowCount);
+        chartStatus.dataset.eligibleRowCount = String(chartData.eligibleRowCount);
+        chartStatus.dataset.sampledPointCount = String(chartData.sampledPointCount);
+        chartStatus.dataset.algorithm = String(chartData.algorithm || 'none');
+        const requestedRange = chartZoomRequestedRenderRange(chartZoomLifecycle);
+        if (requestedRange) {
+          chartStatus.dataset.rangeMin = String(requestedRange.min);
+          chartStatus.dataset.rangeMax = String(requestedRange.max);
+        } else {
+          delete chartStatus.dataset.rangeMin;
+          delete chartStatus.dataset.rangeMax;
+        }
         const warnings = chartData.warnings.length > 0 ? ' ' + chartData.warnings.join(' ') : '';
         const grouped = chartData.groupByColumn ? ' grouped by ' + chartData.groupByColumn : '';
+        const source = ' from ' + formatUiCount(chartData.sourceRowCount) + ' source rows';
         chartStatus.textContent = chartData.chartType === 'candlestick'
           ? 'Showing ' + formatUiCount(chartData.candlesticks.length) +
             ' candles from ' + formatUiCount(chartData.eligibleRowCount) +
-            ' eligible rows (' + chartData.algorithm + '). Group by is unavailable.' + warnings
+            ' eligible rows' + source + ' (' + chartData.algorithm + '). Group by is unavailable.' + warnings
           : chartData.chartType === 'box'
             ? 'Showing ' + formatUiCount(chartData.sampledPointCount) +
               ' box groups from ' + formatUiCount(chartData.eligibleRowCount) +
-              ' eligible rows (' + chartData.algorithm + '). Group by is unavailable.' + warnings
+              ' eligible rows' + source + ' (' + chartData.algorithm + '). Group by is unavailable.' + warnings
             : 'Showing ' + formatUiCount(chartData.sampledPointCount) +
               ' of ' + formatUiCount(chartData.eligibleRowCount) +
-              ' eligible rows' + grouped + ' (' + chartData.algorithm + ').' + warnings;
+              ' eligible rows' + source + grouped + ' (' + chartData.algorithm + ').' + warnings;
+      }
+
+      function clearChartStatusData() {
+        delete chartStatus.dataset.requestId;
+        delete chartStatus.dataset.sourceRowCount;
+        delete chartStatus.dataset.eligibleRowCount;
+        delete chartStatus.dataset.sampledPointCount;
+        delete chartStatus.dataset.algorithm;
+        delete chartStatus.dataset.rangeMin;
+        delete chartStatus.dataset.rangeMax;
+        delete chartStatus.dataset.visibleRangeMin;
+        delete chartStatus.dataset.visibleRangeMax;
+        delete chartStatus.dataset.fullRangeMin;
+        delete chartStatus.dataset.fullRangeMax;
       }
 
       function normalizeChartData(value) {
@@ -4129,7 +4396,30 @@ export class KdbResultsPanel {
       }
 
       function setChartError(msg) {
-        if (toNonNegativeInteger(msg.requestId, -1) !== latestChartRequestId || chartControlsDirty) {
+        const requestId = toNonNegativeInteger(msg.requestId, -1);
+        if (
+          requestId !== latestChartRequestId ||
+          !chartZoomResponseIsPending(chartZoomLifecycle, requestId) ||
+          chartControlsDirty
+        ) {
+          return;
+        }
+        const fullData = chartZoomLifecycle.fullData;
+        chartZoomLifecycle = reduceChartZoomLifecycle(chartZoomLifecycle, {
+          type: 'failed',
+          requestId
+        });
+        chartLastAutoRefineKey = '';
+        if (fullData) {
+          chartData = Object.assign({}, fullData, {
+            version: data.version,
+            requestId
+          });
+          chartRendered = null;
+          chartControlsDirty = false;
+          clearChartAutoRefineTimer();
+          drawChart();
+          chartStatus.textContent = String(msg.message || 'Chart refinement failed; restored full chart.');
           return;
         }
         clearChartZoomBaseline();
@@ -4188,7 +4478,7 @@ export class KdbResultsPanel {
           if (requestedRange) {
             chartUPlot.setScale('x', { min: requestedRange.min, max: requestedRange.max });
           } else {
-            const renderedXRange = chartXScaleRange(chartUPlot);
+            const renderedXRange = chartXScaleRange(chartUPlot) || chartInitialXRange();
             chartZoomLifecycle = reduceChartZoomLifecycle(chartZoomLifecycle, {
               type: 'rendered',
               requestId: chartData.requestId,
@@ -4953,10 +5243,20 @@ export class KdbResultsPanel {
       }
 
       function updateChartZoomState(self) {
+        const visibleRange = chartXScaleRange(self);
+        const fullRange = chartZoomLifecycle.fullRange;
+        if (visibleRange) {
+          chartStatus.dataset.visibleRangeMin = String(visibleRange.min);
+          chartStatus.dataset.visibleRangeMax = String(visibleRange.max);
+        }
+        if (fullRange) {
+          chartStatus.dataset.fullRangeMin = String(fullRange.min);
+          chartStatus.dataset.fullRangeMax = String(fullRange.max);
+        }
         if (chartZoomStateSuspended) {
           return;
         }
-        chartZoomed = chartRangeIsZoomed(chartZoomLifecycle.fullRange, chartXScaleRange(self));
+        chartZoomed = chartRangeIsZoomed(chartZoomLifecycle.fullRange, visibleRange);
         if (chartZoomed) {
           queueChartAutoRefine();
         } else {
@@ -4978,26 +5278,46 @@ export class KdbResultsPanel {
 
       function queueChartAutoRefine() {
         const range = currentChartZoomRange();
-        if (!range || !chartCanExport() || chartControlsDirty || !chartDataCanAutoRefine()) {
-          clearChartAutoRefineTimer();
-          return;
-        }
-        const visiblePoints = chartVisibleSamplePointCount(range);
-        if (visiblePoints >= chartAutoRefineMinVisiblePoints() || chartData.eligibleRowCount <= visiblePoints) {
+        if (!range || !chartCanQueueAutoRefine()) {
           clearChartAutoRefineTimer();
           return;
         }
         const key = chartZoomRangeKey(range);
-        if (chartZoomRangeMatchesRequest(chartZoomLifecycle, range) || key === chartLastAutoRefineKey) {
+        if (!chartZoomShouldRequestRange(chartZoomLifecycle, range, chartLastAutoRefineKey)) {
           return;
         }
-        if (chartAutoRefineTimer) {
-          clearTimeout(chartAutoRefineTimer);
+        if (chartZoomLifecycle.pendingRequestId !== null) {
+          chartLastAutoRefineKey = key;
+          requestChartDataForRange(range, 'Auto-refining nested zoom range...');
+          return;
         }
+        const action = chartZoomAutoRefineQueueAction(chartAutoRefineScheduledRange, range);
+        if (action.type === 'duplicate') {
+          return;
+        }
+        if (action.type === 'flush') {
+          clearChartAutoRefineTimer();
+          action.ranges.forEach((queuedRange, index) => {
+            if (!chartCanQueueAutoRefine() ||
+              !chartZoomShouldRequestRange(chartZoomLifecycle, queuedRange, chartLastAutoRefineKey)) {
+              return;
+            }
+            chartLastAutoRefineKey = chartZoomRangeKey(queuedRange);
+            requestChartDataForRange(
+              queuedRange,
+              index === action.ranges.length - 1
+                ? 'Auto-refining nested zoom range...'
+                : 'Auto-refining zoom range...'
+            );
+          });
+          return;
+        }
+        chartAutoRefineScheduledRange = action.range;
         chartAutoRefineTimer = setTimeout(() => {
           chartAutoRefineTimer = 0;
+          chartAutoRefineScheduledRange = null;
           const current = currentChartZoomRange();
-          if (!current || chartZoomRangeKey(current) !== key || !chartCanExport() || chartControlsDirty) {
+          if (!current || chartZoomRangeKey(current) !== key || !chartCanQueueAutoRefine()) {
             return;
           }
           chartLastAutoRefineKey = key;
@@ -5005,51 +5325,20 @@ export class KdbResultsPanel {
         }, CHART_AUTO_REFINE_DELAY_MS);
       }
 
+      function chartCanQueueAutoRefine() {
+        return !chartPanel.hidden &&
+          !!chartUPlot &&
+          !!chartData &&
+          !!chartZoomLifecycle.fullRange &&
+          !chartControlsDirty;
+      }
+
       function clearChartAutoRefineTimer() {
         if (chartAutoRefineTimer) {
           clearTimeout(chartAutoRefineTimer);
           chartAutoRefineTimer = 0;
         }
-      }
-
-      function chartVisibleSamplePointCount(range) {
-        if (!chartData || !Array.isArray(chartData.x)) {
-          return 0;
-        }
-        let count = 0;
-        chartData.x.forEach(value => {
-          if (value >= range.min && value <= range.max) {
-            count += 1;
-          }
-        });
-        return count;
-      }
-
-      function chartZoomMinSampledPoints() {
-        return positiveIntegerSetting(settings.chartZoomMinSampledPoints, DEFAULT_SETTINGS.chartZoomMinSampledPoints);
-      }
-
-      function chartAutoRefineMinVisiblePoints() {
-        const configuredMinimum = chartZoomMinSampledPoints();
-        const availableSample = chartData ? Math.max(1, chartData.sampledPointCount) : configuredMinimum;
-        return Math.min(configuredMinimum, availableSample);
-      }
-
-      function chartDataCanAutoRefine() {
-        if (!chartData) {
-          return false;
-        }
-        return chartData.algorithm.indexOf('minmax-bucket/') === 0 ||
-          chartData.algorithm.indexOf('bar-cluster-even/') === 0 ||
-          chartData.algorithm.indexOf('box-bucket/') === 0 ||
-          chartData.algorithm.indexOf('ohlc-bucket/') === 0;
-      }
-
-      function chartZoomMaxSampledPoints() {
-        return Math.max(
-          chartZoomMinSampledPoints(),
-          positiveIntegerSetting(settings.chartZoomMaxSampledPoints, DEFAULT_SETTINGS.chartZoomMaxSampledPoints)
-        );
+        chartAutoRefineScheduledRange = null;
       }
 
       function notifyChartPanelState(rendered) {
@@ -5371,12 +5660,11 @@ export class KdbResultsPanel {
       }
 
       function normalizeSettings(value) {
-        const chartZoomMinSampledPoints = positiveIntegerSetting(value.chartZoomMinSampledPoints, DEFAULT_SETTINGS.chartZoomMinSampledPoints);
-        const chartZoomMaxSampledPoints = Math.max(
-          chartZoomMinSampledPoints,
-          positiveIntegerSetting(value.chartZoomMaxSampledPoints, DEFAULT_SETTINGS.chartZoomMaxSampledPoints)
-        );
         return {
+          autoFitColumns: typeof value.autoFitColumns === 'boolean'
+            ? value.autoFitColumns
+            : DEFAULT_SETTINGS.autoFitColumns,
+          autoFitMode: normalizeGridAutoFitMode(value.autoFitMode),
           cellWidth: boundedSetting(value.cellWidth, DEFAULT_SETTINGS.cellWidth, 80, 600),
           rowHeight: boundedSetting(value.rowHeight, DEFAULT_SETTINGS.rowHeight, 20, 80),
           fontSize: boundedSetting(value.fontSize, DEFAULT_SETTINGS.fontSize, 0, 32),
@@ -5390,8 +5678,6 @@ export class KdbResultsPanel {
           localDataServerFullExportCellLimit: positiveIntegerSetting(value.localDataServerFullExportCellLimit, DEFAULT_SETTINGS.localDataServerFullExportCellLimit),
           elapsedTimeDisplay: normalizeElapsedTimeDisplay(value.elapsedTimeDisplay),
           chartDecimalPlaces: boundedSetting(value.chartDecimalPlaces, DEFAULT_SETTINGS.chartDecimalPlaces, 0, 12),
-          chartZoomMinSampledPoints,
-          chartZoomMaxSampledPoints,
           arrayDisplayFormat: normalizeArrayDisplayFormat(value.arrayDisplayFormat),
           functionDisplayStrategy: normalizeQResultDisplayStrategy(value.functionDisplayStrategy, DEFAULT_SETTINGS.functionDisplayStrategy),
           dictionaryDisplayStrategy: normalizeQResultDisplayStrategy(value.dictionaryDisplayStrategy, DEFAULT_SETTINGS.dictionaryDisplayStrategy),
@@ -5401,6 +5687,9 @@ export class KdbResultsPanel {
       }
 
       function syncSettingsControls() {
+        autoFitEnabled = settings.autoFitColumns;
+        autoFit.checked = autoFitEnabled;
+        autoFitMode.value = settings.autoFitMode;
         includeHeaders.checked = settings.includeHeaders;
         includeRowIndex.checked = settings.includeRowIndex;
         settingsShowRowIndex.checked = settings.showRowIndex;
@@ -5425,6 +5714,8 @@ export class KdbResultsPanel {
 
       function updateSetting(key, value) {
         const next = {
+          autoFitColumns: settings.autoFitColumns,
+          autoFitMode: settings.autoFitMode,
           cellWidth: settings.cellWidth,
           rowHeight: settings.rowHeight,
           fontSize: settings.fontSize,
@@ -5438,8 +5729,6 @@ export class KdbResultsPanel {
           localDataServerFullExportCellLimit: settings.localDataServerFullExportCellLimit,
           elapsedTimeDisplay: settings.elapsedTimeDisplay,
           chartDecimalPlaces: settings.chartDecimalPlaces,
-          chartZoomMinSampledPoints: settings.chartZoomMinSampledPoints,
-          chartZoomMaxSampledPoints: settings.chartZoomMaxSampledPoints,
           arrayDisplayFormat: settings.arrayDisplayFormat,
           functionDisplayStrategy: settings.functionDisplayStrategy,
           dictionaryDisplayStrategy: settings.dictionaryDisplayStrategy,
@@ -5447,14 +5736,23 @@ export class KdbResultsPanel {
           objectDisplayStrategy: settings.objectDisplayStrategy
         };
         next[key] = value;
+        if (key === 'cellWidth' || key === 'density') {
+          columnWidthOverrides = {};
+        }
         applySettings(next);
-        if (key === 'cellWidth' || key === 'fontSize' || key === 'density') {
-          autoColumnWidths = Object.create(null);
+        if (
+          key === 'autoFitColumns' ||
+          key === 'autoFitMode' ||
+          key === 'cellWidth' ||
+          key === 'fontSize' ||
+          key === 'density'
+        ) {
+          refreshAutoFitWidths();
         }
         if (key === 'arrayDisplayFormat') {
           slice = emptySlice();
           pendingRequestKey = '';
-          autoColumnWidths = Object.create(null);
+          refreshAutoFitWidths();
           if (String(searchInput.value || '').length > 0) {
             queueSearchRows();
           }
@@ -5538,27 +5836,73 @@ export class KdbResultsPanel {
         return slice.endColumn >= slice.startColumn && data.columns.length > 0;
       }
 
-      function hasVisibleColumnsForAutoFit() {
-        return data.columns.length > 0 && lastRenderedColumns.end >= lastRenderedColumns.start;
-      }
-
       function updateAutoFitControlState() {
         autoFit.disabled = data.columns.length === 0;
-        autoFit.title = autoFit.disabled ? 'No visible data columns' : 'Fit headers and rendered cells as you scroll';
+        autoFit.checked = autoFitEnabled;
+        autoFitMode.disabled = data.columns.length === 0 || !autoFitEnabled;
+        autoFitMode.value = settings.autoFitMode;
+        autoFit.title = autoFit.disabled
+          ? 'No visible data columns'
+          : (autoFitEnabled
+            ? (settings.autoFitMode === 'wholeResult'
+              ? 'Fit every displayed value in the complete result'
+              : 'Fit headers and currently rendered rows as you scroll')
+            : 'Automatic width calculation is disabled');
       }
 
-      function setAutoFitEnabled(enabled) {
-        autoFitEnabled = enabled && data.columns.length > 0;
-        autoFit.checked = autoFitEnabled;
-        autoColumnWidths = Object.create(null);
-        status.textContent = autoFitEnabled ? 'Auto-fit enabled' : 'Auto-fit disabled';
-        updateAutoColumnWidthsFromSlice();
+      function refreshAutoFitWidths() {
+        latestAutoFitRequestId += 1;
+        autoColumnWidths = {};
+        wholeResultTextLengths = [];
+        if (!autoFitEnabled || data.columns.length === 0 || isTextResult()) {
+          updateAutoFitControlState();
+          requestRender();
+          return;
+        }
+        if (settings.autoFitMode === 'visibleRows') {
+          updateAutoColumnWidthsFromSlice();
+          updateAutoFitControlState();
+          requestRender();
+          return;
+        }
+        vscode.postMessage({
+          type: 'requestWholeResultAutoFit',
+          version: data.version,
+          requestId: latestAutoFitRequestId
+        });
         updateAutoFitControlState();
         requestRender();
       }
 
+      function setWholeResultAutoFit(message) {
+        if (
+          !autoFitEnabled ||
+          settings.autoFitMode !== 'wholeResult' ||
+          toNonNegativeInteger(message.version, -1) !== data.version ||
+          toNonNegativeInteger(message.requestId, -1) !== latestAutoFitRequestId
+        ) {
+          return;
+        }
+        wholeResultTextLengths = Array.isArray(message.textLengths)
+          ? message.textLengths.map(value => toNonNegativeInteger(value, 0))
+          : [];
+        autoColumnWidths = {};
+        wholeResultTextLengths.forEach((length, column) => {
+          if (column >= data.columns.length) {
+            return;
+          }
+          const key = columnWidthKey(column);
+          autoColumnWidths[key] = measuredColumnTextWidthFromLength(length);
+        });
+        requestRender();
+      }
+
       function updateAutoColumnWidthsFromSlice() {
-        if (!autoFitEnabled || !hasVisibleSliceColumns()) {
+        if (
+          !autoFitEnabled ||
+          settings.autoFitMode !== 'visibleRows' ||
+          !hasVisibleSliceColumns()
+        ) {
           return;
         }
         let changed = false;
@@ -5588,9 +5932,25 @@ export class KdbResultsPanel {
       }
 
       function measuredColumnTextWidth(text) {
+        return measuredColumnTextWidthFromLength(String(text || '').length);
+      }
+
+      function measuredColumnTextWidthFromLength(length) {
         const fontSize = settings.fontSize > 0 ? settings.fontSize : 13;
         const charWidth = Math.max(7, fontSize * 0.58);
-        return Math.ceil(String(text || '').length * charWidth + layout.cellPaddingX * 2 + 18);
+        return clampInteger(
+          Math.ceil(Math.max(0, Number(length) || 0) * charWidth + layout.cellPaddingX * 2 + 18),
+          MIN_COLUMN_WIDTH,
+          AUTO_COLUMN_WIDTH_CAP
+        );
+      }
+
+      function applyPersistedColumnWidths(value) {
+        columnWidthOverrides = normalizePositionalColumnWidths(
+          value,
+          MIN_COLUMN_WIDTH,
+          MAX_COLUMN_WIDTH
+        );
       }
 
       function setColumnWidthOverride(column, width) {
@@ -5601,11 +5961,27 @@ export class KdbResultsPanel {
         renderNow();
       }
 
+      function persistColumnWidth(column) {
+        const key = columnWidthKey(column);
+        const width = columnWidthOverrides[key];
+        if (!Number.isFinite(width)) {
+          return;
+        }
+        vscode.postMessage({
+          type: 'updateColumnWidth',
+          version: data.version,
+          position: Number(key),
+          width
+        });
+      }
+
       function resetColumnWidthOverrides() {
-        columnWidthOverrides = Object.create(null);
-        autoColumnWidths = Object.create(null);
+        columnWidthOverrides = {};
+        if (settings.autoFitMode === 'visibleRows') {
+          updateAutoColumnWidthsFromSlice();
+        }
         status.textContent = autoFitEnabled ? 'Column widths reset; auto-fit active' : 'Column widths reset';
-        updateAutoColumnWidthsFromSlice();
+        vscode.postMessage({ type: 'resetColumnWidths', version: data.version });
         renderColumnSettings();
         requestRender();
       }
@@ -5961,20 +6337,20 @@ export class KdbResultsPanel {
       }
 
       function columnWidth(column) {
-        const key = columnWidthKey(column);
-        const override = columnWidthOverrides[key];
-        if (Number.isFinite(override)) {
-          return clampInteger(override, MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH);
-        }
-        const autoWidth = autoColumnWidths[key];
-        if (autoFitEnabled && Number.isFinite(autoWidth)) {
-          return clampInteger(autoWidth, MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH);
-        }
-        return clampInteger(settings.cellWidth, MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH);
+        return resolvedPositionalColumnWidth(
+          columnWidthKey(column),
+          settings.cellWidth,
+          columnWidthOverrides,
+          autoFitEnabled,
+          autoColumnWidths,
+          MIN_COLUMN_WIDTH,
+          MAX_COLUMN_WIDTH
+        );
       }
 
       function columnWidthKey(column) {
-        return String(data.columns[column] || column);
+        const position = data.columnPositions[column];
+        return String(Number.isFinite(position) ? Math.max(0, Math.floor(position)) : Math.max(0, column));
       }
 
       function requestSlice(rows, columns) {
@@ -6186,8 +6562,15 @@ export class KdbResultsPanel {
         const column = Number(event.currentTarget.dataset.column);
         const key = columnWidthKey(column);
         delete columnWidthOverrides[key];
-        delete autoColumnWidths[key];
-        updateAutoColumnWidthsFromSlice();
+        if (settings.autoFitMode === 'visibleRows') {
+          updateAutoColumnWidthsFromSlice();
+        }
+        vscode.postMessage({
+          type: 'updateColumnWidth',
+          version: data.version,
+          position: Number(key),
+          width: null
+        });
         status.textContent = data.columns[column] + ' width reset';
         renderColumnSettings();
         requestRender();
@@ -6572,6 +6955,7 @@ export class KdbResultsPanel {
           version: 0,
           mode: 'table',
           columns: [],
+          columnPositions: [],
           allColumns: [],
           hiddenColumnNames: [],
           hiddenColumnCount: 0,
@@ -6665,6 +7049,11 @@ function panelSettings(): KdbPanelSettings {
   const density = panelDensity(config.get<string>('density'));
   const size = panelSizeSettings(config, density);
   return {
+    autoFitColumns: booleanSetting(
+      config.get<boolean>('autoFitColumns'),
+      DEFAULT_PANEL_SETTINGS.autoFitColumns
+    ),
+    autoFitMode: normalizeGridAutoFitMode(config.get<string>('autoFitMode')),
     cellWidth: size.cellWidth,
     rowHeight: size.rowHeight,
     fontSize: size.fontSize,
@@ -6690,13 +7079,21 @@ function panelSettings(): KdbPanelSettings {
     ),
     elapsedTimeDisplay: panelElapsedTimeDisplay(config.get<string>('elapsedTimeDisplay')),
     chartDecimalPlaces: chartDecimalPlacesSettingValue(config.get<number>('kdbPanel.chartDecimalPlaces')),
-    ...chartZoomSamplePointSettings(config),
     arrayDisplayFormat: panelArrayDisplayFormat(config.get<string>('kdbPanel.arrayDisplayFormat')),
     functionDisplayStrategy: panelQResultDisplayStrategy(config.get<string>('kdbPanel.functionDisplayStrategy'), 'qText'),
     dictionaryDisplayStrategy: panelQResultDisplayStrategy(config.get<string>('kdbPanel.dictionaryDisplayStrategy'), 'grid'),
     listDisplayStrategy: panelQResultDisplayStrategy(config.get<string>('kdbPanel.listDisplayStrategy'), 'grid'),
     objectDisplayStrategy: panelQResultDisplayStrategy(config.get<string>('kdbPanel.objectDisplayStrategy'), 'grid'),
   };
+}
+
+function persistedColumnWidths(): PositionalColumnWidths {
+  const config = vscode.workspace.getConfiguration('kdb-sqltools.results');
+  return normalizePositionalColumnWidths(
+    config.get<PositionalColumnWidths>('columnWidths'),
+    GRID_COLUMN_WIDTH_MIN,
+    GRID_COLUMN_WIDTH_MAX
+  );
 }
 
 function panelCellTextOptions(): CellTextOptions {
@@ -6722,35 +7119,6 @@ function chartMaxSourceRowsSettingValue(value: any, fallback = CHART_MAX_SOURCE_
 
 function chartDecimalPlacesSettingValue(value: any, fallback = CHART_DECIMAL_PLACES_DEFAULT): number {
   return boundedSettingNumber(value, fallback, CHART_DECIMAL_PLACES_MIN, CHART_DECIMAL_PLACES_MAX);
-}
-
-function chartZoomSamplePointSettings(config = vscode.workspace.getConfiguration('kdb-sqltools.results')): Pick<KdbPanelSettings, 'chartZoomMinSampledPoints' | 'chartZoomMaxSampledPoints'> {
-  const min = chartZoomMinSampledPointsSettingValue(config.get<number>('kdbPanel.chartZoomMinSampledPoints'));
-  const max = chartZoomMaxSampledPointsSettingValue(config.get<number>('kdbPanel.chartZoomMaxSampledPoints'), min);
-  return {
-    chartZoomMinSampledPoints: min,
-    chartZoomMaxSampledPoints: max,
-  };
-}
-
-function chartZoomMinSampledPointsSettingValue(value: any, fallback = CHART_ZOOM_MIN_SAMPLED_POINTS): number {
-  const number = Number(value);
-  if (!Number.isFinite(number)) {
-    return fallback;
-  }
-  const integer = Math.floor(number);
-  return integer >= 1 ? integer : fallback;
-}
-
-function chartZoomMaxSampledPointsSettingValue(
-  value: any,
-  minSampledPoints = CHART_ZOOM_MIN_SAMPLED_POINTS,
-  fallback = CHART_ZOOM_MAX_SAMPLED_POINTS
-): number {
-  const min = chartZoomMinSampledPointsSettingValue(minSampledPoints);
-  const number = Number(value);
-  const integer = Number.isFinite(number) ? Math.floor(number) : fallback;
-  return integer >= min ? integer : min;
 }
 
 function panelSizeSettings(
@@ -6864,6 +7232,8 @@ type PanelSettingUpdateValue = string | number | boolean;
 type PanelSettingUpdateValidator = (value: any) => PanelSettingUpdateValue | null;
 
 const RESULT_SETTING_UPDATE_ALLOWLIST: { [key: string]: PanelSettingUpdateValidator } = {
+  autoFitColumns: booleanSettingUpdate,
+  autoFitMode: autoFitModeSettingUpdate,
   cellWidth: value => numberSettingUpdate(value, 80, 600),
   rowHeight: value => numberSettingUpdate(value, 20, 80),
   fontSize: value => numberSettingUpdate(value, 0, 32),
@@ -6963,6 +7333,10 @@ function positiveIntegerSettingUpdate(value: any): number | null {
 
 function densitySettingUpdate(value: any): string | null {
   return value === 'compact' || value === 'standard' || value === 'comfortable' ? value : null;
+}
+
+function autoFitModeSettingUpdate(value: any): string | null {
+  return value === 'wholeResult' || value === 'visibleRows' ? value : null;
 }
 
 function elapsedTimeDisplaySettingUpdate(value: any): string | null {

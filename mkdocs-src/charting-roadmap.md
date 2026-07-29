@@ -30,7 +30,7 @@ The extension guards the number of source rows scanned, derives the initial samp
 - Bar data is consolidated into complete distinct-x clusters and, when necessary, evenly thinned without dropping individual series from a retained cluster.
 - Box data keeps each numeric y series together long enough to compute min, q1, median, q3, and max for each x value or bucket.
 - Candlestick data targets roughly one candle per horizontal pixel and uses financial aggregation: first valid open, maximum high, minimum low, and last valid close per x bucket. The four roles are never sampled independently.
-- Drag zoom can request one debounced viewport refinement, and `Refine zoom` can request it explicitly. `Reset zoom` restores the original full range.
+- Every distinct completed drag zoom can request a debounced refinement from the retained full source, including repeated nested zooms; `Refine zoom` requests the current range explicitly. Refined ranges keep all available density through 7,000 eligible rows and reduce larger ranges to about 7,000 without upsampling. `Reset zoom` invalidates stale refinement responses and restores the original full sample/range without backend I/O.
 
 The webview receives sampled arrays plus source/eligible/sample counts, the algorithm name, and warnings. It does not rescan data on cursor movement.
 
@@ -51,7 +51,7 @@ These rules prevent the renderer from inventing semantics for malformed or ambig
 
 ### Responsiveness and cancellation
 
-Continue hardening chart request versioning and cancellation so stale sorting, sampling, zoom refinement, reruns, and panel disposal do not waste extension-host work. Any CPU-heavy additions should yield or move off the critical path where practical.
+Chart request versioning rejects stale refinement responses, and reset invalidates in-flight refinement state before restoring the immutable baseline. Continue hardening cancellation so stale sorting, sampling, reruns, and panel disposal do not waste extension-host work. Any CPU-heavy additions should yield or move off the critical path where practical.
 
 ### Sampling quality
 

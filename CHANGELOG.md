@@ -1,5 +1,15 @@
 # Change Log
 
+## 0.3.19 - 2026-07-29
+
+- Persisted manual column widths by zero-based source-column position across queries, panel recreation, and VS Code restarts. Drag resizing remains authoritative through virtual scrolling and hidden/reordered views.
+- Added persisted auto-fit controls with stable `Whole result` fitting as the default and the former viewport-adaptive behavior available explicitly as `Visible rows`. Unchecking auto-fit now disables automatic width calculation.
+- Made the `Cell width` textbox and density presets apply consistently to every data column, including the first, while clearing/replacing positional manual overrides.
+- Restored repeated and nested chart zoom refinement from the retained full source. Distinct completed zooms request their own absolute range, in-flight nested requests supersede stale work, and duplicate scale notifications and programmatic rerenders remain suppressed.
+- Enforced fixed refined-range density of all available rows below 3,000, unchanged available density from 3,000 through 7,000, and type-aware downsampling to about 7,000 above that range without upsampling. Legacy min/max setting keys remain deprecated compatibility entries and are ignored.
+- Hardened reset so it invalidates stale refinement responses and restores the original full sample/domain without another backend request.
+- Seeded the immutable chart baseline from the full data domain when uPlot has not committed its initial scale yet, and preserved the pending `Run Selection and Chart` auto-open request through result-state reset.
+
 ## 0.3.18
 
 - Fixed zoom refinement to retain the requested viewport, avoid reconstruction-triggered re-refinement, and restore the original usable full sample on reset.

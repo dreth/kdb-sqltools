@@ -11,6 +11,8 @@ const SAMPLE_ROWS = [
   { sym: 'MSFT', size: 250, price: 234.56 },
 ];
 
+const GRID_ACCEPTANCE_ROW_COUNT = 240;
+
 class MockQServer {
   constructor() {
     this.port = 0;
@@ -150,6 +152,27 @@ function responsePayload(query) {
     return countTable();
   }
 
+  if (compact === 'select from gridAcceptancePhaseOne') {
+    return gridAcceptanceTable(
+      ['firstSource', 'arrayPayload', 'laterSource', 'tail'],
+      1000
+    );
+  }
+
+  if (compact === 'select from gridAcceptanceRenamed') {
+    return gridAcceptanceTable(
+      ['renamedZero', 'differentPayload', 'renamedLater', 'extraFlag'],
+      2000
+    );
+  }
+
+  if (compact === 'select from gridAcceptanceReloaded') {
+    return gridAcceptanceTable(
+      ['afterReloadZero', 'afterReloadPayload', 'afterReloadLater', 'afterReloadTail'],
+      3000
+    );
+  }
+
   if (compact.includes('sublist value p') || compact.includes('sublist value tbl') || compact.includes('select') || compact.includes('trade')) {
     return sampleTradeTable();
   }
@@ -249,6 +272,25 @@ function sampleTradeTable() {
       symbolVector(SAMPLE_ROWS.map(row => row.sym)),
       intVector(SAMPLE_ROWS.map(row => row.size)),
       floatVector(SAMPLE_ROWS.map(row => row.price)),
+    ]
+  );
+}
+
+function gridAcceptanceTable(columns, offset) {
+  const rowIndexes = Array.from({ length: GRID_ACCEPTANCE_ROW_COUNT }, (_, index) => index);
+  const longArray = Array.from({ length: 96 }, (_, index) => offset * 10 + index);
+
+  return qTable(
+    columns,
+    [
+      intVector(rowIndexes.map(index => offset + index)),
+      genericList(rowIndexes.map(index => intVector(
+        index === GRID_ACCEPTANCE_ROW_COUNT - 1
+          ? longArray
+          : [offset + index, offset + index + 1]
+      ))),
+      floatVector(rowIndexes.map(index => offset + index / 10)),
+      symbolVector(rowIndexes.map(index => index % 2 === 0 ? 'even' : 'odd')),
     ]
   );
 }

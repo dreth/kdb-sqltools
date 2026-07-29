@@ -2,7 +2,7 @@
   "name": "kdb-sqltools",
   "displayName": "SQLTools kdb Driver",
   "description": "SQLTools driver for kdb+/q using q IPC over TCP",
-  "version": "0.3.18",
+  "version": "0.3.19",
   "engines": {
     "vscode": "^1.42.0"
   },
@@ -588,18 +588,48 @@
           "type": "integer",
           "default": 3000,
           "minimum": 1,
-          "description": "Minimum visible sampled points before a reduced built-in chart auto-refines a settled zoom range when more source rows may exist in that range."
+          "description": "Deprecated compatibility setting. Refined chart ranges now use the fixed 3,000-through-7,000 density contract.",
+          "deprecationMessage": "This setting is ignored. Refined ranges keep all eligible density through 7,000 rows and reduce larger ranges to about 7,000."
         },
         "kdb-sqltools.results.kdbPanel.chartZoomMaxSampledPoints": {
           "type": "integer",
           "default": 7000,
           "minimum": 1,
-          "description": "Maximum sampled points returned for a refined chart zoom range. Values below chartZoomMinSampledPoints are clamped up to that minimum by the extension."
+          "description": "Deprecated compatibility setting. Refined chart ranges now use a fixed target of about 7,000 points above 7,000 eligible rows.",
+          "deprecationMessage": "This setting is ignored. Refined ranges keep all eligible density through 7,000 rows and reduce larger ranges to about 7,000."
         },
         "kdb-sqltools.performance.trace": {
           "type": "boolean",
           "default": false,
           "description": "Log query performance timings to the extension host console."
+        },
+        "kdb-sqltools.results.columnWidths": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "number",
+            "minimum": 80,
+            "maximum": 2000
+          },
+          "description": "Extension-managed manual column widths keyed by zero-based source-column position. Dragging updates this sparse map; Cell width, density presets, and Reset column widths clear it."
+        },
+        "kdb-sqltools.results.autoFitColumns": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically calculate kdb results-panel column widths using the selected auto-fit mode. When disabled, no automatic width calculation runs."
+        },
+        "kdb-sqltools.results.autoFitMode": {
+          "type": "string",
+          "default": "wholeResult",
+          "enum": [
+            "wholeResult",
+            "visibleRows"
+          ],
+          "enumDescriptions": [
+            "Fit from the widest displayed header or value in the complete result and keep widths stable while scrolling.",
+            "Adapt widths to the rows currently rendered in the virtual viewport."
+          ],
+          "description": "Row scope used when automatic column fitting is enabled."
         },
         "kdb-sqltools.results.cellWidth": {
           "type": "number",
