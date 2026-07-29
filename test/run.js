@@ -95,6 +95,11 @@ const {
   LocalDataServer,
   randomLocalDataServerToken,
 } = require('../out/local-data-server');
+const {
+  fallbackConnectionId,
+  KdbPanelConnectionSession,
+} = require('../out/kdb-panel-connection-session');
+const { executeForResultsTarget } = require('../out/query-results-target');
 const driverModule = require('../out/ls/driver');
 const KdbDriver = driverModule.default;
 const { queryInNamespace } = driverModule;
@@ -122,6 +127,16 @@ function htmlSelectOptions(source, selectId) {
 
 function sourceOccurrences(source, needle) {
   return source.split(needle).length - 1;
+}
+
+function createDeferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
 }
 
 function panelScrollState(physicalScrollTop, viewportHeight, rowCount, currentLayout, maxScrollPixels, scrollEndEpsilon) {
@@ -181,6 +196,1394 @@ function panelFormatElapsedMs(milliseconds, display) {
 }
 
 (async () => {
+  const connectionA = { id: 'panel-a', name: 'Panel A', password: 'first-config-value' };
+  const connectionB = { id: 'panel-b', name: 'Panel B' };
+  const connectionC = { id: 'panel-c', name: 'Panel C' };
+  assert.notStrictEqual(
+    fallbackConnectionId({ name: 'same', driver: 'KDB', server: 'localhost', port: 5000, database: '.' }, 'KDB'),
+    fallbackConnectionId({ name: 'same', driver: 'KDB', server: 'localhost', port: 5001, database: '.' }, 'KDB'),
+    'fallback connection identity should distinguish otherwise-matching kdb connections on different ports'
+  );
+  const fallbackAccountIdentity = {
+    name: 'same-account-endpoint',
+    driver: 'KDB',
+    group: 'accounts',
+    server: 'localhost',
+    port: 5000,
+    database: '.',
+  };
+  const aliceConnection = {
+    ...fallbackAccountIdentity,
+    id: fallbackConnectionId({ ...fallbackAccountIdentity, username: 'alice' }, 'KDB'),
+    username: 'alice',
+  };
+  const bobConnection = {
+    ...fallbackAccountIdentity,
+    id: fallbackConnectionId({ ...fallbackAccountIdentity, username: 'bob' }, 'KDB'),
+    username: 'bob',
+  };
+  assert.notStrictEqual(
+    aliceConnection.id,
+    bobConnection.id,
+    'fallback connection identity should distinguish accounts on the same endpoint'
+  );
+  let accountPickerCalls = 0;
+  const fallbackAccountSession = new KdbPanelConnectionSession();
+  assert.strictEqual(
+    await fallbackAccountSession.resolve(
+      [aliceConnection, bobConnection],
+      async connections => {
+        accountPickerCalls += 1;
+        return connections.find(connection => connection.username === 'bob');
+      }
+    ),
+    bobConnection,
+    'selecting a no-ID fallback connection should resolve the chosen account'
+  );
+  assert.strictEqual(accountPickerCalls, 1);
+  assert.strictEqual(
+    await fallbackAccountSession.resolve(
+      [aliceConnection, bobConnection],
+      async () => {
+        throw new Error('the selected fallback account should be reused silently');
+      }
+    ),
+    bobConnection
+  );
+  assert.strictEqual(
+    fallbackConnectionId({
+      name: 'safe',
+      driver: 'KDB',
+      server: 'localhost',
+      port: 5000,
+      database: '.',
+      password: 'must-not-appear',
+      connectString: 'user:must-not-appear@localhost:5000',
+    }, 'KDB').includes('must-not-appear'),
+    false,
+    'fallback connection identity must not contain password or connect-string credentials'
+  );
+  const panelConnectionSession = new KdbPanelConnectionSession();
+  const plannedConnectionIds = [];
+  const connectionPickerCalls = [];
+  const connectionPicker = async (connections, currentConnectionId) => {
+    connectionPickerCalls.push({
+      connectionIds: connections.map(connection => connection.id),
+      currentConnectionId,
+    });
+    assert.ok(plannedConnectionIds.length > 0, 'connection picker was called unexpectedly');
+    const plannedConnectionId = plannedConnectionIds.shift();
+    return plannedConnectionId === null
+      ? undefined
+      : connections.find(connection => connection.id === plannedConnectionId);
+  };
+
+  plannedConnectionIds.push(connectionA.id);
+  assert.strictEqual(
+    await panelConnectionSession.resolve([connectionA, connectionB], connectionPicker),
+    connectionA,
+    'the first multi-connection panel run should prompt and use the picked connection'
+  );
+  assert.deepStrictEqual(connectionPickerCalls, [{
+    connectionIds: [connectionA.id, connectionB.id],
+    currentConnectionId: undefined,
+  }]);
+
+  const refreshedConnectionA = {
+    ...connectionA,
+    password: 'refreshed-config-value',
+  };
+  assert.strictEqual(
+    await panelConnectionSession.resolve([refreshedConnectionA, connectionB], connectionPicker),
+    refreshedConnectionA,
+    'a reused session ID should resolve to the fresh connection object instead of caching credentials'
+  );
+  assert.strictEqual(connectionPickerCalls.length, 1, 'the second panel run should reuse the session choice silently');
+  assert.strictEqual(
+    (await panelConnectionSession.resolve([refreshedConnectionA, connectionB], connectionPicker)).password,
+    'refreshed-config-value'
+  );
+  assert.strictEqual(connectionPickerCalls.length, 1, 'silent reuse should remain picker-free');
+
+  plannedConnectionIds.push(connectionB.id);
+  assert.strictEqual(
+    await panelConnectionSession.resolve(
+      [refreshedConnectionA, connectionB],
+      connectionPicker,
+      { alwaysPrompt: true }
+    ),
+    connectionB,
+    'the palette-style forced selector should switch the session choice'
+  );
+  assert.deepStrictEqual(connectionPickerCalls[1], {
+    connectionIds: [connectionA.id, connectionB.id],
+    currentConnectionId: connectionA.id,
+  });
+  assert.strictEqual(
+    await panelConnectionSession.resolve([refreshedConnectionA, connectionB], connectionPicker),
+    connectionB,
+    'future panel runs should use the palette-selected connection'
+  );
+  assert.strictEqual(connectionPickerCalls.length, 2);
+
+  plannedConnectionIds.push(connectionA.id);
+  assert.strictEqual(
+    await panelConnectionSession.resolve([refreshedConnectionA], connectionPicker),
+    refreshedConnectionA,
+    'removing the selected connection should invalidate it and prompt even with one replacement'
+  );
+  assert.deepStrictEqual(connectionPickerCalls[2], {
+    connectionIds: [connectionA.id],
+    currentConnectionId: undefined,
+  });
+
+  plannedConnectionIds.push(connectionB.id);
+  assert.strictEqual(
+    await panelConnectionSession.resolve([connectionB, connectionC], connectionPicker),
+    connectionB,
+    'filtering a selected non-kdb connection from the eligible list should invalidate it and prompt again'
+  );
+  assert.deepStrictEqual(connectionPickerCalls[3], {
+    connectionIds: [connectionB.id, connectionC.id],
+    currentConnectionId: undefined,
+  });
+
+  plannedConnectionIds.push(null);
+  assert.strictEqual(
+    await panelConnectionSession.resolve(
+      [refreshedConnectionA, connectionB],
+      connectionPicker,
+      { alwaysPrompt: true }
+    ),
+    undefined,
+    'canceling the forced selector should not select a replacement'
+  );
+  assert.deepStrictEqual(connectionPickerCalls[4], {
+    connectionIds: [connectionA.id, connectionB.id],
+    currentConnectionId: connectionB.id,
+  });
+  assert.strictEqual(
+    await panelConnectionSession.resolve([refreshedConnectionA, connectionB], connectionPicker),
+    connectionB,
+    'canceling the forced selector should preserve the valid session choice'
+  );
+  assert.strictEqual(connectionPickerCalls.length, 5);
+  assert.deepStrictEqual(plannedConnectionIds, []);
+
+  const singleConnectionSession = new KdbPanelConnectionSession();
+  let singleConnectionPickerCalls = 0;
+  assert.strictEqual(
+    await singleConnectionSession.resolve([connectionA], async () => {
+      singleConnectionPickerCalls += 1;
+      return connectionA;
+    }),
+    connectionA,
+    'one eligible kdb connection should run without a picker'
+  );
+  assert.strictEqual(singleConnectionPickerCalls, 0);
+  assert.strictEqual(
+    await singleConnectionSession.resolve(
+      [connectionA],
+      async (connections, currentConnectionId) => {
+        singleConnectionPickerCalls += 1;
+        assert.deepStrictEqual(connections, [connectionA]);
+        assert.strictEqual(currentConnectionId, connectionA.id);
+        return connectionA;
+      },
+      { alwaysPrompt: true }
+    ),
+    connectionA,
+    'the palette-style selector should always prompt even when only one kdb connection is eligible'
+  );
+  assert.strictEqual(singleConnectionPickerCalls, 1);
+
+  const invalidCancelSession = new KdbPanelConnectionSession();
+  assert.strictEqual(
+    await invalidCancelSession.resolve(
+      [connectionA, connectionB],
+      async () => connectionB
+    ),
+    connectionB
+  );
+  let invalidCancelPickerCalls = 0;
+  assert.strictEqual(
+    await invalidCancelSession.resolve(
+      [connectionA],
+      async (connections, currentConnectionId) => {
+        invalidCancelPickerCalls += 1;
+        assert.deepStrictEqual(connections, [connectionA]);
+        assert.strictEqual(currentConnectionId, undefined);
+        return undefined;
+      }
+    ),
+    undefined,
+    'canceling a required sole replacement should not forget the invalid choice'
+  );
+  assert.strictEqual(
+    await invalidCancelSession.resolve(
+      [connectionA],
+      async (connections, currentConnectionId) => {
+        invalidCancelPickerCalls += 1;
+        assert.deepStrictEqual(connections, [connectionA]);
+        assert.strictEqual(currentConnectionId, undefined);
+        return connectionA;
+      }
+    ),
+    connectionA,
+    'retrying after a canceled sole replacement should prompt again'
+  );
+  assert.strictEqual(invalidCancelPickerCalls, 2);
+  let successfulReplacementPickerCalls = 0;
+  assert.strictEqual(
+    await invalidCancelSession.resolve(
+      [connectionA],
+      async () => {
+        successfulReplacementPickerCalls += 1;
+        return connectionA;
+      }
+    ),
+    connectionA,
+    'a successful replacement should become the silently reusable session choice'
+  );
+  assert.strictEqual(successfulReplacementPickerCalls, 0);
+
+  const reappearingChoiceSession = new KdbPanelConnectionSession();
+  assert.strictEqual(
+    await reappearingChoiceSession.resolve(
+      [connectionA, connectionB],
+      async () => connectionB
+    ),
+    connectionB
+  );
+  assert.strictEqual(
+    await reappearingChoiceSession.resolve(
+      [connectionA],
+      async () => undefined
+    ),
+    undefined
+  );
+  let reappearingChoicePickerCalls = 0;
+  assert.strictEqual(
+    await reappearingChoiceSession.resolve(
+      [connectionB],
+      async (connections, currentConnectionId) => {
+        reappearingChoicePickerCalls += 1;
+        assert.deepStrictEqual(connections, [connectionB]);
+        assert.strictEqual(currentConnectionId, undefined);
+        return connectionB;
+      }
+    ),
+    connectionB,
+    'an invalidated choice that reappears should still require successful selection'
+  );
+  assert.strictEqual(reappearingChoicePickerCalls, 1);
+
+  const invalidRejectionSession = new KdbPanelConnectionSession();
+  assert.strictEqual(
+    await invalidRejectionSession.resolve(
+      [connectionA, connectionB],
+      async () => connectionB
+    ),
+    connectionB
+  );
+  const invalidReplacementFailure = new Error('expected invalid replacement failure');
+  await assert.rejects(
+    invalidRejectionSession.resolve(
+      [connectionA],
+      async () => {
+        throw invalidReplacementFailure;
+      }
+    ),
+    error => error === invalidReplacementFailure
+  );
+  let invalidRejectionRetryPickerCalls = 0;
+  assert.strictEqual(
+    await invalidRejectionSession.resolve(
+      [connectionA],
+      async (connections, currentConnectionId) => {
+        invalidRejectionRetryPickerCalls += 1;
+        assert.deepStrictEqual(connections, [connectionA]);
+        assert.strictEqual(currentConnectionId, undefined);
+        return connectionA;
+      }
+    ),
+    connectionA,
+    'retrying after a rejected sole replacement should prompt again'
+  );
+  assert.strictEqual(invalidRejectionRetryPickerCalls, 1);
+
+  const zeroConnectionSession = new KdbPanelConnectionSession();
+  assert.strictEqual(
+    await zeroConnectionSession.resolve(
+      [connectionA, connectionB],
+      async () => connectionB
+    ),
+    connectionB
+  );
+  assert.strictEqual(
+    await zeroConnectionSession.resolve(
+      [],
+      async () => {
+        throw new Error('an empty eligible list must not open a picker');
+      }
+    ),
+    undefined
+  );
+  let afterZeroPickerCalls = 0;
+  assert.strictEqual(
+    await zeroConnectionSession.resolve(
+      [connectionA],
+      async (connections, currentConnectionId) => {
+        afterZeroPickerCalls += 1;
+        assert.deepStrictEqual(connections, [connectionA]);
+        assert.strictEqual(currentConnectionId, undefined);
+        return connectionA;
+      }
+    ),
+    connectionA,
+    'an invalid choice should survive a zero-connection transition and require replacement'
+  );
+  assert.strictEqual(afterZeroPickerCalls, 1);
+
+  const invalidConcurrentSession = new KdbPanelConnectionSession();
+  assert.strictEqual(
+    await invalidConcurrentSession.resolve(
+      [connectionA, connectionB],
+      async () => connectionB
+    ),
+    connectionB
+  );
+  const invalidConcurrentPickerStarted = createDeferred();
+  const invalidConcurrentPickerResult = createDeferred();
+  let invalidConcurrentPickerCalls = 0;
+  const invalidConcurrentFirst = invalidConcurrentSession.resolve(
+    [connectionA],
+    async (connections, currentConnectionId) => {
+      invalidConcurrentPickerCalls += 1;
+      assert.deepStrictEqual(connections, [connectionA]);
+      assert.strictEqual(currentConnectionId, undefined);
+      invalidConcurrentPickerStarted.resolve();
+      return invalidConcurrentPickerResult.promise;
+    }
+  );
+  await invalidConcurrentPickerStarted.promise;
+  let invalidConcurrentJoinedPickerCalls = 0;
+  const invalidConcurrentSecond = invalidConcurrentSession.resolve(
+    [connectionA],
+    async () => {
+      invalidConcurrentJoinedPickerCalls += 1;
+      return connectionA;
+    }
+  );
+  let invalidConcurrentSecondSettled = false;
+  invalidConcurrentSecond.then(
+    () => {
+      invalidConcurrentSecondSettled = true;
+    },
+    () => {
+      invalidConcurrentSecondSettled = true;
+    }
+  );
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.strictEqual(
+    invalidConcurrentJoinedPickerCalls,
+    0,
+    'a concurrent normal run must join a required sole-replacement picker'
+  );
+  assert.strictEqual(
+    invalidConcurrentSecondSettled,
+    false,
+    'a concurrent normal run must not silently execute the sole replacement'
+  );
+  invalidConcurrentPickerResult.resolve(connectionA);
+  assert.deepStrictEqual(
+    await Promise.all([invalidConcurrentFirst, invalidConcurrentSecond]),
+    [connectionA, connectionA],
+    'joined sole-replacement runs should receive the same successful choice'
+  );
+  assert.strictEqual(invalidConcurrentPickerCalls, 1);
+  assert.strictEqual(invalidConcurrentJoinedPickerCalls, 0);
+
+  const stalePaletteCancelSession = new KdbPanelConnectionSession();
+  assert.strictEqual(
+    await stalePaletteCancelSession.resolve(
+      [connectionA, connectionB],
+      async () => connectionB
+    ),
+    connectionB
+  );
+  assert.strictEqual(
+    await stalePaletteCancelSession.resolve(
+      [connectionA],
+      async (connections, currentConnectionId) => {
+        assert.deepStrictEqual(connections, [connectionA]);
+        assert.strictEqual(currentConnectionId, undefined);
+        return undefined;
+      },
+      { alwaysPrompt: true }
+    ),
+    undefined,
+    'canceling the palette should preserve an invalid stale choice'
+  );
+  let stalePaletteRetryPickerCalls = 0;
+  assert.strictEqual(
+    await stalePaletteCancelSession.resolve(
+      [connectionA],
+      async (connections, currentConnectionId) => {
+        stalePaletteRetryPickerCalls += 1;
+        assert.deepStrictEqual(connections, [connectionA]);
+        assert.strictEqual(currentConnectionId, undefined);
+        return connectionA;
+      }
+    ),
+    connectionA,
+    'a normal run after stale palette cancellation should still require replacement'
+  );
+  assert.strictEqual(stalePaletteRetryPickerCalls, 1);
+
+  const concurrentSession = new KdbPanelConnectionSession();
+  const concurrentPickerStarted = createDeferred();
+  const concurrentPickerResult = createDeferred();
+  let concurrentPickerCalls = 0;
+  let concurrentJoinedPickerCalls = 0;
+  const concurrentFirst = concurrentSession.resolve(
+    [connectionA, connectionB],
+    async (connections, currentConnectionId) => {
+      concurrentPickerCalls += 1;
+      assert.deepStrictEqual(connections, [connectionA, connectionB]);
+      assert.strictEqual(currentConnectionId, undefined);
+      concurrentPickerStarted.resolve();
+      return concurrentPickerResult.promise;
+    }
+  );
+  const concurrentSecond = concurrentSession.resolve(
+    [connectionA, connectionB],
+    async () => {
+      concurrentJoinedPickerCalls += 1;
+      return connectionA;
+    }
+  );
+  await concurrentPickerStarted.promise;
+  assert.strictEqual(concurrentPickerCalls, 1);
+  assert.strictEqual(
+    concurrentJoinedPickerCalls,
+    0,
+    'concurrent normal panel runs should join the first pending picker'
+  );
+  concurrentPickerResult.resolve(connectionB);
+  assert.deepStrictEqual(
+    await Promise.all([concurrentFirst, concurrentSecond]),
+    [connectionB, connectionB],
+    'concurrent normal panel runs should receive the same picked connection'
+  );
+  assert.strictEqual(concurrentPickerCalls, 1);
+  assert.strictEqual(concurrentJoinedPickerCalls, 0);
+
+  const concurrentCancelSession = new KdbPanelConnectionSession();
+  const concurrentCancelPickerStarted = createDeferred();
+  const concurrentCancelPickerResult = createDeferred();
+  let concurrentCancelPickerCalls = 0;
+  let concurrentCancelJoinedPickerCalls = 0;
+  const concurrentCancelFirst = concurrentCancelSession.resolve(
+    [connectionA, connectionB],
+    async () => {
+      concurrentCancelPickerCalls += 1;
+      concurrentCancelPickerStarted.resolve();
+      return concurrentCancelPickerResult.promise;
+    }
+  );
+  const concurrentCancelSecond = concurrentCancelSession.resolve(
+    [connectionA, connectionB],
+    async () => {
+      concurrentCancelJoinedPickerCalls += 1;
+      return connectionB;
+    }
+  );
+  await concurrentCancelPickerStarted.promise;
+  concurrentCancelPickerResult.resolve(undefined);
+  assert.deepStrictEqual(
+    await Promise.all([concurrentCancelFirst, concurrentCancelSecond]),
+    [undefined, undefined],
+    'canceling a shared normal picker should cancel every joined run'
+  );
+  assert.strictEqual(concurrentCancelPickerCalls, 1);
+  assert.strictEqual(concurrentCancelJoinedPickerCalls, 0);
+  let concurrentCancelRetryPickerCalls = 0;
+  assert.strictEqual(
+    await concurrentCancelSession.resolve(
+      [connectionA, connectionB],
+      async () => {
+        concurrentCancelRetryPickerCalls += 1;
+        return connectionA;
+      }
+    ),
+    connectionA,
+    'a normal run after shared cancellation should be able to prompt again'
+  );
+  assert.strictEqual(concurrentCancelRetryPickerCalls, 1);
+
+  const rejectionSession = new KdbPanelConnectionSession();
+  const rejectionPickerStarted = createDeferred();
+  const rejectionPickerResult = createDeferred();
+  const pickerFailure = new Error('expected picker failure');
+  let rejectionPickerCalls = 0;
+  let rejectionJoinedPickerCalls = 0;
+  const rejectedFirst = rejectionSession.resolve(
+    [connectionA, connectionB],
+    async () => {
+      rejectionPickerCalls += 1;
+      rejectionPickerStarted.resolve();
+      return rejectionPickerResult.promise;
+    }
+  );
+  const rejectedSecond = rejectionSession.resolve(
+    [connectionA, connectionB],
+    async () => {
+      rejectionJoinedPickerCalls += 1;
+      return connectionB;
+    }
+  );
+  const rejectionAssertions = Promise.all([
+    assert.rejects(rejectedFirst, error => error === pickerFailure),
+    assert.rejects(rejectedSecond, error => error === pickerFailure),
+  ]);
+  await rejectionPickerStarted.promise;
+  rejectionPickerResult.reject(pickerFailure);
+  await rejectionAssertions;
+  assert.strictEqual(rejectionPickerCalls, 1);
+  assert.strictEqual(rejectionJoinedPickerCalls, 0);
+  let rejectionRetryPickerCalls = 0;
+  assert.strictEqual(
+    await rejectionSession.resolve(
+      [connectionA, connectionB],
+      async () => {
+        rejectionRetryPickerCalls += 1;
+        return connectionB;
+      }
+    ),
+    connectionB,
+    'picker rejection should clear the normal selection lock'
+  );
+  assert.strictEqual(rejectionRetryPickerCalls, 1);
+
+  const paletteQueueSession = new KdbPanelConnectionSession();
+  const normalPickerStarted = createDeferred();
+  const normalPickerResult = createDeferred();
+  let normalPickerCalls = 0;
+  const normalWhilePalettePending = paletteQueueSession.resolve(
+    [connectionA, connectionB],
+    async () => {
+      normalPickerCalls += 1;
+      normalPickerStarted.resolve();
+      return normalPickerResult.promise;
+    }
+  );
+  await normalPickerStarted.promise;
+  const queuedPalettePickerStarted = createDeferred();
+  const queuedPalettePickerResult = createDeferred();
+  let queuedPalettePickerCalls = 0;
+  const queuedPaletteSelection = paletteQueueSession.resolve(
+    [connectionA, connectionB],
+    async (connections, currentConnectionId) => {
+      queuedPalettePickerCalls += 1;
+      assert.deepStrictEqual(connections, [connectionA, connectionB]);
+      assert.strictEqual(
+        currentConnectionId,
+        connectionA.id,
+        'a serialized palette picker should see the completed normal selection'
+      );
+      queuedPalettePickerStarted.resolve();
+      return queuedPalettePickerResult.promise;
+    },
+    { alwaysPrompt: true }
+  );
+  let normalAfterQueuedPalettePickerCalls = 0;
+  const normalAfterQueuedPalette = paletteQueueSession.resolve(
+    [connectionA, connectionB],
+    async () => {
+      normalAfterQueuedPalettePickerCalls += 1;
+      return connectionA;
+    }
+  );
+  let normalAfterQueuedPaletteSettled = false;
+  normalAfterQueuedPalette.then(
+    () => {
+      normalAfterQueuedPaletteSettled = true;
+    },
+    () => {
+      normalAfterQueuedPaletteSettled = true;
+    }
+  );
+  await Promise.resolve();
+  assert.strictEqual(
+    queuedPalettePickerCalls,
+    0,
+    'palette selection should wait instead of opening over a pending normal picker'
+  );
+  normalPickerResult.resolve(connectionA);
+  await queuedPalettePickerStarted.promise;
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.strictEqual(
+    normalAfterQueuedPaletteSettled,
+    false,
+    'a normal run starting after the palette is queued must not join the older normal selection'
+  );
+  assert.strictEqual(normalAfterQueuedPalettePickerCalls, 0);
+  queuedPalettePickerResult.resolve(connectionB);
+  assert.deepStrictEqual(
+    await Promise.all([
+      normalWhilePalettePending,
+      queuedPaletteSelection,
+      normalAfterQueuedPalette,
+    ]),
+    [connectionA, connectionB, connectionB],
+    'the older normal picker should settle before the palette, and a later normal should use the palette result'
+  );
+  assert.strictEqual(normalPickerCalls, 1);
+  assert.strictEqual(queuedPalettePickerCalls, 1);
+  assert.strictEqual(normalAfterQueuedPalettePickerCalls, 0);
+  let postPalettePickerCalls = 0;
+  assert.strictEqual(
+    await paletteQueueSession.resolve(
+      [connectionA, connectionB],
+      async () => {
+        postPalettePickerCalls += 1;
+        return connectionA;
+      }
+    ),
+    connectionB,
+    'the serialized explicit palette choice should become the valid session target'
+  );
+  assert.strictEqual(postPalettePickerCalls, 0);
+
+  const paletteFlightSession = new KdbPanelConnectionSession();
+  assert.strictEqual(
+    await paletteFlightSession.resolve(
+      [connectionA, connectionB],
+      async () => connectionA
+    ),
+    connectionA
+  );
+  const paletteFlightPickerStarted = createDeferred();
+  const paletteFlightPickerResult = createDeferred();
+  let paletteFlightPickerCalls = 0;
+  const paletteFlightSelection = paletteFlightSession.resolve(
+    [connectionA, connectionB],
+    async (connections, currentConnectionId) => {
+      paletteFlightPickerCalls += 1;
+      assert.deepStrictEqual(connections, [connectionA, connectionB]);
+      assert.strictEqual(currentConnectionId, connectionA.id);
+      paletteFlightPickerStarted.resolve();
+      return paletteFlightPickerResult.promise;
+    },
+    { alwaysPrompt: true }
+  );
+  await paletteFlightPickerStarted.promise;
+  let paletteFlightNormalPickerCalls = 0;
+  const paletteFlightNormal = paletteFlightSession.resolve(
+    [connectionA, connectionB],
+    async () => {
+      paletteFlightNormalPickerCalls += 1;
+      return connectionA;
+    }
+  );
+  let paletteFlightNormalSettled = false;
+  paletteFlightNormal.then(
+    () => {
+      paletteFlightNormalSettled = true;
+    },
+    () => {
+      paletteFlightNormalSettled = true;
+    }
+  );
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.strictEqual(
+    paletteFlightNormalSettled,
+    false,
+    'a normal run must wait for a pending explicit palette selection'
+  );
+  assert.strictEqual(paletteFlightNormalPickerCalls, 0);
+  paletteFlightPickerResult.resolve(connectionB);
+  assert.deepStrictEqual(
+    await Promise.all([paletteFlightSelection, paletteFlightNormal]),
+    [connectionB, connectionB],
+    'the waiting normal run should use the successful palette decision without another picker'
+  );
+  assert.strictEqual(paletteFlightPickerCalls, 1);
+  assert.strictEqual(paletteFlightNormalPickerCalls, 0);
+
+  const paletteCancelFlightSession = new KdbPanelConnectionSession();
+  assert.strictEqual(
+    await paletteCancelFlightSession.resolve(
+      [connectionA, connectionB],
+      async () => connectionA
+    ),
+    connectionA
+  );
+  const paletteCancelFlightPickerStarted = createDeferred();
+  const paletteCancelFlightPickerResult = createDeferred();
+  const paletteCancelFlightSelection = paletteCancelFlightSession.resolve(
+    [connectionA, connectionB],
+    async (connections, currentConnectionId) => {
+      assert.deepStrictEqual(connections, [connectionA, connectionB]);
+      assert.strictEqual(currentConnectionId, connectionA.id);
+      paletteCancelFlightPickerStarted.resolve();
+      return paletteCancelFlightPickerResult.promise;
+    },
+    { alwaysPrompt: true }
+  );
+  await paletteCancelFlightPickerStarted.promise;
+  let paletteCancelFlightNormalPickerCalls = 0;
+  const paletteCancelFlightNormal = paletteCancelFlightSession.resolve(
+    [connectionA, connectionB],
+    async () => {
+      paletteCancelFlightNormalPickerCalls += 1;
+      return connectionB;
+    }
+  );
+  let paletteCancelFlightNormalSettled = false;
+  paletteCancelFlightNormal.then(
+    () => {
+      paletteCancelFlightNormalSettled = true;
+    },
+    () => {
+      paletteCancelFlightNormalSettled = true;
+    }
+  );
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.strictEqual(
+    paletteCancelFlightNormalSettled,
+    false,
+    'a normal run must not reuse the current connection before a pending palette is canceled'
+  );
+  paletteCancelFlightPickerResult.resolve(undefined);
+  assert.deepStrictEqual(
+    await Promise.all([paletteCancelFlightSelection, paletteCancelFlightNormal]),
+    [undefined, connectionA],
+    'palette cancellation should release the normal run to the still-valid prior choice'
+  );
+  assert.strictEqual(paletteCancelFlightNormalPickerCalls, 0);
+
+  const paletteRejectionFlightSession = new KdbPanelConnectionSession();
+  assert.strictEqual(
+    await paletteRejectionFlightSession.resolve(
+      [connectionA, connectionB],
+      async () => connectionA
+    ),
+    connectionA
+  );
+  const paletteRejectionFlightPickerStarted = createDeferred();
+  const paletteRejectionFlightPickerResult = createDeferred();
+  const paletteRejectionFailure = new Error('expected in-flight palette failure');
+  const paletteRejectionFlightSelection = paletteRejectionFlightSession.resolve(
+    [connectionA, connectionB],
+    async () => {
+      paletteRejectionFlightPickerStarted.resolve();
+      return paletteRejectionFlightPickerResult.promise;
+    },
+    { alwaysPrompt: true }
+  );
+  const paletteRejectionFlightAssertion = assert.rejects(
+    paletteRejectionFlightSelection,
+    error => error === paletteRejectionFailure
+  );
+  await paletteRejectionFlightPickerStarted.promise;
+  let paletteRejectionFlightNormalPickerCalls = 0;
+  const paletteRejectionFlightNormal = paletteRejectionFlightSession.resolve(
+    [connectionA, connectionB],
+    async () => {
+      paletteRejectionFlightNormalPickerCalls += 1;
+      return connectionB;
+    }
+  );
+  let paletteRejectionFlightNormalSettled = false;
+  paletteRejectionFlightNormal.then(
+    () => {
+      paletteRejectionFlightNormalSettled = true;
+    },
+    () => {
+      paletteRejectionFlightNormalSettled = true;
+    }
+  );
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.strictEqual(
+    paletteRejectionFlightNormalSettled,
+    false,
+    'a waiting normal run must remain behind a palette that has not rejected yet'
+  );
+  paletteRejectionFlightPickerResult.reject(paletteRejectionFailure);
+  assert.strictEqual(
+    await paletteRejectionFlightNormal,
+    connectionA,
+    'a palette rejection must not poison a waiting normal run'
+  );
+  await paletteRejectionFlightAssertion;
+  assert.strictEqual(paletteRejectionFlightNormalPickerCalls, 0);
+  let paletteRejectionLaterPickerCalls = 0;
+  assert.strictEqual(
+    await paletteRejectionFlightSession.resolve(
+      [connectionA, connectionB],
+      async () => {
+        paletteRejectionLaterPickerCalls += 1;
+        return connectionB;
+      }
+    ),
+    connectionA,
+    'a later normal run should remain usable after palette rejection'
+  );
+  assert.strictEqual(paletteRejectionLaterPickerCalls, 0);
+
+  const paletteNoDecisionSession = new KdbPanelConnectionSession();
+  assert.strictEqual(
+    await paletteNoDecisionSession.resolve(
+      [connectionA, connectionB],
+      async () => connectionA
+    ),
+    connectionA
+  );
+  const differingCancelPickerStarted = createDeferred();
+  const differingCancelPickerResult = createDeferred();
+  const differingCancelSelection = paletteNoDecisionSession.resolve(
+    [connectionA, connectionB],
+    async () => {
+      differingCancelPickerStarted.resolve();
+      return differingCancelPickerResult.promise;
+    },
+    { alwaysPrompt: true }
+  );
+  await differingCancelPickerStarted.promise;
+  let differingCancelNormalPickerCalls = 0;
+  const normalAfterDifferingCancel = paletteNoDecisionSession.resolve(
+    [connectionB, connectionC],
+    async (connections, currentConnectionId) => {
+      differingCancelNormalPickerCalls += 1;
+      assert.deepStrictEqual(connections, [connectionB, connectionC]);
+      assert.strictEqual(currentConnectionId, undefined);
+      return connectionB;
+    }
+  );
+  await Promise.resolve();
+  assert.strictEqual(
+    differingCancelNormalPickerCalls,
+    0,
+    'ordinary replacement selection must remain behind the pending palette cancellation'
+  );
+  differingCancelPickerResult.resolve(undefined);
+  assert.deepStrictEqual(
+    await Promise.all([differingCancelSelection, normalAfterDifferingCancel]),
+    [undefined, connectionB],
+    'a canceled palette with no successful queued decision should leave an invalid prior target to ordinary rules'
+  );
+  assert.strictEqual(differingCancelNormalPickerCalls, 1);
+
+  const differingRejectionPickerStarted = createDeferred();
+  const differingRejectionPickerResult = createDeferred();
+  const differingRejectionFailure = new Error('expected differing palette failure');
+  const differingRejectionSelection = paletteNoDecisionSession.resolve(
+    [connectionB, connectionC],
+    async () => {
+      differingRejectionPickerStarted.resolve();
+      return differingRejectionPickerResult.promise;
+    },
+    { alwaysPrompt: true }
+  );
+  const differingRejectionAssertion = assert.rejects(
+    differingRejectionSelection,
+    error => error === differingRejectionFailure
+  );
+  await differingRejectionPickerStarted.promise;
+  let differingRejectionNormalPickerCalls = 0;
+  const normalAfterDifferingRejection = paletteNoDecisionSession.resolve(
+    [connectionA, connectionC],
+    async (connections, currentConnectionId) => {
+      differingRejectionNormalPickerCalls += 1;
+      assert.deepStrictEqual(connections, [connectionA, connectionC]);
+      assert.strictEqual(currentConnectionId, undefined);
+      return connectionC;
+    }
+  );
+  await Promise.resolve();
+  assert.strictEqual(
+    differingRejectionNormalPickerCalls,
+    0,
+    'ordinary replacement selection must remain behind the pending palette rejection'
+  );
+  differingRejectionPickerResult.reject(differingRejectionFailure);
+  assert.strictEqual(
+    await normalAfterDifferingRejection,
+    connectionC,
+    'a rejected palette with no successful queued decision should leave an invalid prior target to ordinary rules'
+  );
+  await differingRejectionAssertion;
+  assert.strictEqual(differingRejectionNormalPickerCalls, 1);
+
+  const queuedPaletteBarrierSession = new KdbPanelConnectionSession();
+  assert.strictEqual(
+    await queuedPaletteBarrierSession.resolve(
+      [connectionA, connectionB],
+      async () => connectionA
+    ),
+    connectionA
+  );
+  const firstQueuedPalettePickerStarted = createDeferred();
+  const firstQueuedPalettePickerResult = createDeferred();
+  const firstQueuedPaletteSelection = queuedPaletteBarrierSession.resolve(
+    [connectionA, connectionB],
+    async (connections, currentConnectionId) => {
+      assert.deepStrictEqual(connections, [connectionA, connectionB]);
+      assert.strictEqual(currentConnectionId, connectionA.id);
+      firstQueuedPalettePickerStarted.resolve();
+      return firstQueuedPalettePickerResult.promise;
+    },
+    { alwaysPrompt: true }
+  );
+  await firstQueuedPalettePickerStarted.promise;
+  const secondQueuedPalettePickerStarted = createDeferred();
+  const secondQueuedPalettePickerResult = createDeferred();
+  const secondQueuedPaletteSelection = queuedPaletteBarrierSession.resolve(
+    [connectionA, connectionB],
+    async (connections, currentConnectionId) => {
+      assert.deepStrictEqual(connections, [connectionA, connectionB]);
+      assert.strictEqual(
+        currentConnectionId,
+        connectionB.id,
+        'the second queued palette should observe the first palette decision'
+      );
+      secondQueuedPalettePickerStarted.resolve();
+      return secondQueuedPalettePickerResult.promise;
+    },
+    { alwaysPrompt: true }
+  );
+  let queuedPaletteNormalPickerCalls = 0;
+  const normalAfterTwoQueuedPalettes = queuedPaletteBarrierSession.resolve(
+    [connectionA, connectionB],
+    async () => {
+      queuedPaletteNormalPickerCalls += 1;
+      return connectionB;
+    }
+  );
+  let normalAfterTwoQueuedPalettesSettled = false;
+  normalAfterTwoQueuedPalettes.then(
+    () => {
+      normalAfterTwoQueuedPalettesSettled = true;
+    },
+    () => {
+      normalAfterTwoQueuedPalettesSettled = true;
+    }
+  );
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.strictEqual(
+    normalAfterTwoQueuedPalettesSettled,
+    false,
+    'a normal run should wait through every palette already queued when it starts'
+  );
+  firstQueuedPalettePickerResult.resolve(connectionB);
+  await secondQueuedPalettePickerStarted.promise;
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.strictEqual(
+    normalAfterTwoQueuedPalettesSettled,
+    false,
+    'a normal run must not execute the first palette target while the second palette is pending'
+  );
+  const normalBetweenQueuedPaletteDecisions = queuedPaletteBarrierSession.resolve(
+    [connectionA, connectionB],
+    async () => {
+      queuedPaletteNormalPickerCalls += 1;
+      return connectionB;
+    }
+  );
+  let normalBetweenQueuedPaletteDecisionsSettled = false;
+  normalBetweenQueuedPaletteDecisions.then(
+    () => {
+      normalBetweenQueuedPaletteDecisionsSettled = true;
+    },
+    () => {
+      normalBetweenQueuedPaletteDecisionsSettled = true;
+    }
+  );
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.strictEqual(
+    normalBetweenQueuedPaletteDecisionsSettled,
+    false,
+    'an older palette cleanup must not clear the newer in-flight palette barrier'
+  );
+  secondQueuedPalettePickerResult.resolve(connectionA);
+  assert.deepStrictEqual(
+    await Promise.all([
+      firstQueuedPaletteSelection,
+      secondQueuedPaletteSelection,
+      normalAfterTwoQueuedPalettes,
+      normalBetweenQueuedPaletteDecisions,
+    ]),
+    [connectionB, connectionA, connectionA, connectionA],
+    'normal runs should deterministically use the last palette decision already queued at their start'
+  );
+  assert.strictEqual(queuedPaletteNormalPickerCalls, 0);
+
+  const queuedPaletteCancelSession = new KdbPanelConnectionSession();
+  assert.strictEqual(
+    await queuedPaletteCancelSession.resolve(
+      [connectionA, connectionB],
+      async () => connectionA
+    ),
+    connectionA
+  );
+  const queuedSuccessPickerStarted = createDeferred();
+  const queuedSuccessPickerResult = createDeferred();
+  const queuedSuccessSelection = queuedPaletteCancelSession.resolve(
+    [connectionA, connectionB],
+    async () => {
+      queuedSuccessPickerStarted.resolve();
+      return queuedSuccessPickerResult.promise;
+    },
+    { alwaysPrompt: true }
+  );
+  await queuedSuccessPickerStarted.promise;
+  const queuedCancelPickerStarted = createDeferred();
+  const queuedCancelPickerResult = createDeferred();
+  const queuedCancelSelection = queuedPaletteCancelSession.resolve(
+    [connectionA, connectionB],
+    async (connections, currentConnectionId) => {
+      assert.strictEqual(currentConnectionId, connectionB.id);
+      queuedCancelPickerStarted.resolve();
+      return queuedCancelPickerResult.promise;
+    },
+    { alwaysPrompt: true }
+  );
+  let queuedSuccessThenCancelNormalPickerCalls = 0;
+  const normalAfterQueuedSuccessThenCancel = queuedPaletteCancelSession.resolve(
+    [connectionA],
+    async () => {
+      queuedSuccessThenCancelNormalPickerCalls += 1;
+      return connectionA;
+    }
+  );
+  queuedSuccessPickerResult.resolve(connectionB);
+  await queuedCancelPickerStarted.promise;
+  queuedCancelPickerResult.resolve(undefined);
+  assert.deepStrictEqual(
+    await Promise.all([
+      queuedSuccessSelection,
+      queuedCancelSelection,
+      normalAfterQueuedSuccessThenCancel,
+    ]),
+    [connectionB, undefined, undefined],
+    'canceling a later queued palette should preserve an earlier successful queued choice without using stale A'
+  );
+  assert.strictEqual(queuedSuccessThenCancelNormalPickerCalls, 0);
+  let queuedSuccessThenCancelLaterPickerCalls = 0;
+  assert.strictEqual(
+    await queuedPaletteCancelSession.resolve(
+      [connectionA, connectionB],
+      async () => {
+        queuedSuccessThenCancelLaterPickerCalls += 1;
+        return connectionA;
+      }
+    ),
+    connectionB,
+    'a stale waiting snapshot must not invalidate a successful choice preserved through queued cancellation'
+  );
+  assert.strictEqual(queuedSuccessThenCancelLaterPickerCalls, 0);
+
+  const absentPaletteChoiceSession = new KdbPanelConnectionSession();
+  assert.strictEqual(
+    await absentPaletteChoiceSession.resolve(
+      [connectionA, connectionB],
+      async () => connectionA
+    ),
+    connectionA
+  );
+  const absentPaletteChoicePickerStarted = createDeferred();
+  const absentPaletteChoicePickerResult = createDeferred();
+  const absentPaletteChoiceSelection = absentPaletteChoiceSession.resolve(
+    [connectionA, connectionB],
+    async () => {
+      absentPaletteChoicePickerStarted.resolve();
+      return absentPaletteChoicePickerResult.promise;
+    },
+    { alwaysPrompt: true }
+  );
+  await absentPaletteChoicePickerStarted.promise;
+  let absentPaletteChoiceNormalPickerCalls = 0;
+  const soleSnapshotWaitingForPalette = absentPaletteChoiceSession.resolve(
+    [connectionA],
+    async () => {
+      absentPaletteChoiceNormalPickerCalls += 1;
+      return connectionA;
+    }
+  );
+  const emptySnapshotWaitingForPalette = absentPaletteChoiceSession.resolve(
+    [],
+    async () => {
+      absentPaletteChoiceNormalPickerCalls += 1;
+      return connectionA;
+    }
+  );
+  let soleSnapshotWaitingForPaletteSettled = false;
+  let emptySnapshotWaitingForPaletteSettled = false;
+  soleSnapshotWaitingForPalette.then(
+    () => {
+      soleSnapshotWaitingForPaletteSettled = true;
+    },
+    () => {
+      soleSnapshotWaitingForPaletteSettled = true;
+    }
+  );
+  emptySnapshotWaitingForPalette.then(
+    () => {
+      emptySnapshotWaitingForPaletteSettled = true;
+    },
+    () => {
+      emptySnapshotWaitingForPaletteSettled = true;
+    }
+  );
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.strictEqual(
+    soleSnapshotWaitingForPaletteSettled,
+    false,
+    'a stale sole/current snapshot must wait for the palette decision'
+  );
+  assert.strictEqual(
+    emptySnapshotWaitingForPaletteSettled,
+    false,
+    'an empty snapshot must wait for the palette decision'
+  );
+  absentPaletteChoicePickerResult.resolve(connectionB);
+  assert.deepStrictEqual(
+    await Promise.all([
+      absentPaletteChoiceSelection,
+      soleSnapshotWaitingForPalette,
+      emptySnapshotWaitingForPalette,
+    ]),
+    [connectionB, undefined, undefined],
+    'a palette ID absent from a waiting caller snapshot should resolve safely to undefined'
+  );
+  assert.strictEqual(absentPaletteChoiceNormalPickerCalls, 0);
+  let absentPaletteChoiceLaterPickerCalls = 0;
+  assert.strictEqual(
+    await absentPaletteChoiceSession.resolve(
+      [connectionA, connectionB],
+      async () => {
+        absentPaletteChoiceLaterPickerCalls += 1;
+        return connectionA;
+      }
+    ),
+    connectionB,
+    'an older normal snapshot must not invalidate the newly selected palette choice'
+  );
+  assert.strictEqual(absentPaletteChoiceLaterPickerCalls, 0);
+
+  const changingListSession = new KdbPanelConnectionSession();
+  const changingListPickerStarted = createDeferred();
+  const changingListPickerResult = createDeferred();
+  const mutableConnections = [connectionA, connectionB];
+  const changingListSelection = changingListSession.resolve(
+    mutableConnections,
+    async () => {
+      changingListPickerStarted.resolve();
+      return changingListPickerResult.promise;
+    }
+  );
+  await changingListPickerStarted.promise;
+  mutableConnections.splice(0, 1);
+  changingListPickerResult.resolve(connectionA);
+  assert.strictEqual(
+    await changingListSelection,
+    undefined,
+    'a connection removed while its picker is open must not be persisted'
+  );
+  let changingListRetryPickerCalls = 0;
+  assert.strictEqual(
+    await changingListSession.resolve(
+      [connectionA, connectionB],
+      async (connections, currentConnectionId) => {
+        changingListRetryPickerCalls += 1;
+        assert.strictEqual(currentConnectionId, undefined);
+        return connections[0];
+      }
+    ),
+    connectionA,
+    'an unavailable picker result should leave a later run able to prompt'
+  );
+  assert.strictEqual(changingListRetryPickerCalls, 1);
+
+  const differingListsSession = new KdbPanelConnectionSession();
+  const differingListsPickerStarted = createDeferred();
+  const differingListsPickerResult = createDeferred();
+  let differingListsJoinedPickerCalls = 0;
+  const differingListsFirst = differingListsSession.resolve(
+    [connectionA, connectionB],
+    async () => {
+      differingListsPickerStarted.resolve();
+      return differingListsPickerResult.promise;
+    }
+  );
+  const differingListsSecond = differingListsSession.resolve(
+    [connectionB, connectionC],
+    async () => {
+      differingListsJoinedPickerCalls += 1;
+      return connectionB;
+    }
+  );
+  await differingListsPickerStarted.promise;
+  differingListsPickerResult.resolve(connectionA);
+  assert.deepStrictEqual(
+    await Promise.all([differingListsFirst, differingListsSecond]),
+    [undefined, undefined],
+    'a shared normal selection unavailable to any joined run should be rejected for all'
+  );
+  assert.strictEqual(differingListsJoinedPickerCalls, 0);
+  let differingListsRetryPickerCalls = 0;
+  assert.strictEqual(
+    await differingListsSession.resolve(
+      [connectionA, connectionB],
+      async (connections, currentConnectionId) => {
+        differingListsRetryPickerCalls += 1;
+        assert.strictEqual(currentConnectionId, undefined);
+        return connections[1];
+      }
+    ),
+    connectionB,
+    'a shared ID rejected by a joined available set must not become the session target'
+  );
+  assert.strictEqual(differingListsRetryPickerCalls, 1);
+
+  const joinedConnectionA = {
+    ...connectionA,
+    name: 'Joined Panel A',
+  };
+  const pendingSnapshotJoinCases = [
+    {
+      name: 'sole snapshot accepts A',
+      joiningConnections: [joinedConnectionA],
+      pickedConnection: connectionA,
+      expectedResults: [connectionA, joinedConnectionA],
+    },
+    {
+      name: 'sole snapshot rejects B',
+      joiningConnections: [joinedConnectionA],
+      pickedConnection: connectionB,
+      expectedResults: [undefined, undefined],
+    },
+    {
+      name: 'empty snapshot rejects A',
+      joiningConnections: [],
+      pickedConnection: connectionA,
+      expectedResults: [undefined, undefined],
+    },
+    {
+      name: 'empty snapshot rejects B',
+      joiningConnections: [],
+      pickedConnection: connectionB,
+      expectedResults: [undefined, undefined],
+    },
+  ];
+  for (const testCase of pendingSnapshotJoinCases) {
+    const pendingSnapshotSession = new KdbPanelConnectionSession();
+    const pendingSnapshotPickerStarted = createDeferred();
+    const pendingSnapshotPickerResult = createDeferred();
+    let pendingSnapshotPickerCalls = 0;
+    let pendingSnapshotJoinedPickerCalls = 0;
+    const pendingSnapshotFirst = pendingSnapshotSession.resolve(
+      [connectionA, connectionB],
+      async (connections, currentConnectionId) => {
+        pendingSnapshotPickerCalls += 1;
+        assert.deepStrictEqual(connections, [connectionA, connectionB]);
+        assert.strictEqual(currentConnectionId, undefined);
+        pendingSnapshotPickerStarted.resolve();
+        return pendingSnapshotPickerResult.promise;
+      }
+    );
+    await pendingSnapshotPickerStarted.promise;
+    const pendingSnapshotSecond = pendingSnapshotSession.resolve(
+      testCase.joiningConnections,
+      async connections => {
+        pendingSnapshotJoinedPickerCalls += 1;
+        return connections[0];
+      }
+    );
+    let pendingSnapshotSecondSettled = false;
+    pendingSnapshotSecond.then(
+      () => {
+        pendingSnapshotSecondSettled = true;
+      },
+      () => {
+        pendingSnapshotSecondSettled = true;
+      }
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.strictEqual(
+      pendingSnapshotSecondSettled,
+      false,
+      `${testCase.name}: a joining fast-path call must wait for the shared picker`
+    );
+    assert.strictEqual(pendingSnapshotPickerCalls, 1);
+    assert.strictEqual(
+      pendingSnapshotJoinedPickerCalls,
+      0,
+      `${testCase.name}: a joining call must not open a picker`
+    );
+    pendingSnapshotPickerResult.resolve(testCase.pickedConnection);
+    assert.deepStrictEqual(
+      await Promise.all([pendingSnapshotFirst, pendingSnapshotSecond]),
+      testCase.expectedResults,
+      `${testCase.name}: the shared result must be safe for every caller snapshot`
+    );
+    assert.strictEqual(
+      pendingSnapshotPickerCalls + pendingSnapshotJoinedPickerCalls,
+      1,
+      `${testCase.name}: exactly one shared picker should open`
+    );
+
+    let pendingSnapshotRetryPickerCalls = 0;
+    assert.strictEqual(
+      await pendingSnapshotSession.resolve(
+        [connectionB, connectionC],
+        async (connections, currentConnectionId) => {
+          pendingSnapshotRetryPickerCalls += 1;
+          assert.deepStrictEqual(connections, [connectionB, connectionC]);
+          assert.strictEqual(currentConnectionId, undefined);
+          return connectionB;
+        }
+      ),
+      connectionB,
+      `${testCase.name}: the lock should clear and a later retry should work`
+    );
+    assert.strictEqual(
+      pendingSnapshotRetryPickerCalls,
+      1,
+      `${testCase.name}: the retry should open one picker`
+    );
+  }
+
+  const resultsTargetCalls = [];
+  await executeForResultsTarget(
+    'sqltools',
+    async () => resultsTargetCalls.push('sqltools'),
+    async () => {
+      throw new Error('the SQLTools-owned route must bypass the kdb panel resolver');
+    }
+  );
+  assert.deepStrictEqual(resultsTargetCalls, ['sqltools']);
+  await executeForResultsTarget(
+    'kdbPanel',
+    async () => {
+      throw new Error('the kdb panel route must not execute the SQLTools-owned callback');
+    },
+    async () => resultsTargetCalls.push('kdbPanel')
+  );
+  assert.deepStrictEqual(resultsTargetCalls, ['sqltools', 'kdbPanel']);
+
   assert.strictEqual(
     serializeTextQuery('1+1').toString('hex'),
     '01010000110000000a0003000000312b31'
@@ -1929,12 +3332,15 @@ function panelFormatElapsedMs(milliseconds, display) {
 
   const resultsPanelSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'results-panel.ts'), 'utf8');
   const extensionSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'extension.ts'), 'utf8');
+  const connectionSessionSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'kdb-panel-connection-session.ts'), 'utf8');
+  const queryResultsTargetSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'query-results-target.ts'), 'utf8');
   const driverSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'ls', 'driver.ts'), 'utf8');
   const qIpcSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'ls', 'q-ipc.ts'), 'utf8');
   const kdbResultsSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'kdb-results.ts'), 'utf8');
   const chartingSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'charting.ts'), 'utf8');
   const perfSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'perf.ts'), 'utf8');
   const readmeSource = fs.readFileSync(path.join(__dirname, '..', 'README.md'), 'utf8');
+  const changelogSource = fs.readFileSync(path.join(__dirname, '..', 'CHANGELOG.md'), 'utf8');
   const chartingDocsSource = fs.readFileSync(path.join(__dirname, '..', 'mkdocs-src', 'charting.md'), 'utf8');
   const localDataDocsSource = fs.readFileSync(path.join(__dirname, '..', 'mkdocs-src', 'local-data-server.md'), 'utf8');
   const copyExportDocsSource = fs.readFileSync(path.join(__dirname, '..', 'mkdocs-src', 'copy-export.md'), 'utf8');
@@ -2722,6 +4128,16 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(commandTitle('kdb-sqltools.runFileInNewKdbPanel'), 'Run q Script in New kdb Panel');
   assert.strictEqual(commandTitle('kdb-sqltools.runSelectionOrBlockInNewKdbPanel'), 'Run Selection in New kdb Panel');
   assert.strictEqual(commandTitle('kdb-sqltools.runSelectionOrCurrentBlockInNewKdbPanel'), 'Run Selection or q Block in New kdb Panel');
+  assert.strictEqual(
+    commandTitle('kdb-sqltools.selectKdbPanelQueryConnection'),
+    'Select kdb Panel Query Connection'
+  );
+  assert.strictEqual(
+    packageJson.contributes.commands.find(
+      command => command.command === 'kdb-sqltools.selectKdbPanelQueryConnection'
+    ).category,
+    'kdb+'
+  );
   assert.strictEqual(commandTitle('kdb-sqltools.openKeyboardShortcuts'), 'Open kdb Keyboard Shortcuts');
   assert.strictEqual(commandTitle('kdb-sqltools.copyKdbPanelSelection'), 'Copy');
   assert.strictEqual(commandTitle('kdb-sqltools.openLocalDataServer'), 'Start Local Data Server');
@@ -2765,6 +4181,7 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.runSelectionOrCurrentBlockInKdbPanelReplace'));
   assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.runSelectionOrCurrentBlockAndChart'));
   assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.runSelectionOrCurrentBlockInNewKdbPanel'));
+  assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.selectKdbPanelQueryConnection'));
   assert.ok(packageJson.contributes.menus.commandPalette.some(menu =>
     menu.command === 'kdb-sqltools.runSelectionOrCurrentBlock' &&
       menu.when === 'editorLangId == q || resourceExtname == .q'
@@ -2773,6 +4190,103 @@ function panelFormatElapsedMs(milliseconds, display) {
     menu.command === 'kdb-sqltools.runSelectionOrCurrentBlockAndChart' &&
       menu.when === 'editorLangId == q || resourceExtname == .q'
   ));
+  assert.deepStrictEqual(
+    packageJson.contributes.menus.commandPalette.find(
+      menu => menu.command === 'kdb-sqltools.selectKdbPanelQueryConnection'
+    ),
+    { command: 'kdb-sqltools.selectKdbPanelQueryConnection' }
+  );
+  assert.strictEqual(
+    extensionSource.includes(
+      "vscode.commands.registerCommand('kdb-sqltools.selectKdbPanelQueryConnection', () => selectKdbPanelQueryConnection())"
+    ),
+    true
+  );
+  assert.strictEqual(
+    extensionSource.includes(
+      'const kdbPanelConnectionSession = new KdbPanelConnectionSession<IConnection<any>>();'
+    ),
+    true
+  );
+  assert.strictEqual(
+    extensionSource.includes(
+      'await extContext.globalState.update(LEGACY_LAST_PANEL_CONNECTION_KEY, undefined);'
+    ),
+    true,
+    'activation should remove obsolete persisted panel-connection state'
+  );
+  assert.strictEqual(
+    extensionSource.includes('globalState.get'),
+    false,
+    'stale global state must never choose the session panel connection'
+  );
+  assert.strictEqual(
+    connectionSessionSource.includes(
+      "private rememberedChoice: RememberedConnectionChoice = { kind: 'none' };"
+    ),
+    true
+  );
+  assert.strictEqual(
+    connectionSessionSource.toLowerCase().includes('password'),
+    false,
+    'the session target must contain only connection identity, never a password'
+  );
+  assert.strictEqual(
+    queryResultsTargetSource.includes("if (target === 'sqltools')"),
+    true
+  );
+  assert.strictEqual(
+    extensionSource.includes(
+      'const connection = await resolveKdbPanelQueryConnection();'
+    ),
+    true
+  );
+  assert.strictEqual(
+    extensionSource.includes(
+      'const connection = await selectKdbPanelConnection(false);\n  return connection && resolvePassword(connection);'
+    ),
+    true,
+    'password resolution must happen after selecting or reusing the current connection object'
+  );
+  const paletteConnectionSelectorSource = extensionSource.slice(
+    extensionSource.indexOf('async function selectKdbPanelQueryConnection'),
+    extensionSource.indexOf('async function resolveKdbPanelQueryConnection')
+  );
+  assert.strictEqual(
+    paletteConnectionSelectorSource.includes('await selectKdbPanelConnection(true);'),
+    true
+  );
+  assert.strictEqual(
+    paletteConnectionSelectorSource.includes('resolvePassword'),
+    false,
+    'the selector command should change the session target without resolving credentials or running q'
+  );
+  const sharedConnectionSelectorSource = extensionSource.slice(
+    extensionSource.indexOf('async function selectKdbPanelConnection'),
+    extensionSource.indexOf('function connectionPick')
+  );
+  assert.strictEqual(
+    sharedConnectionSelectorSource.includes('.filter(isKdbConnection)'),
+    true
+  );
+  assert.strictEqual(
+    sharedConnectionSelectorSource.includes('kdbPanelConnectionSession.resolve('),
+    true
+  );
+  assert.strictEqual(
+    sourceOccurrences(extensionSource, 'kdbPanelConnectionSession.resolve('),
+    1,
+    'all extension-owned kdb panel variants should converge on one session resolver'
+  );
+  assert.strictEqual(
+    sourceOccurrences(extensionSource, 'resolveKdbPanelQueryConnection()'),
+    2,
+    'the shared panel executor should be the only caller of the query-connection resolver'
+  );
+  assert.strictEqual(
+    sharedConnectionSelectorSource.includes('{ alwaysPrompt }'),
+    true
+  );
   assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.copyKdbPanelSelection'));
   assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.openLocalDataServer'));
   assert.ok(packageJson.activationEvents.includes('onCommand:kdb-sqltools.stopLocalDataServer'));
@@ -2820,6 +4334,22 @@ function panelFormatElapsedMs(milliseconds, display) {
   );
   assert.strictEqual(runSelectionOrBlockAndChartSource.includes('selectedTextOrCurrentBlock(editor.document.getText(), selectionText, editor.selection.active.line)'), true);
   assert.strictEqual(runSelectionOrBlockAndChartSource.includes('{ autoChart: true }'), true);
+  const executeQTextSource = extensionSource.slice(
+    extensionSource.indexOf('async function executeQText'),
+    extensionSource.indexOf('function configuredResultsTarget')
+  );
+  assert.strictEqual(executeQTextSource.includes('await executeForResultsTarget('), true);
+  assert.strictEqual(
+    executeQTextSource.includes('() => vscode.commands.executeCommand(SQLTOOLS_EXECUTE_QUERY, text)'),
+    true,
+    'SQLTools-owned result commands should keep delegating to the host command'
+  );
+  assert.strictEqual(
+    executeQTextSource.includes(
+      '() => executeQTextInKdbPanel(extContext, text, kdbPanelMode || configuredKdbPanelRunMode(), options)'
+    ),
+    true
+  );
   assert.strictEqual(sourceOccurrences(extensionSource, '{ autoChart: true }'), 2);
   assert.strictEqual(extensionSource.includes("await executeQText(extContext, text, 'kdbPanel', 'replace', { autoChart: true });"), true);
   assert.strictEqual(extensionSource.includes('{ autoChart: options.autoChart === true }'), true);
@@ -2931,7 +4461,7 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(extensionSource.includes("database: safeConnection.database || '.'"), true);
   const kdbPanelRunSource = extensionSource.slice(
     extensionSource.indexOf('async function executeQTextInKdbPanel'),
-    extensionSource.indexOf('async function pickKdbConnection')
+    extensionSource.indexOf('function qResultDisplayOptions')
   );
   assert.strictEqual(kdbPanelRunSource.includes('cancellable: true'), true);
   assert.strictEqual(kdbPanelRunSource.includes('cancellable: false'), false);
@@ -3374,7 +4904,16 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('id="settingsLocalDataServerFullExportCellLimit"'), true);
   assert.strictEqual(packageJson.contributes.configuration.properties['kdb-sqltools.results.copyExportConfirmCellThreshold'].minimum, 1);
   assert.strictEqual(packageJson.contributes.configuration.properties['kdb-sqltools.results.localDataServerFullExportCellLimit'].minimum, 1);
-  assert.strictEqual(packageJson.version, '0.3.19');
+  assert.strictEqual(packageJson.version, '0.3.20');
+  assert.strictEqual(readmeSource.includes('`kdb+: Select kdb Panel Query Connection`'), true);
+  assert.strictEqual(readmeSource.includes('With multiple kdb connections and no valid session choice'), true);
+  assert.strictEqual(readmeSource.includes('The session target stores only a non-secret connection ID.'), true);
+  assert.strictEqual(runningDocsSource.includes('## kdb panel connection selection'), true);
+  assert.strictEqual(runningDocsSource.includes('Canceling the selector keeps a still-valid current choice.'), true);
+  assert.strictEqual(runningDocsSource.includes('Commands targeting SQLTools Results continue to use SQLTools'), true);
+  assert.strictEqual(changelogSource.includes('## 0.3.20 - 2026-07-29'), true);
+  assert.strictEqual(changelogSource.includes('Select kdb Panel Query Connection'), true);
+  assert.strictEqual(changelogSource.includes('Previous-session global state no longer controls panel selection'), true);
   assert.strictEqual(chartingDocsSource.includes('Press the top-level `Chart` button.'), true);
   assert.strictEqual(chartingDocsSource.includes('kdb+: Run Selection and Chart'), true);
   assert.strictEqual(runningDocsSource.includes('| `Ctrl+Alt+C` | `Cmd+Alt+C` | `kdb+: Run Selection and Chart`'), true);

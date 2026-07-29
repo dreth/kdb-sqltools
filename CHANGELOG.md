@@ -1,5 +1,10 @@
 # Change Log
 
+## 0.3.20 - 2026-07-29
+
+- Remembered the selected kdb-panel query connection in Extension Host session memory, so a fresh one-connection session runs without a picker, panel runs with multiple connections and no valid choice prompt once, valid choices are reused, and invalidated choices prompt again.
+- Added `kdb+: Select kdb Panel Query Connection` to switch future extension-owned panel runs without executing a query. Previous-session global state no longer controls panel selection, passwords are resolved only at run time and are not cached in the session target, and SQLTools-owned result commands remain unchanged.
+
 ## 0.3.19 - 2026-07-29
 
 - Persisted manual column widths by zero-based source-column position across queries, panel recreation, and VS Code restarts. Drag resizing remains authoritative through virtual scrolling and hidden/reordered views.

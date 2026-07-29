@@ -2,7 +2,7 @@
   "name": "kdb-sqltools",
   "displayName": "SQLTools kdb Driver",
   "description": "SQLTools driver for kdb+/q using q IPC over TCP",
-  "version": "0.3.19",
+  "version": "0.3.20",
   "engines": {
     "vscode": "^1.42.0"
   },
@@ -61,6 +61,7 @@
     "onCommand:kdb-sqltools.runFileInNewKdbPanel",
     "onCommand:kdb-sqltools.runSelectionOrBlockInNewKdbPanel",
     "onCommand:kdb-sqltools.runSelectionOrCurrentBlockInNewKdbPanel",
+    "onCommand:kdb-sqltools.selectKdbPanelQueryConnection",
     "onCommand:kdb-sqltools.openKeyboardShortcuts",
     "onCommand:kdb-sqltools.copyExampleConnectionSettings",
     "onCommand:kdb-sqltools.copyKdbPanelSelection",
@@ -188,6 +189,12 @@
         "title": "Run Selection or q Block in New kdb Panel",
         "category": "kdb+",
         "icon": "$(new-file)"
+      },
+      {
+        "command": "kdb-sqltools.selectKdbPanelQueryConnection",
+        "title": "Select kdb Panel Query Connection",
+        "category": "kdb+",
+        "icon": "$(database)"
       },
       {
         "command": "kdb-sqltools.openKeyboardShortcuts",
@@ -405,6 +412,9 @@
         {
           "command": "kdb-sqltools.runSelectionOrCurrentBlockInNewKdbPanel",
           "when": "editorLangId == q || resourceExtname == .q"
+        },
+        {
+          "command": "kdb-sqltools.selectKdbPanelQueryConnection"
         },
         {
           "command": "kdb-sqltools.openKeyboardShortcuts"

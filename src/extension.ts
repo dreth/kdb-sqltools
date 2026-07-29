@@ -8,18 +8,20 @@ import { emptyColumnarPanelResult } from './kdb-results';
 import { QResultDisplayOptions, QValue, qValueToColumnarPanel } from './ls/q-ipc';
 import { KdbPanelResult, KdbResultsPanel, KdbResultsPanelRunMode } from './results-panel';
 import { configurePerfTrace, endPerfSpan, perfSpan } from './perf';
+import { fallbackConnectionId, KdbPanelConnectionSession } from './kdb-panel-connection-session';
+import { executeForResultsTarget, QueryResultsTarget } from './query-results-target';
 const { publisher, name, displayName } = require('../package.json');
 
 const SQLTOOLS_EXECUTE_QUERY = 'sqltools.executeQuery';
 const RESULTS_TARGET_SETTING = 'results.target';
 const KDB_PANEL_DEFAULT_RUN_MODE_SETTING = 'results.kdbPanel.defaultRunMode';
 const PERFORMANCE_TRACE_SETTING = 'performance.trace';
-const LAST_PANEL_CONNECTION_KEY = 'kdb-sqltools.lastPanelConnectionId';
+const LEGACY_LAST_PANEL_CONNECTION_KEY = 'kdb-sqltools.lastPanelConnectionId';
 const GITHUB_ISSUES_NEW_URL = 'https://github.com/dreth/kdb-sqltools/issues/new';
 const OPEN_USER_SETTINGS_JSON_ACTION = 'Open User Settings JSON';
 const OPEN_SQLTOOLS_SETTINGS_ACTION = 'Open SQLTools Settings';
 
-type ResultsTarget = 'sqltools' | 'kdbPanel';
+type ResultsTarget = QueryResultsTarget;
 type FeedbackKind = 'bug' | 'feature' | 'feedback';
 
 interface KdbConnectionPick extends vscode.QuickPickItem {
@@ -36,12 +38,15 @@ interface KdbPanelExecutionOptions {
   autoChart?: boolean;
 }
 
+const kdbPanelConnectionSession = new KdbPanelConnectionSession<IConnection<any>>();
+
 export async function activate(extContext: ExtensionContext): Promise<IDriverExtensionApi> {
   const sqltools = vscode.extensions.getExtension<IExtension>('mtxr.sqltools');
   if (!sqltools) {
     throw new Error('SQLTools not installed');
   }
   await sqltools.activate();
+  await extContext.globalState.update(LEGACY_LAST_PANEL_CONNECTION_KEY, undefined);
 
   const api = sqltools.exports;
   updatePerfTraceSetting();
@@ -70,6 +75,7 @@ export async function activate(extContext: ExtensionContext): Promise<IDriverExt
     vscode.commands.registerCommand('kdb-sqltools.runFileInNewKdbPanel', () => runQFile(extContext, 'kdbPanel', 'new')),
     vscode.commands.registerCommand('kdb-sqltools.runSelectionOrBlockInNewKdbPanel', () => runQSelectionOrLine(extContext, 'kdbPanel', 'new')),
     vscode.commands.registerCommand('kdb-sqltools.runSelectionOrCurrentBlockInNewKdbPanel', () => runQSelectionOrBlock(extContext, 'kdbPanel', 'new')),
+    vscode.commands.registerCommand('kdb-sqltools.selectKdbPanelQueryConnection', () => selectKdbPanelQueryConnection()),
     vscode.commands.registerCommand('kdb-sqltools.openKeyboardShortcuts', openKeyboardShortcuts),
     vscode.commands.registerCommand('kdb-sqltools.copyExampleConnectionSettings', copyExampleConnectionSettings),
     vscode.commands.registerCommand('kdb-sqltools.copyKdbPanelSelection', () => KdbResultsPanel.copySelectionFromActivePanel()),
@@ -199,12 +205,11 @@ async function executeQText(
     return;
   }
 
-  if ((target || configuredResultsTarget()) === 'sqltools') {
-    await vscode.commands.executeCommand(SQLTOOLS_EXECUTE_QUERY, text);
-    return;
-  }
-
-  await executeQTextInKdbPanel(extContext, text, kdbPanelMode || configuredKdbPanelRunMode(), options);
+  await executeForResultsTarget(
+    target || configuredResultsTarget(),
+    () => vscode.commands.executeCommand(SQLTOOLS_EXECUTE_QUERY, text),
+    () => executeQTextInKdbPanel(extContext, text, kdbPanelMode || configuredKdbPanelRunMode(), options)
+  );
 }
 
 function configuredResultsTarget(): ResultsTarget {
@@ -333,7 +338,7 @@ async function executeQTextInKdbPanel(
   kdbPanelMode: KdbResultsPanelRunMode,
   options: KdbPanelExecutionOptions = {}
 ): Promise<void> {
-  const connection = await pickKdbConnection(extContext);
+  const connection = await resolveKdbPanelQueryConnection();
   if (!connection) {
     return;
   }
@@ -494,11 +499,33 @@ function qResultDisplayOptions(): QResultDisplayOptions {
   };
 }
 
-async function pickKdbConnection(extContext: ExtensionContext): Promise<IConnection<any> | undefined> {
+async function selectKdbPanelQueryConnection(): Promise<void> {
+  await selectKdbPanelConnection(true);
+}
+
+async function resolveKdbPanelQueryConnection(): Promise<IConnection<any> | undefined> {
+  const connection = await selectKdbPanelConnection(false);
+  return connection && resolvePassword(connection);
+}
+
+async function selectKdbPanelConnection(alwaysPrompt: boolean): Promise<IConnection<any> | undefined> {
   const connections = vscode.workspace.getConfiguration('sqltools').get<Array<Partial<IConnection<any>>>>('connections', []);
   const kdbConnections = connections
     .filter(isKdbConnection)
     .map(normalizeConnection);
+
+  const connection = await kdbPanelConnectionSession.resolve(
+    kdbConnections,
+    async (availableConnections, currentConnectionId) => {
+      const picks = availableConnections.map(conn => connectionPick(conn, conn.id === currentConnectionId));
+      const picked = await vscode.window.showQuickPick(picks, {
+        placeHolder: 'Select a kdb connection for the kdb results panel',
+        ignoreFocusOut: true,
+      });
+      return picked && picked.connection;
+    },
+    { alwaysPrompt }
+  );
 
   if (kdbConnections.length === 0) {
     const action = await vscode.window.showWarningMessage(
@@ -511,28 +538,17 @@ async function pickKdbConnection(extContext: ExtensionContext): Promise<IConnect
     return undefined;
   }
 
-  let connection = kdbConnections[0];
-  if (kdbConnections.length > 1) {
-    const lastId = extContext.globalState.get<string>(LAST_PANEL_CONNECTION_KEY);
-    const picks = kdbConnections.map(conn => connectionPick(conn, conn.id === lastId));
-    const picked = await vscode.window.showQuickPick(picks, {
-      placeHolder: 'Select a kdb connection for the kdb results panel',
-      ignoreFocusOut: true,
-    });
-    if (!picked) {
-      return undefined;
-    }
-    connection = picked.connection;
-  }
-
-  await extContext.globalState.update(LAST_PANEL_CONNECTION_KEY, connection.id);
-  return resolvePassword(connection);
+  return connection;
 }
 
-function connectionPick(connection: IConnection<any>, lastUsed: boolean): KdbConnectionPick {
+function connectionPick(connection: IConnection<any>, currentSessionChoice: boolean): KdbConnectionPick {
   return {
     label: connection.name,
-    description: [connection.server || 'localhost', connection.port ? String(connection.port) : null, lastUsed ? 'last used' : null]
+    description: [
+      connection.server || 'localhost',
+      connection.port ? String(connection.port) : null,
+      currentSessionChoice ? 'current session choice' : null,
+    ]
       .filter(Boolean)
       .join(':'),
     detail: connection.database ? `Namespace ${connection.database}` : undefined,
@@ -570,7 +586,7 @@ export function normalizeConnection(connection?: Partial<IConnection<any>> | nul
   const safeConnection = connection || {};
   return {
     ...safeConnection,
-    id: safeConnection.id || connectionId(safeConnection),
+    id: safeConnection.id || fallbackConnectionId(safeConnection, DRIVER_ID),
     name: safeConnection.name || 'kdb',
     driver: DRIVER_ID,
     server: safeConnection.server || 'localhost',
@@ -579,17 +595,6 @@ export function normalizeConnection(connection?: Partial<IConnection<any>> | nul
     connectionTimeout: safeConnection.connectionTimeout ?? (safeConnection as any).timeout ?? 30,
     username: safeConnection.username || '',
   } as IConnection<any>;
-}
-
-function connectionId(connection: Partial<IConnection<any>>): string {
-  const connectString = (connection as any).connectString;
-  const parts = [connection.name || 'kdb', connection.driver || DRIVER_ID];
-  if (connectString) {
-    parts.push(String(connectString));
-  } else {
-    parts.push(String(connection.server || 'localhost'), String(connection.database || '.'));
-  }
-  return parts.join('|').replace(/\./g, ':').replace(/\//g, '\\');
 }
 
 function normalizeDriverValue(driver: unknown): string {
