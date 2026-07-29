@@ -1,11 +1,14 @@
 const cp = require('child_process');
 const fs = require('fs');
+const net = require('net');
 const path = require('path');
 const {
   downloadAndUnzipVSCode,
   resolveCliPathFromVSCodeExecutablePath,
   runTests,
+  TestRunFailedError,
 } = require('@vscode/test-electron');
+const { runVisualAcceptance } = require('./visual-controller');
 
 const SQLTOOLS_EXTENSION_ID = 'mtxr.sqltools';
 
@@ -20,33 +23,116 @@ async function main() {
   const extensionsDir = path.join(testRoot, 'extensions');
   const workspacePath = path.join(__dirname, 'workspace');
   const extensionTestsPath = path.join(__dirname, 'suite');
+  let visualControlDir = '';
 
-  configureLinuxRuntimeLibraryPath(projectRoot);
-  fs.mkdirSync(testRoot, { recursive: true });
-  fs.rmSync(userDataDir, { recursive: true, force: true });
-  fs.mkdirSync(userDataDir, { recursive: true });
-  fs.mkdirSync(extensionsDir, { recursive: true });
+  try {
+    configureLinuxRuntimeLibraryPath(projectRoot);
+    fs.mkdirSync(testRoot, { recursive: true });
+    const visualRequested = process.env.KDB_SQLTOOLS_E2E_SKIP_VISUAL !== '1';
+    fs.rmSync(userDataDir, { recursive: true, force: true });
+    fs.mkdirSync(userDataDir, { recursive: true });
+    fs.mkdirSync(extensionsDir, { recursive: true });
 
-  const vscodeExecutablePath = await downloadAndUnzipVSCode({
-    version: process.env.KDB_SQLTOOLS_E2E_VSCODE_VERSION || 'stable',
-  });
-  const sqltoolsInstalled = await ensureSqlToolsExtension(vscodeExecutablePath, extensionsDir, userDataDir);
+    const vscodeExecutablePath = await downloadAndUnzipVSCode({
+      version: process.env.KDB_SQLTOOLS_E2E_VSCODE_VERSION || 'stable',
+    });
+    const sqltoolsInstalled = await ensureSqlToolsExtension(vscodeExecutablePath, extensionsDir, userDataDir);
+    const visualAcceptance = visualRequested && sqltoolsInstalled;
+    if (visualRequested && !sqltoolsInstalled) {
+      console.warn('Skipping native visual acceptance because the SQLTools extension is unavailable.');
+    }
+    visualControlDir = visualAcceptance
+      ? fs.mkdtempSync(path.join(testRoot, 'visual-acceptance-'))
+      : '';
+    const remoteDebuggingPort = visualAcceptance ? await availablePort() : 0;
 
-  await runTests({
-    vscodeExecutablePath,
-    extensionDevelopmentPath: projectRoot,
-    extensionTestsPath,
-    extensionTestsEnv: {
-      KDB_SQLTOOLS_E2E_SQLTOOLS_INSTALLED: sqltoolsInstalled ? '1' : '0',
-    },
-    launchArgs: [
-      workspacePath,
-      '--extensions-dir',
-      extensionsDir,
-      '--user-data-dir',
-      userDataDir,
-    ],
-  });
+    const visualPromise = visualAcceptance
+      ? runVisualAcceptance({ port: remoteDebuggingPort, controlDir: visualControlDir })
+      : Promise.resolve();
+    const testOptions = {
+      vscodeExecutablePath,
+      extensionDevelopmentPath: projectRoot,
+      extensionTestsPath,
+      extensionTestsEnv: {
+        KDB_SQLTOOLS_E2E_SQLTOOLS_INSTALLED: sqltoolsInstalled ? '1' : '0',
+        KDB_SQLTOOLS_E2E_VISUAL: visualAcceptance ? '1' : '0',
+        KDB_SQLTOOLS_E2E_VISUAL_CONTROL_DIR: visualControlDir,
+      },
+      launchArgs: [
+        workspacePath,
+        '--extensions-dir',
+        extensionsDir,
+        '--user-data-dir',
+        userDataDir,
+        ...(visualAcceptance ? [`--remote-debugging-port=${remoteDebuggingPort}`] : []),
+      ],
+    };
+    const testsPromise = visualAcceptance
+      ? runReloadAwareVisualTests({
+        testOptions,
+        controlDir: visualControlDir,
+        remoteDebuggingPort,
+      })
+      : runTests(testOptions);
+    const [testsResult, visualResult] = await Promise.allSettled([testsPromise, visualPromise]);
+    if (testsResult.status === 'rejected') {
+      throw testsResult.reason;
+    }
+    if (visualResult.status === 'rejected') {
+      throw visualResult.reason;
+    }
+  } finally {
+    if (visualControlDir) {
+      fs.rmSync(visualControlDir, { recursive: true, force: true });
+    }
+    fs.rmSync(userDataDir, { recursive: true, force: true });
+  }
+}
+
+async function runReloadAwareVisualTests({ testOptions, controlDir, remoteDebuggingPort }) {
+  const markerPath = path.join(controlDir, 'grid-reload-marker.json');
+  try {
+    await runTests(testOptions);
+    throw new Error('Grid reload phase returned normally instead of terminating the VS Code test host.');
+  } catch (error) {
+    const marker = readReloadMarker(markerPath);
+    if (
+      !(error instanceof TestRunFailedError) ||
+      error.code !== 1 ||
+      !marker ||
+      marker.version !== 1 ||
+      marker.phaseOneComplete !== true ||
+      marker.reloadCommand !== 'workbench.action.reloadWindow' ||
+      marker.reloadCommandIssued !== true ||
+      (
+        marker.reloadPromiseCancellation &&
+        (
+          marker.reloadPromiseCancellation.name !== 'Canceled' ||
+          marker.reloadPromiseCancellation.message !== 'Canceled'
+        )
+      )
+    ) {
+      throw error;
+    }
+    if (marker.reloadPromiseCancellation) {
+      console.log('Reload command was canceled by the expected Extension Host teardown.');
+    }
+    console.log('VS Code test host exited for workbench.action.reloadWindow; starting persisted-profile phase 2.');
+  }
+
+  await waitForPortAvailable(remoteDebuggingPort, 30000);
+  await runTests(testOptions);
+}
+
+function readReloadMarker(markerPath) {
+  try {
+    return JSON.parse(fs.readFileSync(markerPath, 'utf8'));
+  } catch (error) {
+    if (error.code === 'ENOENT' || error instanceof SyntaxError) {
+      return null;
+    }
+    throw error;
+  }
 }
 
 function shouldStartDisplayServer() {
@@ -201,6 +287,40 @@ async function ensureSqlToolsExtension(vscodeExecutablePath, extensionsDir, user
   }
 
   throw new Error(`Failed to install ${SQLTOOLS_EXTENSION_ID} into ${extensionsDir}. Set KDB_SQLTOOLS_E2E_ALLOW_SQLTOOLS_INSTALL_FAILURE=1 to run the driver-only fallback.`);
+}
+
+function availablePort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      const port = typeof address === 'object' && address ? address.port : 0;
+      server.close(error => error ? reject(error) : resolve(port));
+    });
+  });
+}
+
+function waitForPortAvailable(port, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  return new Promise((resolve, reject) => {
+    const attempt = () => {
+      const server = net.createServer();
+      server.unref();
+      server.once('error', error => {
+        if (Date.now() >= deadline) {
+          reject(new Error(`Timed out waiting for CDP port ${port} after reload: ${error.message}`));
+          return;
+        }
+        setTimeout(attempt, 100);
+      });
+      server.listen(port, '127.0.0.1', () => {
+        server.close(error => error ? reject(error) : resolve());
+      });
+    };
+    attempt();
+  });
 }
 
 function hasInstalledExtension(extensionsDir, extensionId) {

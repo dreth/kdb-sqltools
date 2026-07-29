@@ -120,7 +120,9 @@ Selection supports individual ranges, whole rows, whole columns, and all cells. 
 
 Columns can be hidden from the panel settings menu for the current panel session. Select all and Deselect all controls are available; deselecting all data columns leaves the row-number column and a clear empty state. Hidden columns stay hidden for later results in that panel only when the full column list matches, and reset restores all columns. Hidden-column choices are not saved globally.
 
-The Settings -> Preferences Auto-fit checkbox is enabled by default and sizes visible columns from headers plus the currently rendered cells as you scroll. Column widths can still be dragged per session, and Reset column widths clears manual overrides.
+The Settings -> Preferences Auto-fit checkbox is persisted and enabled by default. Its default `Whole result` mode sizes each column from the widest displayed header or value in the complete result, including array/list values outside the viewport, so virtual scrolling does not change widths. Select `Visible rows` to retain viewport-adaptive fitting, or uncheck Auto-fit to disable automatic width calculation.
+
+Drag-resized widths are authoritative and persist by zero-based source-column position across later queries, panel recreation, and VS Code restarts. Hiding or reordering columns does not change that source-position mapping. The `Cell width` textbox is an all-column control, and switching density applies that density's saved size preset; either action clears/replaces positional manual widths consistently for every data column, including the first. `Reset column widths` also clears the positional overrides.
 
 Header mode defaults to Drag. Drag column headers to reorder visible columns for the current panel session; copy, export, search, and sort use that visible order. Change the Settings menu mode to Select for whole-column selection or Sort to sort visible columns in the extension; repeated sort clicks cycle ascending, descending, and original order. Sorting uses the panel's visible cell text, warns before sorting very large row counts, and resets on the third click.
 
@@ -141,7 +143,9 @@ The top toolbar is a single compact line: `Output`, copy/export controls, a top-
 
 Candlestick rendering rejects missing, duplicate, or non-numeric OHLC selections. After invalid x values are removed using the normal x rules, every retained candle row must have finite OHLC values with `high >= open`, `high >= close`, `low <= open`, `low <= close`, and `high >= low`; otherwise the render fails with an actionable error instead of reinterpreting or silently dropping the row. Financial x-domain bucket aggregation is applied to the four roles together and never independently min/max-samples them as generic lines. Each aggregate is positioned at the midpoint of its first and last source x while the full source x domain remains available to zoom. The sampled result is capped at roughly one candle per horizontal pixel so dense bodies remain legible.
 
-All chart types keep auto-thinned readable x-axis labels, cursor tooltips, drag zoom, debounced zoom auto-refinement, explicit `Refine zoom`, reset zoom, splitter resizing, legend toggling, and PNG export after render. Candlestick tooltips show open/high/low/close values, and exported PNGs include the rendered candle geometry. Changing chart type or another control updates visible fields and validation without removing the old rendered chart; press `Render` to apply the new settings. Successful selections are restored only when the visible-column signature and the type-specific roles remain valid, so older generic selections fall back safely.
+All chart types keep auto-thinned readable x-axis labels, cursor tooltips, drag zoom, debounced zoom auto-refinement, explicit `Refine zoom`, reset zoom, splitter resizing, legend toggling, and PNG export after render. Every distinct completed zoom, including a zoom nested inside an already refined range, is resampled from the retained full source for that absolute range. Identical scale notifications are deduplicated, and programmatic reconstruction, resize, settings, and series-visibility rerenders do not issue recursive refinement requests.
+
+A refined range with fewer than 3,000 eligible rows renders every available row without upsampling. From 3,000 through 7,000 it keeps the available density; above 7,000 it uses the chart type's reduction model to return about 7,000 points. `Reset zoom` invalidates stale in-flight refinement responses and restores the immutable original full sample/domain without another q/backend request. Candlestick tooltips show open/high/low/close values, and exported PNGs include the rendered candle geometry. Changing chart type or another control updates visible fields and validation without removing the old rendered chart; press `Render` to apply the new settings. Successful selections are restored only when the visible-column signature and the type-specific roles remain valid, so older generic selections fall back safely.
 
 Normal successful result messages stay hidden because the top summary already shows row count and elapsed time; errors remain visible in the message area.
 
@@ -155,6 +159,9 @@ kdb panel settings:
   "kdb-sqltools.results.rowHeight": 28,
   "kdb-sqltools.results.fontSize": 0,
   "kdb-sqltools.results.density": "standard",
+  "kdb-sqltools.results.columnWidths": {},
+  "kdb-sqltools.results.autoFitColumns": true,
+  "kdb-sqltools.results.autoFitMode": "wholeResult",
   "kdb-sqltools.results.kdbPanel.defaultRunMode": "new",
   "kdb-sqltools.results.kdbPanel.initialViewColumn": "active",
   "kdb-sqltools.results.kdbPanel.arrayDisplayFormat": "commaSpace",
@@ -178,7 +185,7 @@ kdb panel settings:
 }
 ```
 
-`fontSize: 0` uses the VS Code default. Density can be `compact`, `standard`, or `comfortable`; each density has its own saved `cellWidth`, `rowHeight`, and `fontSize`. The legacy top-level size settings remain as fallbacks for existing user configuration. `elapsedTimeDisplay` can be `auto` or `milliseconds`. `arrayDisplayFormat` can be `commaSpace` (`1, 2, 3`), `space` (`1 2 3`), or `raw` (`[1 2 3]` where q-ish bracketed display is supported). `showRowIndex` controls the visible left row-number column; `includeHeaders` and `includeRowIndex` control default copy/export output. Text copy/export formats use display text; JSON and NDJSON keep structured values. Large-result and large-sort warnings can be suppressed from the panel or these settings. `copyExportConfirmCellThreshold` controls when panel copy/export asks for confirmation; `localDataServerFullExportCellLimit` controls the local data server hard limit for full `current.*` exports.
+`fontSize: 0` uses the VS Code default. Density can be `compact`, `standard`, or `comfortable`; each density has its own saved `cellWidth`, `rowHeight`, and `fontSize`. Applying the panel's `Cell width` textbox or switching density is an all-column preset action and clears/replaces `columnWidths`. `columnWidths` is an extension-managed sparse map of zero-based source-position overrides written by column dragging; normally it does not need to be edited by hand. `autoFitColumns` persists the checkbox, and `autoFitMode` can be `wholeResult` (stable, complete-result fitting) or `visibleRows` (viewport-adaptive fitting). The legacy top-level size settings remain as fallbacks for existing user configuration. `elapsedTimeDisplay` can be `auto` or `milliseconds`. `arrayDisplayFormat` can be `commaSpace` (`1, 2, 3`), `space` (`1 2 3`), or `raw` (`[1 2 3]` where q-ish bracketed display is supported). `showRowIndex` controls the visible left row-number column; `includeHeaders` and `includeRowIndex` control default copy/export output. Text copy/export formats use display text; JSON and NDJSON keep structured values. Large-result and large-sort warnings can be suppressed from the panel or these settings. `copyExportConfirmCellThreshold` controls when panel copy/export asks for confirmation; `localDataServerFullExportCellLimit` controls the local data server hard limit for full `current.*` exports.
 
 For non-table result strategies, `qText` renders normal q-like list/object output fully in a plain text viewer, including metadata lists such as `tables[]`. It only applies a large character safety cap for very large text and marks capped output with `[truncated]`.
 
@@ -278,7 +285,7 @@ This repository is not published to the VS Code Marketplace by the build scripts
 
 ### E2E Test Pipeline
 
-`npm run test:e2e` uses `@vscode/test-electron` to download a local VS Code build under `.vscode-test`, installs the real `mtxr.sqltools` Marketplace extension into an isolated test extensions directory, and launches a VS Code extension host for this extension.
+`npm run test:e2e` uses `@vscode/test-electron` to download a local VS Code build under `.vscode-test`, installs the real `mtxr.sqltools` Marketplace extension into an isolated test extensions directory, and launches a VS Code extension host for this extension. It also drives two nested native drag zooms in the real results-panel webview and verifies the requested ranges, immutable source row count, and 3,000–7,000 sampling contract.
 
 Inside that extension host the test suite:
 
@@ -296,6 +303,7 @@ Useful E2E environment variables:
 - `KDB_SQLTOOLS_E2E_VSCODE_VERSION=1.124.2` pins the downloaded VS Code version instead of `stable`.
 - `KDB_SQLTOOLS_E2E_FORCE_SQLTOOLS_INSTALL=1` reinstalls `mtxr.sqltools`.
 - `KDB_SQLTOOLS_E2E_SKIP_SQLTOOLS_INSTALL=1` skips the install step and uses whatever is already in `.vscode-test/e2e/extensions`.
-- `KDB_SQLTOOLS_E2E_ALLOW_SQLTOOLS_INSTALL_FAILURE=1` allows a driver-only VS Code host fallback when Marketplace access is unavailable; the SQLTools activation test is skipped in that mode.
+- `KDB_SQLTOOLS_E2E_ALLOW_SQLTOOLS_INSTALL_FAILURE=1` allows a driver-only VS Code host fallback when Marketplace access is unavailable; SQLTools activation and native webview visual tests are skipped in that mode.
+- `KDB_SQLTOOLS_E2E_SKIP_VISUAL=1` skips the native webview drag-zoom acceptance test while retaining the extension-host tests.
 - `KDB_SQLTOOLS_E2E_RUNTIME_LIB_DIR=/path/to/libs` prepends a custom Linux runtime library directory for minimal containers.
 - `KDB_SQLTOOLS_E2E_SKIP_LINUX_LIBS=1` skips the no-root `apt-get download`/`dpkg-deb` runtime-library bootstrap.

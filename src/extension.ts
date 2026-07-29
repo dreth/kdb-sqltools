@@ -51,6 +51,7 @@ export async function activate(extContext: ExtensionContext): Promise<IDriverExt
       if (event.affectsConfiguration('kdb-sqltools.performance.trace')) {
         updatePerfTraceSetting();
       }
+      KdbResultsPanel.configurationChanged(event);
     }),
     vscode.commands.registerCommand('kdb-sqltools.runFile', () => runQFile(extContext)),
     vscode.commands.registerCommand('kdb-sqltools.runSelectionOrBlock', () => runQSelectionOrLine(extContext)),

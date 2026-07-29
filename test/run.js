@@ -40,11 +40,28 @@ const {
   updateHiddenChartSeriesKeys,
 } = require('../out/chart-series-state');
 const {
+  chartZoomAutoRefineQueueAction,
   chartZoomRangeMatchesRequest,
   chartZoomRangeKey,
   chartZoomRequestedRenderRange,
+  chartZoomResponseIsPending,
+  chartZoomShouldRequestRange,
   reduceChartZoomLifecycle,
 } = require('../out/chart-zoom-state');
+const {
+  GRID_COLUMN_WIDTH_MAX,
+  GRID_COLUMN_WIDTH_MIN,
+  PositionalColumnWidthPersistenceQueue,
+  hasPositionalColumnWidths,
+  normalizeGridAutoFitMode,
+  normalizePositionalColumnWidths,
+  positionalColumnWidthEntries,
+  resolvedPositionalColumnWidth,
+  sourceColumnPositions,
+  updatePositionalColumnWidth,
+  visibleRowsColumnTextLengths,
+  wholeResultColumnTextLengths,
+} = require('../out/grid-column-widths');
 const { currentQBlock, selectedTextOrCurrentBlock, selectedTextOrCurrentLine } = require('../out/q-text');
 const {
   allCellsRange,
@@ -686,6 +703,262 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.deepStrictEqual(visibleIndexRange(280, 140, 28, 100, 2), { start: 8, end: 17 });
   assert.deepStrictEqual(visibleIndexRange(-100, 140, 28, 100, 2), { start: 0, end: 4 });
   assert.deepStrictEqual(visibleIndexRange(0, 0, 28, 100, 2), { start: 0, end: -1 });
+  assert.strictEqual(GRID_COLUMN_WIDTH_MIN, 80);
+  assert.strictEqual(GRID_COLUMN_WIDTH_MAX, 2000);
+  assert.strictEqual(normalizeGridAutoFitMode('wholeResult'), 'wholeResult');
+  assert.strictEqual(normalizeGridAutoFitMode('visibleRows'), 'visibleRows');
+  assert.strictEqual(
+    normalizeGridAutoFitMode('unknown'),
+    'wholeResult',
+    'whole-result auto-fit must remain the safe/default mode'
+  );
+  assert.deepStrictEqual(normalizePositionalColumnWidths(null), {});
+  assert.deepStrictEqual(
+    normalizePositionalColumnWidths({
+      0: 123.9,
+      2: 250,
+      3: '90.9',
+      4: Infinity,
+      5: 'invalid',
+      6: 10,
+      7: 3000,
+      '01': 300,
+      '-1': 400,
+      '1.5': 500,
+      columnName: 600,
+    }),
+    {
+      0: 123,
+      2: 250,
+      3: 90,
+      6: GRID_COLUMN_WIDTH_MIN,
+      7: GRID_COLUMN_WIDTH_MAX,
+    },
+    'stored widths must retain only canonical source positions and clamp finite values'
+  );
+  assert.deepStrictEqual(
+    normalizePositionalColumnWidths([null, 181.9, undefined, 250]),
+    { 1: 181, 3: 250 },
+    'legacy array-shaped width state must preserve sparse positions'
+  );
+  assert.strictEqual(hasPositionalColumnWidths({}), false);
+  assert.strictEqual(hasPositionalColumnWidths([null, undefined]), false);
+  assert.strictEqual(hasPositionalColumnWidths({ 0: 240 }), true);
+  assert.deepStrictEqual(
+    positionalColumnWidthEntries({ 8: 480, 0: 220, 3: 330 }),
+    [[0, 220], [3, 330], [8, 480]],
+    'positional entries must be numeric and source ordered'
+  );
+
+  let gridPersistedWidths = updatePositionalColumnWidth({}, 0, 211.9);
+  assert.deepStrictEqual(gridPersistedWidths, { 0: 211 }, 'source position zero must support a manual width');
+  const gridFirstWidthSnapshot = gridPersistedWidths;
+  gridPersistedWidths = updatePositionalColumnWidth(gridPersistedWidths, 3, 444.8);
+  assert.deepStrictEqual(gridFirstWidthSnapshot, { 0: 211 }, 'width updates must not mutate a prior persisted snapshot');
+  assert.deepStrictEqual(gridPersistedWidths, { 0: 211, 3: 444 });
+  const gridReloadedWidths = normalizePositionalColumnWidths(
+    JSON.parse(JSON.stringify(gridPersistedWidths))
+  );
+  assert.deepStrictEqual(
+    gridReloadedWidths,
+    gridPersistedWidths,
+    'sparse positional widths must survive configuration serialization and reload'
+  );
+  const gridWithoutFirstWidth = updatePositionalColumnWidth(gridReloadedWidths, 0, null);
+  assert.deepStrictEqual(
+    gridWithoutFirstWidth,
+    { 3: 444 },
+    'clearing source position zero must not shift a later positional width'
+  );
+  assert.deepStrictEqual(updatePositionalColumnWidth(gridWithoutFirstWidth, 3, undefined), {});
+  assert.deepStrictEqual(
+    updatePositionalColumnWidth(gridPersistedWidths, -1, 500),
+    gridPersistedWidths,
+    'invalid source positions must not alter persisted widths'
+  );
+
+  let queuedStoredWidths = {};
+  let releaseFirstQueuedWrite;
+  let markFirstQueuedWriteStarted;
+  const firstQueuedWriteGate = new Promise(resolve => {
+    releaseFirstQueuedWrite = resolve;
+  });
+  const firstQueuedWriteStarted = new Promise(resolve => {
+    markFirstQueuedWriteStarted = resolve;
+  });
+  const queuedWriteSnapshots = [];
+  const queuedBroadcastSnapshots = [];
+  let queuedWriteCount = 0;
+  const widthPersistenceQueue = new PositionalColumnWidthPersistenceQueue(
+    () => ({ ...queuedStoredWidths }),
+    async widths => {
+      queuedWriteCount += 1;
+      queuedWriteSnapshots.push({ ...widths });
+      if (queuedWriteCount === 1) {
+        markFirstQueuedWriteStarted();
+        await firstQueuedWriteGate;
+      }
+      queuedStoredWidths = { ...widths };
+    }
+  );
+  const queuedWidthOperations = [
+    widthPersistenceQueue.update(
+      current => updatePositionalColumnWidth(current, 0, 210),
+      widths => queuedBroadcastSnapshots.push({ ...widths })
+    ),
+    widthPersistenceQueue.update(
+      current => updatePositionalColumnWidth(current, 1, 220),
+      widths => queuedBroadcastSnapshots.push({ ...widths })
+    ),
+    widthPersistenceQueue.update(
+      () => ({}),
+      widths => queuedBroadcastSnapshots.push({ ...widths })
+    ),
+    widthPersistenceQueue.update(
+      current => updatePositionalColumnWidth(current, 2, 230),
+      widths => queuedBroadcastSnapshots.push({ ...widths })
+    ),
+  ];
+  await firstQueuedWriteStarted;
+  assert.deepStrictEqual(queuedStoredWidths, {}, 'a delayed configuration write must remain pending');
+  releaseFirstQueuedWrite();
+  const queuedWidthResults = await Promise.all(queuedWidthOperations);
+  assert.deepStrictEqual(queuedWidthResults, [
+    { 0: 210 },
+    { 0: 210, 1: 220 },
+    {},
+    { 2: 230 },
+  ]);
+  assert.deepStrictEqual(queuedWriteSnapshots, queuedWidthResults);
+  assert.deepStrictEqual(
+    queuedBroadcastSnapshots,
+    queuedWidthResults,
+    'persisted width broadcasts must follow the same serialized order as configuration writes'
+  );
+  assert.deepStrictEqual(
+    queuedStoredWidths,
+    { 2: 230 },
+    'a queued preset reset must not be overwritten by an older delayed drag'
+  );
+  assert.deepStrictEqual(
+    sourceColumnPositions(['A', 'B', 'C'], ['C', 'A']),
+    [2, 0],
+    'hidden and reordered columns must retain their original source positions'
+  );
+  assert.deepStrictEqual(
+    sourceColumnPositions(['A', 'A', 'B'], ['A', 'A', 'B']),
+    [0, 1, 2],
+    'position mapping must consume repeated source names by occurrence'
+  );
+
+  const gridManualWidths = { 0: 222, 2: 260 };
+  const gridAutomaticWidths = { 0: 333, 1: 360, 2: 370, 3: 380 };
+  assert.strictEqual(
+    resolvedPositionalColumnWidth(0, 160, gridManualWidths, true, gridAutomaticWidths),
+    222,
+    'a first-column manual drag must override auto-fit'
+  );
+  assert.strictEqual(
+    resolvedPositionalColumnWidth(0, 160, gridManualWidths, false, gridAutomaticWidths),
+    222,
+    'disabling auto-fit must retain a first-column manual width'
+  );
+  assert.strictEqual(
+    resolvedPositionalColumnWidth(1, 160, gridManualWidths, true, gridAutomaticWidths),
+    360
+  );
+  assert.strictEqual(
+    resolvedPositionalColumnWidth(1, 160, gridManualWidths, false, gridAutomaticWidths),
+    160,
+    'an unchecked auto-fit control must ignore calculated widths'
+  );
+  assert.strictEqual(
+    resolvedPositionalColumnWidth(2, 160, gridManualWidths, true, gridAutomaticWidths),
+    260,
+    'manual widths must remain authoritative at every source position'
+  );
+  const gridPresetWidth = 180;
+  assert.deepStrictEqual(
+    Array.from({ length: 4 }, (_value, position) =>
+      resolvedPositionalColumnWidth(position, gridPresetWidth, {}, false, gridAutomaticWidths)
+    ),
+    [gridPresetWidth, gridPresetWidth, gridPresetWidth, gridPresetWidth],
+    'an all-column textbox/preset must replace positional overrides and apply to every column'
+  );
+  [
+    ['sym', 'price', 'size'],
+    ['renamed', 'unrelated', 'schema'],
+  ].forEach(schema => {
+    assert.deepStrictEqual(
+      schema.map((_column, position) =>
+        resolvedPositionalColumnWidth(position, 160, gridManualWidths, false, {})
+      ),
+      [222, 160, 260],
+      'manual widths must follow source position rather than query or column name'
+    );
+  });
+
+  const gridAutoFitTable = createColumnarPanelResult(
+    ['id', 'payload'],
+    4,
+    (rowIndex, columnIndex) => {
+      if (columnIndex === 0) {
+        return rowIndex;
+      }
+      return rowIndex === 3 ? ['offViewport', 'array', 'value'] : ['x'];
+    }
+  );
+  const gridCellTextOptions = { arrayDisplayFormat: 'commaSpace' };
+  const gridFirstViewportSlice = gridAutoFitTable.cellWindow(
+    { start: 0, end: 1 },
+    { start: 1, end: 1 },
+    gridCellTextOptions
+  );
+  const gridSecondViewportSlice = gridAutoFitTable.cellWindow(
+    { start: 3, end: 3 },
+    { start: 1, end: 1 },
+    gridCellTextOptions
+  );
+  const gridWholeResultLengths = wholeResultColumnTextLengths(gridAutoFitTable, gridCellTextOptions);
+  const gridFirstViewportLengths = visibleRowsColumnTextLengths(
+    gridAutoFitTable.columns,
+    gridFirstViewportSlice
+  );
+  const gridSecondViewportLengths = visibleRowsColumnTextLengths(
+    gridAutoFitTable.columns,
+    gridSecondViewportSlice
+  );
+  assert.strictEqual(
+    gridAutoFitTable.cellText(3, 1, gridCellTextOptions),
+    'offViewport, array, value'
+  );
+  assert.deepStrictEqual(gridWholeResultLengths, [2, 25]);
+  assert.deepStrictEqual(gridFirstViewportLengths, [2, 7]);
+  assert.deepStrictEqual(gridSecondViewportLengths, [2, 25]);
+  assert.ok(
+    gridWholeResultLengths[1] > gridFirstViewportLengths[1],
+    'whole-result auto-fit must include array/list text outside the virtual viewport'
+  );
+  assert.notDeepStrictEqual(
+    gridFirstViewportLengths,
+    gridSecondViewportLengths,
+    'visible-rows auto-fit must explicitly follow the rendered viewport'
+  );
+  const gridWholeAutomaticWidths = Object.fromEntries(
+    gridWholeResultLengths.map((length, position) => [position, length + 100])
+  );
+  const gridWholeWidthsBeforeScroll = gridAutoFitTable.columns.map((_column, position) =>
+    resolvedPositionalColumnWidth(position, 160, { 0: 220 }, true, gridWholeAutomaticWidths)
+  );
+  visibleRowsColumnTextLengths(gridAutoFitTable.columns, gridSecondViewportSlice);
+  const gridWholeWidthsAfterScroll = gridAutoFitTable.columns.map((_column, position) =>
+    resolvedPositionalColumnWidth(position, 160, { 0: 220 }, true, gridWholeAutomaticWidths)
+  );
+  assert.deepStrictEqual(
+    gridWholeWidthsAfterScroll,
+    gridWholeWidthsBeforeScroll,
+    'whole-result widths and manual precedence must stay stable while the viewport changes'
+  );
   assert.strictEqual(panelFormatElapsedMs(123, 'auto'), '123 ms');
   assert.strictEqual(panelFormatElapsedMs(1500, 'auto'), '1.5 s');
   assert.strictEqual(panelFormatElapsedMs(63000, 'auto'), '1m 3s');
@@ -1223,8 +1496,205 @@ function panelFormatElapsedMs(milliseconds, display) {
     maxSampledPoints: CHART_ZOOM_MAX_SAMPLED_POINTS,
   });
   assert.strictEqual(zoomSampledRowsChart.algorithm, `minmax-bucket/${CHART_ZOOM_MAX_SAMPLED_POINTS}`);
-  assert.ok(zoomSampledRowsChart.sampledPointCount <= CHART_ZOOM_MAX_SAMPLED_POINTS);
+  assert.strictEqual(zoomSampledRowsChart.sampledPointCount, CHART_ZOOM_MAX_SAMPLED_POINTS);
   assert.ok(zoomSampledRowsChart.series[0].values.includes(999), 'zoom min/max sampling should preserve spikes');
+
+  const rangedDensityChartTypes = ['line', 'scatter', 'step', 'bar', 'box', 'candlestick'];
+  for (const eligibleRowCount of [
+    CHART_ZOOM_MIN_SAMPLED_POINTS - 1,
+    CHART_ZOOM_MIN_SAMPLED_POINTS,
+    CHART_ZOOM_MAX_SAMPLED_POINTS,
+    CHART_ZOOM_MAX_SAMPLED_POINTS + 1,
+  ]) {
+    const densityTable = createColumnarPanelResult(
+      ['x', 'value', 'open', 'high', 'low', 'close'],
+      eligibleRowCount,
+      (rowIndex, columnIndex) => {
+        if (columnIndex === 0) {
+          return rowIndex;
+        }
+        if (columnIndex === 1 || columnIndex === 2) {
+          return rowIndex + 10;
+        }
+        if (columnIndex === 3) {
+          return rowIndex + 12;
+        }
+        if (columnIndex === 4) {
+          return rowIndex + 8;
+        }
+        return rowIndex + 11;
+      }
+    );
+    for (const chartType of rangedDensityChartTypes) {
+      const densityChart = buildChartData(densityTable, {
+        chartType,
+        version: 19,
+        requestId: eligibleRowCount,
+        xColumn: 'x',
+        yColumns: chartType === 'candlestick' ? [] : ['value'],
+        openColumn: 'open',
+        highColumn: 'high',
+        lowColumn: 'low',
+        closeColumn: 'close',
+        xMin: 0,
+        xMax: eligibleRowCount - 1,
+        width: 10,
+        maxSampledPoints: eligibleRowCount <= CHART_ZOOM_MAX_SAMPLED_POINTS ? 1 : 9000,
+      });
+      const expectedPointCount = Math.min(eligibleRowCount, CHART_ZOOM_MAX_SAMPLED_POINTS);
+      assert.strictEqual(
+        densityChart.eligibleRowCount,
+        eligibleRowCount,
+        `${chartType} ranged refinement must count the full eligible source range`
+      );
+      assert.strictEqual(
+        densityChart.sampledPointCount,
+        expectedPointCount,
+        `${chartType} ranged refinement must honor the 3,000-7,000 density boundary at ${eligibleRowCount}`
+      );
+    }
+  }
+
+  const multiSeriesDensityTable = createColumnarPanelResult(
+    ['x', 'flatAndSpike', 'flatAndGap'],
+    8000,
+    (rowIndex, columnIndex) => {
+      if (columnIndex === 0) {
+        return rowIndex;
+      }
+      if (columnIndex === 1) {
+        return rowIndex === 4321 ? 999999 : 1;
+      }
+      return rowIndex === 4567 ? null : 2;
+    }
+  );
+  const multiSeriesDensityChart = buildChartData(multiSeriesDensityTable, {
+    chartType: 'line',
+    version: 19,
+    requestId: 8000,
+    xColumn: 'x',
+    yColumns: ['flatAndSpike', 'flatAndGap'],
+    xMin: 0,
+    xMax: 7999,
+    width: 10,
+  });
+  assert.strictEqual(
+    multiSeriesDensityChart.sampledPointCount,
+    CHART_ZOOM_MAX_SAMPLED_POINTS,
+    'overlapping min/max selections must be backfilled to the ranged density target'
+  );
+  assert.strictEqual(multiSeriesDensityChart.x[0], 0);
+  assert.strictEqual(multiSeriesDensityChart.x[multiSeriesDensityChart.x.length - 1], 7999);
+  assert.ok(multiSeriesDensityChart.series[0].values.includes(999999), 'ranged backfill must preserve spikes');
+  assert.ok(multiSeriesDensityChart.series[1].values.includes(null), 'ranged backfill must preserve source gaps');
+
+  const boundedSeriesColumns = Array.from({ length: 12 }, (_value, index) => `y${index}`);
+  const boundedMultiSeriesChart = buildChartData(createColumnarPanelResult(
+    ['x'].concat(boundedSeriesColumns),
+    100,
+    (rowIndex, columnIndex) => columnIndex === 0
+      ? rowIndex
+      : ((rowIndex * (columnIndex * 17 + 3)) % 101)
+  ), {
+    chartType: 'line',
+    version: 19,
+    requestId: 10,
+    xColumn: 'x',
+    yColumns: boundedSeriesColumns,
+    xMin: 0,
+    xMax: 99,
+    width: 10,
+    maxSampledPoints: 10,
+  });
+  assert.strictEqual(
+    boundedMultiSeriesChart.sampledPointCount,
+    100,
+    'legacy per-request caps must not reduce a ranged result below the fixed density contract'
+  );
+
+  const irregularCandleTable = createColumnarPanelResult(
+    ['x', 'open', 'high', 'low', 'close'],
+    CHART_ZOOM_MAX_SAMPLED_POINTS + 1,
+    (rowIndex, columnIndex) => {
+      const x = rowIndex === CHART_ZOOM_MAX_SAMPLED_POINTS ? 1000000000000 : rowIndex;
+      if (columnIndex === 0) {
+        return x;
+      }
+      if (columnIndex === 1) {
+        return rowIndex + 10;
+      }
+      if (columnIndex === 2) {
+        return rowIndex + 12;
+      }
+      if (columnIndex === 3) {
+        return rowIndex + 8;
+      }
+      return rowIndex + 11;
+    }
+  );
+  const irregularRangedCandles = buildChartData(irregularCandleTable, {
+    chartType: 'candlestick',
+    version: 19,
+    requestId: 7001,
+    xColumn: 'x',
+    yColumns: [],
+    openColumn: 'open',
+    highColumn: 'high',
+    lowColumn: 'low',
+    closeColumn: 'close',
+    xMin: 0,
+    xMax: 1000000000000,
+    width: 10,
+  });
+  assert.strictEqual(irregularRangedCandles.sampledPointCount, CHART_ZOOM_MAX_SAMPLED_POINTS);
+  assert.deepStrictEqual(irregularRangedCandles.xDomain, { min: 0, max: 1000000000000 });
+  assert.strictEqual(irregularRangedCandles.candlesticks[0].open, 10);
+  assert.strictEqual(
+    irregularRangedCandles.candlesticks[irregularRangedCandles.candlesticks.length - 1].close,
+    CHART_ZOOM_MAX_SAMPLED_POINTS + 11
+  );
+  assert.strictEqual(
+    Math.max(...irregularRangedCandles.candlesticks.map(candle => candle.high)),
+    CHART_ZOOM_MAX_SAMPLED_POINTS + 12,
+    'count-balanced ranged OHLC buckets must retain the full high envelope'
+  );
+
+  const millionRowChartTable = createColumnarPanelResult(
+    ['x', 'value'],
+    1000000,
+    (rowIndex, columnIndex) => columnIndex === 0
+      ? rowIndex
+      : (rowIndex === 105432 ? 999999 : 1)
+  );
+  const firstMillionSourceZoom = buildLineChartData(millionRowChartTable, {
+    version: 19,
+    requestId: 1,
+    xColumn: 'x',
+    yColumns: ['value'],
+    xMin: 100000,
+    xMax: 110000,
+    width: 10,
+  });
+  const nestedMillionSourceZoom = buildLineChartData(millionRowChartTable, {
+    version: 19,
+    requestId: 2,
+    xColumn: 'x',
+    yColumns: ['value'],
+    xMin: 102000,
+    xMax: 110000,
+    width: 10,
+  });
+  assert.strictEqual(firstMillionSourceZoom.sourceRowCount, 1000000);
+  assert.strictEqual(firstMillionSourceZoom.eligibleRowCount, 10001);
+  assert.strictEqual(firstMillionSourceZoom.sampledPointCount, CHART_ZOOM_MAX_SAMPLED_POINTS);
+  assert.strictEqual(nestedMillionSourceZoom.sourceRowCount, 1000000);
+  assert.strictEqual(nestedMillionSourceZoom.eligibleRowCount, 8001);
+  assert.strictEqual(
+    nestedMillionSourceZoom.sampledPointCount,
+    CHART_ZOOM_MAX_SAMPLED_POINTS,
+    'a second nested zoom must resample the original million-row source instead of the first reduced response'
+  );
+  assert.ok(nestedMillionSourceZoom.series[0].values.includes(999999));
   assert.throws(
     () => buildLineChartData(spikeTable, {
       version: 1,
@@ -1502,6 +1972,7 @@ function panelFormatElapsedMs(milliseconds, display) {
   });
   assert.strictEqual(chartZoomLifecycle.fullData, fullChartSample);
   assert.deepStrictEqual(chartZoomLifecycle.fullRange, { min: 0, max: 100 });
+  const fullZoomLifecycle = chartZoomLifecycle;
 
   const requestedZoomRange = { min: 20, max: 40 };
   chartZoomLifecycle = reduceChartZoomLifecycle(chartZoomLifecycle, {
@@ -1509,6 +1980,7 @@ function panelFormatElapsedMs(milliseconds, display) {
     requestId: 2,
     range: requestedZoomRange,
   });
+  assert.strictEqual(chartZoomResponseIsPending(chartZoomLifecycle, 2), true);
   const stateBeforeStaleChartResponse = chartZoomLifecycle;
   chartZoomLifecycle = reduceChartZoomLifecycle(chartZoomLifecycle, {
     type: 'response',
@@ -1560,11 +2032,190 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(autoRefineRequestCount, 0, 'refined reconstruction must not enqueue another refine');
   assert.strictEqual(chartZoomRangeKey(fakeRefinedPlot.scales.x), chartZoomRangeKey(requestedZoomRange));
   assert.strictEqual(chartZoomLifecycle.fullData, fullChartSample, 'refinement must retain the usable full sample');
+  assert.strictEqual(chartZoomResponseIsPending(chartZoomLifecycle, 2), false);
+  assert.strictEqual(
+    chartZoomShouldRequestRange(chartZoomLifecycle, requestedZoomRange, chartZoomRangeKey(requestedZoomRange)),
+    false,
+    'response reconstruction and identical notifications must not recursively refine'
+  );
+
+  const nestedZoomRange = { min: 25, max: 35 };
+  assert.strictEqual(
+    chartZoomShouldRequestRange(chartZoomLifecycle, nestedZoomRange, chartZoomRangeKey(requestedZoomRange)),
+    true,
+    'a distinct second/nested zoom must not be suppressed by the first requested range'
+  );
+  chartZoomLifecycle = reduceChartZoomLifecycle(chartZoomLifecycle, {
+    type: 'request',
+    requestId: 3,
+    range: nestedZoomRange,
+  });
+  assert.strictEqual(chartZoomResponseIsPending(chartZoomLifecycle, 3), true);
+  const stateBeforeSupersededChartResponse = chartZoomLifecycle;
+  chartZoomLifecycle = reduceChartZoomLifecycle(chartZoomLifecycle, {
+    type: 'response',
+    requestId: 2,
+    data: refinedChartSample,
+  });
+  assert.strictEqual(
+    chartZoomLifecycle,
+    stateBeforeSupersededChartResponse,
+    'a superseded first-zoom response must not replace a pending nested zoom'
+  );
+  chartZoomLifecycle = reduceChartZoomLifecycle(chartZoomLifecycle, {
+    type: 'response',
+    requestId: 3,
+    data: {
+      ...refinedChartSample,
+      requestId: 3,
+      x: [25, 30, 35],
+      algorithm: 'none',
+    },
+  });
+  assert.strictEqual(chartZoomResponseIsPending(chartZoomLifecycle, 3), false);
+  assert.deepStrictEqual(chartZoomLifecycle.requestedRange, nestedZoomRange);
+  assert.strictEqual(chartZoomLifecycle.fullData, fullChartSample);
+  assert.strictEqual(
+    chartZoomShouldRequestRange(
+      chartZoomLifecycle,
+      { min: 27, max: 33 },
+      chartZoomRangeKey(nestedZoomRange)
+    ),
+    true,
+    'an exact nested response must not suppress a genuinely distinct third zoom'
+  );
+  assert.notStrictEqual(
+    chartZoomRangeKey({ min: 1700000000000, max: 1700000000100 }),
+    chartZoomRangeKey({ min: 1700000000001, max: 1700000000100 }),
+    'millisecond-scale epoch zooms must not collide in the dedupe key'
+  );
+
+  const rapidFirstRange = { min: 10, max: 90 };
+  const rapidNestedRange = { min: 20, max: 80 };
+  assert.deepStrictEqual(
+    chartZoomAutoRefineQueueAction(null, rapidFirstRange),
+    { type: 'schedule', range: rapidFirstRange }
+  );
+  assert.deepStrictEqual(
+    chartZoomAutoRefineQueueAction(rapidFirstRange, { ...rapidFirstRange }),
+    { type: 'duplicate' },
+    'identical scale notifications inside the debounce window must coalesce'
+  );
+  const rapidDistinctAction = chartZoomAutoRefineQueueAction(rapidFirstRange, rapidNestedRange);
+  assert.deepStrictEqual(
+    rapidDistinctAction,
+    { type: 'flush', ranges: [rapidFirstRange, rapidNestedRange] },
+    'two distinct completed zooms inside the debounce window must both be preserved'
+  );
+  let rapidDistinctState = fullZoomLifecycle;
+  const rapidIssuedRanges = [];
+  rapidDistinctAction.ranges.forEach((range, index) => {
+    rapidIssuedRanges.push(range);
+    rapidDistinctState = reduceChartZoomLifecycle(rapidDistinctState, {
+      type: 'request',
+      requestId: 40 + index,
+      range,
+    });
+  });
+  assert.deepStrictEqual(rapidIssuedRanges, [rapidFirstRange, rapidNestedRange]);
+  assert.deepStrictEqual(rapidDistinctState.requestedRange, rapidNestedRange);
+  assert.strictEqual(rapidDistinctState.pendingRequestId, 41);
+
+  const pendingFirstRange = { min: 10, max: 90 };
+  const pendingNestedRange = { min: 20, max: 80 };
+  let inFlightNestedState = reduceChartZoomLifecycle(fullZoomLifecycle, {
+    type: 'request',
+    requestId: 30,
+    range: pendingFirstRange,
+  });
+  assert.strictEqual(
+    chartZoomShouldRequestRange(
+      inFlightNestedState,
+      pendingNestedRange,
+      chartZoomRangeKey(pendingFirstRange)
+    ),
+    true
+  );
+  inFlightNestedState = reduceChartZoomLifecycle(inFlightNestedState, {
+    type: 'request',
+    requestId: 31,
+    range: pendingNestedRange,
+  });
+  const pendingNestedState = inFlightNestedState;
+  inFlightNestedState = reduceChartZoomLifecycle(inFlightNestedState, {
+    type: 'response',
+    requestId: 30,
+    data: refinedChartSample,
+  });
+  assert.strictEqual(
+    inFlightNestedState,
+    pendingNestedState,
+    'an immediately dispatched nested zoom must make the earlier success stale before its debounce window'
+  );
+  inFlightNestedState = reduceChartZoomLifecycle(inFlightNestedState, {
+    type: 'failed',
+    requestId: 30,
+  });
+  assert.strictEqual(
+    inFlightNestedState,
+    pendingNestedState,
+    'an immediately dispatched nested zoom must also make the earlier error stale'
+  );
+  inFlightNestedState = reduceChartZoomLifecycle(inFlightNestedState, {
+    type: 'response',
+    requestId: 31,
+    data: { ...refinedChartSample, requestId: 31 },
+  });
+  assert.strictEqual(chartZoomResponseIsPending(inFlightNestedState, 31), false);
+  assert.deepStrictEqual(inFlightNestedState.requestedRange, pendingNestedRange);
+  assert.strictEqual(inFlightNestedState.fullData, fullChartSample);
 
   chartZoomLifecycle = reduceChartZoomLifecycle(chartZoomLifecycle, { type: 'reset' });
   assert.strictEqual(chartZoomLifecycle.requestedRange, null);
   assert.deepStrictEqual(chartZoomLifecycle.fullRange, { min: 0, max: 100 });
   assert.deepStrictEqual(chartZoomLifecycle.fullData.x, [0, 50, 100]);
+
+  let pendingResetState = reduceChartZoomLifecycle(null, { type: 'request', requestId: 20, range: null });
+  pendingResetState = reduceChartZoomLifecycle(pendingResetState, {
+    type: 'response',
+    requestId: 20,
+    data: fullChartSample,
+  });
+  pendingResetState = reduceChartZoomLifecycle(pendingResetState, {
+    type: 'rendered',
+    requestId: 20,
+    naturalRange: { min: 0, max: 100 },
+  });
+  pendingResetState = reduceChartZoomLifecycle(pendingResetState, {
+    type: 'request',
+    requestId: 21,
+    range: { min: 10, max: 90 },
+  });
+  assert.strictEqual(chartZoomResponseIsPending(pendingResetState, 21), true);
+  pendingResetState = reduceChartZoomLifecycle(pendingResetState, { type: 'reset' });
+  assert.strictEqual(chartZoomResponseIsPending(pendingResetState, 21), false);
+  assert.strictEqual(pendingResetState.fullData, fullChartSample);
+  assert.deepStrictEqual(pendingResetState.fullRange, { min: 0, max: 100 });
+  const resetStateBeforeLateResponse = pendingResetState;
+  pendingResetState = reduceChartZoomLifecycle(pendingResetState, {
+    type: 'response',
+    requestId: 21,
+    data: refinedChartSample,
+  });
+  assert.strictEqual(
+    pendingResetState,
+    resetStateBeforeLateResponse,
+    'reset must invalidate a late successful refinement response'
+  );
+  pendingResetState = reduceChartZoomLifecycle(pendingResetState, {
+    type: 'failed',
+    requestId: 21,
+  });
+  assert.strictEqual(
+    pendingResetState,
+    resetStateBeforeLateResponse,
+    'reset must invalidate a late failed refinement response'
+  );
   for (const opaqueChartData of [
     { chartType: 'bar', series: [{ columnName: 'size', values: [1] }] },
     { chartType: 'candlestick', candlesticks: [{ x: 0, open: 1, high: 2, low: 0, close: 2 }] },
@@ -1714,6 +2365,12 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(setLoadingSource.includes('cancelQuery.disabled = false;'), true);
   assert.strictEqual(setResultMetaSource.includes('cancelQuery.hidden = true;'), true);
   assert.strictEqual(setResultMetaSource.includes('cancelQuery.disabled = true;'), true);
+  assert.strictEqual(setResultMetaSource.includes('const shouldAutoRenderChart = result.chartAutoOpen === true;'), true);
+  assert.ok(
+    setResultMetaSource.indexOf("resetChartState('');") <
+      setResultMetaSource.indexOf('chartAutoRenderPending = shouldAutoRenderChart;'),
+    'result reset must not erase the Run Selection and Chart auto-open request'
+  );
   assert.strictEqual(outputControlsSource.includes('id="outputControlsLabel" class="toolbar-group-label">Output:</span>'), true);
   assert.strictEqual(outputControlsSource.includes('role="group" aria-labelledby="outputControlsLabel"'), true);
   assert.ok(outputControlsSource.indexOf('id="actionFormat"') < outputControlsSource.indexOf('id="includeHeaders"'));
@@ -1797,7 +2454,7 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('chartLegendToggleKey(event.key)'), true);
   assert.strictEqual(resultsPanelSource.includes('syncChartLegendAccessibility(self);'), true);
   assert.strictEqual(resultsPanelSource.includes("chartCanvasWrap.addEventListener('dblclick'"), true);
-  assert.strictEqual(resultsPanelSource.includes('if (chartZoomed && chartCanExport())'), true);
+  assert.strictEqual(resultsPanelSource.includes('if (chartCanResetZoom())'), true);
   assert.strictEqual(resultsPanelSource.includes('function selectedChartType()'), true);
   assert.strictEqual(resultsPanelSource.includes('chartType: selectedChartType()'), true);
   assert.strictEqual(resultsPanelSource.includes('groupByColumn: selectedChartGroupColumn()'), true);
@@ -1934,11 +2591,12 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resetChartZoomSource.includes('chartZoomed = false;'), false);
   assert.strictEqual(resetChartZoomSource.includes('clearChartSelection();'), true);
   assert.strictEqual(resetChartZoomSource.includes('vscode.postMessage'), false);
+  assert.strictEqual(resetChartZoomSource.includes("reduceChartZoomLifecycle(chartZoomLifecycle, { type: 'reset' })"), true);
   const chartZoomStateSource = resultsPanelSource.slice(
     resultsPanelSource.indexOf('function updateChartZoomState'),
     resultsPanelSource.indexOf('function queueChartAutoRefine')
   );
-  assert.strictEqual(chartZoomStateSource.includes('chartRangeIsZoomed(chartZoomLifecycle.fullRange, chartXScaleRange(self))'), true);
+  assert.strictEqual(chartZoomStateSource.includes('chartRangeIsZoomed(chartZoomLifecycle.fullRange, visibleRange)'), true);
   assert.strictEqual(chartZoomStateSource.includes('const initial = chartZoomLifecycle.fullRange;'), true);
   assert.strictEqual(chartZoomStateSource.includes('chartInitialXRange()'), false);
   const chartRequestSource = resultsPanelSource.slice(
@@ -1955,9 +2613,15 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(drawChartSource.includes("chartUPlot.setScale('x', { min: requestedRange.min, max: requestedRange.max });"), true);
   assert.ok(drawChartSource.indexOf("chartUPlot.setScale('x', { min: requestedRange.min, max: requestedRange.max });") <
     drawChartSource.indexOf('chartZoomStateSuspended = false;'));
-  assert.strictEqual(drawChartSource.includes('const renderedXRange = chartXScaleRange(chartUPlot);'), true);
+  assert.strictEqual(
+    drawChartSource.includes('const renderedXRange = chartXScaleRange(chartUPlot) || chartInitialXRange();'),
+    true,
+    'the immutable reset/zoom baseline must survive uPlot returning no scale range during initial construction'
+  );
   assert.ok(drawChartSource.indexOf('chartZoomStateSuspended = false;') < drawChartSource.lastIndexOf('updateChartZoomState(chartUPlot);'));
   assert.strictEqual(resultsPanelSource.includes('function formatChartNumber(value)'), true);
+  assert.strictEqual(resultsPanelSource.includes("chartStatus.dataset.sourceRowCount = String(chartData.sourceRowCount);"), true);
+  assert.strictEqual(resultsPanelSource.includes("' source rows'"), true);
   assert.strictEqual(resultsPanelSource.includes('const places = clampInteger(settings.chartDecimalPlaces, 0, 12);'), true);
   assert.strictEqual(resultsPanelSource.includes('normalized.toExponential(places)'), true);
   assert.strictEqual(resultsPanelSource.includes('minimumFractionDigits: places'), true);
@@ -1976,22 +2640,45 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('savedSelection: this.savedChartSelection(table, options)'), true);
   assert.strictEqual(resultsPanelSource.includes('chartAutoOpen: this.pendingAutoChart'), true);
   assert.strictEqual(resultsPanelSource.includes('function applySavedChartSelection(value)'), true);
-  assert.strictEqual(resultsPanelSource.includes('chartAutoRenderPending = result.chartAutoOpen === true;'), true);
+  assert.strictEqual(resultsPanelSource.includes('chartAutoRenderPending = shouldAutoRenderChart;'), true);
   assert.strictEqual(resultsPanelSource.includes('function queueChartAutoRefine()'), true);
   assert.strictEqual(resultsPanelSource.includes('const CHART_AUTO_REFINE_DELAY_MS = 450;'), true);
   assert.strictEqual(resultsPanelSource.includes('chartLastAutoRefineKey'), true);
-  assert.strictEqual(resultsPanelSource.includes('chartZoomRangeMatchesRequest(chartZoomLifecycle, range)'), true);
-  assert.strictEqual(resultsPanelSource.includes('function chartVisibleSamplePointCount(range)'), true);
-  assert.strictEqual(resultsPanelSource.includes('function normalizeChartXDomain(value)'), true);
-  assert.strictEqual(resultsPanelSource.includes('chartData && chartData.xDomain ? chartData.xDomain'), true);
-  const chartAutoRefineThresholdSource = resultsPanelSource.slice(
-    resultsPanelSource.indexOf('function chartAutoRefineMinVisiblePoints()'),
-    resultsPanelSource.indexOf('function chartZoomMaxSampledPoints()')
+  assert.strictEqual(resultsPanelSource.includes('chartZoomShouldRequestRange(chartZoomLifecycle, range, chartLastAutoRefineKey)'), true);
+  assert.strictEqual(resultsPanelSource.includes('function chartCanQueueAutoRefine()'), true);
+  assert.strictEqual(resultsPanelSource.includes('function chartVisibleSamplePointCount(range)'), false);
+  assert.strictEqual(resultsPanelSource.includes('function chartAutoRefineMinVisiblePoints()'), false);
+  assert.strictEqual(resultsPanelSource.includes('function chartDataCanAutoRefine()'), false);
+  assert.strictEqual(resultsPanelSource.includes('chartZoomResponseIsPending(chartZoomLifecycle'), true);
+  const setChartDataSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function setChartData(value)'),
+    resultsPanelSource.indexOf('function updateChartDataStatus()')
   );
-  assert.strictEqual(chartAutoRefineThresholdSource.includes('Math.max(1, chartData.sampledPointCount)'), true);
-  assert.strictEqual(chartAutoRefineThresholdSource.includes('Math.min(configuredMinimum, availableSample)'), true);
-  assert.strictEqual(resultsPanelSource.includes('message.minSampledPoints = chartZoomMinSampledPoints();'), true);
-  assert.strictEqual(resultsPanelSource.includes('message.maxSampledPoints = chartZoomMaxSampledPoints();'), true);
+  assert.strictEqual(setChartDataSource.includes('chartZoomResponseIsPending(chartZoomLifecycle'), true);
+  const setChartErrorSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function setChartError(msg)'),
+    resultsPanelSource.indexOf('function drawChart()')
+  );
+  assert.strictEqual(setChartErrorSource.includes("type: 'failed'"), true);
+  assert.strictEqual(setChartErrorSource.includes('const fullData = chartZoomLifecycle.fullData;'), true);
+  assert.strictEqual(setChartErrorSource.includes("chartLastAutoRefineKey = '';"), true);
+  const chartAutoRefineSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function queueChartAutoRefine()'),
+    resultsPanelSource.indexOf('function chartCanQueueAutoRefine()')
+  );
+  assert.strictEqual(chartAutoRefineSource.includes('chartZoomLifecycle.pendingRequestId !== null'), true);
+  assert.strictEqual(chartAutoRefineSource.includes("'Auto-refining nested zoom range...'"), true);
+  assert.strictEqual(chartAutoRefineSource.includes('chartZoomAutoRefineQueueAction(chartAutoRefineScheduledRange, range)'), true);
+  assert.strictEqual(chartAutoRefineSource.includes("action.type === 'duplicate'"), true);
+  assert.strictEqual(chartAutoRefineSource.includes("action.type === 'flush'"), true);
+  assert.strictEqual(chartAutoRefineSource.includes('action.ranges.forEach'), true);
+  assert.ok(
+    chartAutoRefineSource.indexOf('chartZoomLifecycle.pendingRequestId !== null') <
+      chartAutoRefineSource.indexOf('setTimeout('),
+    'a nested drag must supersede an in-flight response before its normal debounce timer can be destroyed'
+  );
+  assert.strictEqual(resultsPanelSource.includes('message.minSampledPoints'), false);
+  assert.strictEqual(resultsPanelSource.includes('message.maxSampledPoints'), false);
   assert.strictEqual(packageJson.dependencies.uplot, '^1.6.32');
   assert.strictEqual(/cdn\.jsdelivr|unpkg|cdnjs|https:\/\/cdn/i.test(resultsPanelSource), false);
   assert.strictEqual(resultsPanelSource.includes("vscode.postMessage({ type: 'startLocalDataServer' })"), true);
@@ -2295,6 +2982,25 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultSettings['kdb-sqltools.results.kdbPanel.arrayDisplayFormat'].type, 'string');
   assert.strictEqual(resultSettings['kdb-sqltools.results.kdbPanel.arrayDisplayFormat'].default, 'commaSpace');
   assert.deepStrictEqual(resultSettings['kdb-sqltools.results.kdbPanel.arrayDisplayFormat'].enum, ['commaSpace', 'space', 'raw']);
+  const columnWidthsSetting = resultSettings['kdb-sqltools.results.columnWidths'];
+  assert.strictEqual(columnWidthsSetting.type, 'object');
+  assert.deepStrictEqual(columnWidthsSetting.default, {});
+  assert.strictEqual(columnWidthsSetting.additionalProperties.type, 'number');
+  assert.strictEqual(columnWidthsSetting.additionalProperties.minimum, GRID_COLUMN_WIDTH_MIN);
+  assert.strictEqual(columnWidthsSetting.additionalProperties.maximum, GRID_COLUMN_WIDTH_MAX);
+  assert.ok(/source-column position/i.test(columnWidthsSetting.description));
+  assert.ok(/sparse map/i.test(columnWidthsSetting.description));
+  const autoFitColumnsSetting = resultSettings['kdb-sqltools.results.autoFitColumns'];
+  assert.strictEqual(autoFitColumnsSetting.type, 'boolean');
+  assert.strictEqual(autoFitColumnsSetting.default, true);
+  assert.ok(/When disabled, no automatic width calculation runs/i.test(autoFitColumnsSetting.description));
+  const autoFitModeSetting = resultSettings['kdb-sqltools.results.autoFitMode'];
+  assert.strictEqual(autoFitModeSetting.type, 'string');
+  assert.strictEqual(autoFitModeSetting.default, 'wholeResult');
+  assert.deepStrictEqual(autoFitModeSetting.enum, ['wholeResult', 'visibleRows']);
+  assert.strictEqual(autoFitModeSetting.enumDescriptions.length, 2);
+  assert.ok(/complete result/i.test(autoFitModeSetting.enumDescriptions[0]));
+  assert.ok(/currently rendered/i.test(autoFitModeSetting.enumDescriptions[1]));
   const qDisplayStrategyEnum = ['grid', 'qText', 'table', 'text'];
   const qDisplayStrategySettings = [
     ['functionDisplayStrategy', 'qText'],
@@ -2349,12 +3055,14 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(chartZoomMinSetting.type, 'integer');
   assert.strictEqual(chartZoomMinSetting.default, CHART_ZOOM_MIN_SAMPLED_POINTS);
   assert.strictEqual(chartZoomMinSetting.minimum, 1);
-  assert.strictEqual(/auto-refines a settled zoom range/i.test(chartZoomMinSetting.description), true);
+  assert.strictEqual(/deprecated compatibility setting/i.test(chartZoomMinSetting.description), true);
+  assert.strictEqual(/setting is ignored/i.test(chartZoomMinSetting.deprecationMessage), true);
   const chartZoomMaxSetting = resultSettings['kdb-sqltools.results.kdbPanel.chartZoomMaxSampledPoints'];
   assert.strictEqual(chartZoomMaxSetting.type, 'integer');
   assert.strictEqual(chartZoomMaxSetting.default, CHART_ZOOM_MAX_SAMPLED_POINTS);
   assert.strictEqual(chartZoomMaxSetting.minimum, 1);
-  assert.strictEqual(/clamped up to that minimum/i.test(chartZoomMaxSetting.description), true);
+  assert.strictEqual(/deprecated compatibility setting/i.test(chartZoomMaxSetting.description), true);
+  assert.strictEqual(/setting is ignored/i.test(chartZoomMaxSetting.deprecationMessage), true);
   assert.strictEqual(resultSettings['kdb-sqltools.performance.trace'].type, 'boolean');
   assert.strictEqual(resultSettings['kdb-sqltools.performance.trace'].default, false);
   assert.strictEqual(/extension host console/i.test(resultSettings['kdb-sqltools.performance.trace'].description), true);
@@ -2441,12 +3149,6 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelInternals.chartDecimalPlacesSettingValue(-1), 0);
   assert.strictEqual(resultsPanelInternals.chartDecimalPlacesSettingValue(3.9), 3);
   assert.strictEqual(resultsPanelInternals.chartDecimalPlacesSettingValue(13), 12);
-  assert.strictEqual(resultsPanelInternals.chartZoomMinSampledPointsSettingValue(undefined), CHART_ZOOM_MIN_SAMPLED_POINTS);
-  assert.strictEqual(resultsPanelInternals.chartZoomMinSampledPointsSettingValue(0), CHART_ZOOM_MIN_SAMPLED_POINTS);
-  assert.strictEqual(resultsPanelInternals.chartZoomMinSampledPointsSettingValue(12.9), 12);
-  assert.strictEqual(resultsPanelInternals.chartZoomMaxSampledPointsSettingValue(undefined, 8000), 8000);
-  assert.strictEqual(resultsPanelInternals.chartZoomMaxSampledPointsSettingValue(10, 12), 12);
-  assert.strictEqual(resultsPanelInternals.chartZoomMaxSampledPointsSettingValue(50.9, 12), 50);
   assert.strictEqual(resultsPanelInternals.chartRangeIsZoomed({ min: 0, max: 100 }, { min: 0, max: 100 }), false);
   assert.strictEqual(resultsPanelInternals.chartRangeIsZoomed({ min: 0, max: 100 }, { min: 1e-8, max: 100 - 1e-8 }), false);
   assert.strictEqual(resultsPanelInternals.chartRangeIsZoomed({ min: 0, max: 100 }, { min: 10, max: 90 }), true);
@@ -2541,6 +3243,11 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('fontSize', 'abc'), null);
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('density', 'compact'), { key: 'density', value: 'compact' });
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('density', 'spacious'), null);
+  assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('autoFitColumns', false), { key: 'autoFitColumns', value: false });
+  assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('autoFitColumns', 'false'), null);
+  assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('autoFitMode', 'wholeResult'), { key: 'autoFitMode', value: 'wholeResult' });
+  assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('autoFitMode', 'visibleRows'), { key: 'autoFitMode', value: 'visibleRows' });
+  assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('autoFitMode', 'viewport'), null);
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('includeHeaders', false), { key: 'includeHeaders', value: false });
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('includeHeaders', 'false'), null);
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('hideLargeResultWarnings', true), { key: 'hideLargeResultWarnings', value: true });
@@ -2564,6 +3271,8 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.deepStrictEqual(resultsPanelInternals.normalizePanelSettingUpdate('__proto__', true), null);
   assert.strictEqual(resultsPanelInternals.panelSettingConfigKey('cellWidth', 'compact'), 'compact.cellWidth');
   assert.strictEqual(resultsPanelInternals.panelSettingConfigKey('rowHeight', 'comfortable'), 'comfortable.rowHeight');
+  assert.strictEqual(resultsPanelInternals.panelSettingConfigKey('autoFitColumns', 'compact'), 'autoFitColumns');
+  assert.strictEqual(resultsPanelInternals.panelSettingConfigKey('autoFitMode', 'compact'), 'autoFitMode');
   assert.strictEqual(resultsPanelInternals.panelSettingConfigKey('includeHeaders', 'compact'), 'includeHeaders');
   assert.strictEqual(resultsPanelInternals.panelSettingConfigKey('arrayDisplayFormat', 'compact'), 'kdbPanel.arrayDisplayFormat');
   assert.strictEqual(resultsPanelInternals.panelSettingConfigKey('functionDisplayStrategy', 'compact'), 'kdbPanel.functionDisplayStrategy');
@@ -2660,12 +3369,12 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('<details class="settings-section" id="dataServerSection">'), true);
   assert.strictEqual(resultsPanelSource.includes('<details class="settings-section" open>'), true);
   assert.strictEqual(resultsPanelSource.includes('For very large current.csv/json/ndjson exports'), true);
-  assert.strictEqual(resultsPanelSource.includes('let autoFitEnabled = true;'), true);
+  assert.strictEqual(resultsPanelSource.includes('let autoFitEnabled = settings.autoFitColumns;'), true);
   assert.strictEqual(resultsPanelSource.includes('id="settingsCopyExportConfirmCellThreshold"'), true);
   assert.strictEqual(resultsPanelSource.includes('id="settingsLocalDataServerFullExportCellLimit"'), true);
   assert.strictEqual(packageJson.contributes.configuration.properties['kdb-sqltools.results.copyExportConfirmCellThreshold'].minimum, 1);
   assert.strictEqual(packageJson.contributes.configuration.properties['kdb-sqltools.results.localDataServerFullExportCellLimit'].minimum, 1);
-  assert.strictEqual(packageJson.version, '0.3.18');
+  assert.strictEqual(packageJson.version, '0.3.19');
   assert.strictEqual(chartingDocsSource.includes('Press the top-level `Chart` button.'), true);
   assert.strictEqual(chartingDocsSource.includes('kdb+: Run Selection and Chart'), true);
   assert.strictEqual(runningDocsSource.includes('| `Ctrl+Alt+C` | `Cmd+Alt+C` | `kdb+: Run Selection and Chart`'), true);
@@ -2688,12 +3397,14 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(chartingDocsSource.includes('cursor/crosshair tooltip'), true);
   assert.strictEqual(chartingDocsSource.includes('drag-select zoom'), true);
   assert.strictEqual(chartingDocsSource.includes('Reset zoom'), true);
-  assert.strictEqual(chartingDocsSource.includes('restores the original full x-range'), true);
+  assert.strictEqual(chartingDocsSource.includes('restores the immutable original full sample and x-range'), true);
   assert.strictEqual(chartingDocsSource.includes('disables again at that baseline'), true);
   assert.strictEqual(chartingDocsSource.includes('kdb-sqltools.results.kdbPanel.chartDecimalPlaces'), true);
   assert.strictEqual(chartingDocsSource.includes('kdb-sqltools.results.kdbPanel.chartZoomMinSampledPoints'), true);
   assert.strictEqual(chartingDocsSource.includes('kdb-sqltools.results.kdbPanel.chartZoomMaxSampledPoints'), true);
-  assert.strictEqual(chartingDocsSource.includes('after about 450 ms'), true);
+  assert.strictEqual(chartingDocsSource.includes('deprecated compatibility entries'), true);
+  assert.strictEqual(chartingDocsSource.includes('They are ignored'), true);
+  assert.strictEqual(chartingDocsSource.includes('debounced for about 450 ms'), true);
   assert.strictEqual(chartingDocsSource.includes('visible column names and order as the signature'), true);
   assert.strictEqual(chartingDocsSource.includes('Temporal timestamp labels do not use this numeric decimal formatting.'), true);
   assert.strictEqual(chartingDocsSource.includes('small built-in canvas renderer'), false);
@@ -2704,6 +3415,7 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(settingsDocsSource.includes('kdb-sqltools.results.kdbPanel.chartDecimalPlaces'), true);
   assert.strictEqual(settingsDocsSource.includes('kdb-sqltools.results.kdbPanel.chartZoomMinSampledPoints'), true);
   assert.strictEqual(settingsDocsSource.includes('kdb-sqltools.results.kdbPanel.chartZoomMaxSampledPoints'), true);
+  assert.strictEqual(settingsDocsSource.includes('Deprecated compatibility key; ignored.'), true);
   assert.strictEqual(resultsDocsSource.includes('## Non-table q result display'), true);
   assert.strictEqual(resultsDocsSource.includes('kdb-sqltools.results.kdbPanel.dictionaryDisplayStrategy'), true);
   assert.strictEqual(settingsDocsSource.includes('kdb-sqltools.results.kdbPanel.functionDisplayStrategy'), true);
@@ -2777,20 +3489,171 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes("message.type === 'resetHiddenColumns'"), true);
   assert.strictEqual(resultsPanelSource.includes('id="autoFit"'), true);
   assert.strictEqual(resultsPanelSource.includes('id="autoFitColumns"'), false);
-  assert.strictEqual(resultsPanelSource.includes('function setAutoFitEnabled(enabled)'), true);
+  assert.strictEqual(
+    resultsPanelSource.includes('<input id="autoFit" type="checkbox" disabled>'),
+    true,
+    'the auto-fit checkbox must derive its checked state from persisted settings'
+  );
+  assert.deepStrictEqual(htmlSelectOptions(resultsPanelSource, 'autoFitMode'), ['wholeResult', 'visibleRows']);
   assert.strictEqual(resultsPanelSource.includes("autoFit.addEventListener('change'"), true);
+  assert.strictEqual(
+    resultsPanelSource.includes("updateSetting('autoFitColumns', !!autoFit.checked)"),
+    true
+  );
+  assert.strictEqual(
+    resultsPanelSource.includes("updateSetting('autoFitMode', normalizeGridAutoFitMode(autoFitMode.value))"),
+    true
+  );
   assert.strictEqual(resultsPanelSource.includes('function autoFitVisibleColumnWidths()'), false);
   assert.strictEqual(resultsPanelSource.includes('let lastRenderedColumns = emptyColumnRange();'), true);
   assert.strictEqual(resultsPanelSource.includes('function updateAutoColumnWidthsFromSlice()'), true);
-  assert.strictEqual(resultsPanelSource.includes('if (!autoFitEnabled || !hasVisibleSliceColumns())'), true);
   assert.strictEqual(resultsPanelSource.includes("lastRenderedColumns = columns;"), true);
   assert.strictEqual(resultsPanelSource.includes("' visible columns' + (includeSlice ? '' : ' from headers')"), false);
+  const autoFitControlSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function updateAutoFitControlState()'),
+    resultsPanelSource.indexOf('function refreshAutoFitWidths()')
+  );
+  assert.strictEqual(autoFitControlSource.includes('autoFit.checked = autoFitEnabled;'), true);
+  assert.strictEqual(autoFitControlSource.includes('autoFitMode.disabled = data.columns.length === 0 || !autoFitEnabled;'), true);
+  assert.strictEqual(autoFitControlSource.includes('autoFitMode.value = settings.autoFitMode;'), true);
+  const refreshAutoFitWidthsSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function refreshAutoFitWidths()'),
+    resultsPanelSource.indexOf('function setWholeResultAutoFit(message)')
+  );
+  assert.strictEqual(refreshAutoFitWidthsSource.includes('autoColumnWidths = {};'), true);
+  assert.strictEqual(
+    refreshAutoFitWidthsSource.includes('if (!autoFitEnabled || data.columns.length === 0 || isTextResult())'),
+    true
+  );
+  assert.strictEqual(refreshAutoFitWidthsSource.includes("settings.autoFitMode === 'visibleRows'"), true);
+  assert.strictEqual(refreshAutoFitWidthsSource.includes("type: 'requestWholeResultAutoFit'"), true);
+  assert.ok(
+    refreshAutoFitWidthsSource.indexOf('if (!autoFitEnabled') <
+      refreshAutoFitWidthsSource.indexOf("type: 'requestWholeResultAutoFit'"),
+    'unchecked auto-fit must return before a whole-result calculation request'
+  );
+  const visibleRowsAutoFitSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function updateAutoColumnWidthsFromSlice()'),
+    resultsPanelSource.indexOf('function measuredColumnTextWidth(text)')
+  );
+  assert.strictEqual(visibleRowsAutoFitSource.includes("settings.autoFitMode !== 'visibleRows'"), true);
+  assert.strictEqual(visibleRowsAutoFitSource.includes('!hasVisibleSliceColumns()'), true);
+  assert.strictEqual(visibleRowsAutoFitSource.includes('slice.cells.length'), true);
+  assert.strictEqual(visibleRowsAutoFitSource.includes('Number.isFinite(columnWidthOverrides[key])'), true);
+  const wholeResultAutoFitSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('private async postWholeResultAutoFit(message: any)'),
+    resultsPanelSource.indexOf('private async searchRows(message: any)')
+  );
+  assert.strictEqual(
+    wholeResultAutoFitSource.includes("!currentSettings.autoFitColumns || currentSettings.autoFitMode !== 'wholeResult'"),
+    true
+  );
+  assert.strictEqual(wholeResultAutoFitSource.includes('table.cellText(rowIndex, columnIndex, cellTextOptions).length'), true);
+  assert.strictEqual(wholeResultAutoFitSource.includes("type: 'wholeResultAutoFit'"), true);
+  assert.ok(
+    wholeResultAutoFitSource.indexOf('!currentSettings.autoFitColumns') <
+      wholeResultAutoFitSource.indexOf('for (let rowIndex = 0; rowIndex < table.rowCount; rowIndex++)'),
+    'the extension host must not scan the result when auto-fit is unchecked'
+  );
   assert.strictEqual(
     resultsPanelSource.includes('const noVisibleColumns = columnCount === 0 && (rowCount > 0 || data.allColumns.length > 0);'),
     true
   );
   assert.strictEqual(resultsPanelSource.includes('measuredColumnTextWidth(data.columns[column])'), true);
   assert.strictEqual(resultsPanelSource.includes('AUTO_COLUMN_WIDTH_CAP'), true);
+  const visibleColumnPositionsSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('private visibleColumnPositions(result: KdbPanelTableResult)'),
+    resultsPanelSource.indexOf('private orderedColumnNames(columns: string[])')
+  );
+  assert.strictEqual(visibleColumnPositionsSource.includes('sourceColumnPositions('), true);
+  assert.strictEqual(resultsPanelSource.includes('columnPositions: this.visibleColumnPositions(result)'), true);
+  const columnWidthResolutionSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function columnWidth(column)'),
+    resultsPanelSource.indexOf('function requestSlice(rows, columns)')
+  );
+  assert.strictEqual(columnWidthResolutionSource.includes('resolvedPositionalColumnWidth('), true);
+  assert.strictEqual(columnWidthResolutionSource.includes('settings.cellWidth'), true);
+  assert.strictEqual(columnWidthResolutionSource.includes('columnWidthOverrides'), true);
+  assert.strictEqual(columnWidthResolutionSource.includes('autoFitEnabled'), true);
+  assert.strictEqual(columnWidthResolutionSource.includes('const position = data.columnPositions[column];'), true);
+  const columnMetricsSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function columnMetrics()'),
+    resultsPanelSource.indexOf('function columnLeft(metrics, column)')
+  );
+  assert.strictEqual(columnMetricsSource.includes('column < data.columns.length'), true);
+  assert.strictEqual(columnMetricsSource.includes('const width = columnWidth(column);'), true);
+  const updateColumnWidthSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('private async updateColumnWidth(message: any)'),
+    resultsPanelSource.indexOf('private async resetColumnWidths()')
+  );
+  assert.strictEqual(updateColumnWidthSource.includes('this.visibleColumnPositions(this.result).indexOf(position) === -1'), true);
+  assert.strictEqual(updateColumnWidthSource.includes('updatePositionalColumnWidth('), true);
+  assert.strictEqual(
+    updateColumnWidthSource.includes('positionalColumnWidthPersistence.update('),
+    true,
+    'manual widths must use the serialized global persistence queue'
+  );
+  assert.strictEqual(resultsPanelSource.includes('new PositionalColumnWidthPersistenceQueue('), true);
+  const persistedColumnWidthsSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function persistedColumnWidths()'),
+    resultsPanelSource.indexOf('function panelCellTextOptions()')
+  );
+  assert.strictEqual(
+    persistedColumnWidthsSource.includes("config.get<PositionalColumnWidths>('columnWidths')"),
+    true,
+    'new panels and extension sessions must reload positional widths from configuration'
+  );
+  assert.strictEqual(resultsPanelSource.includes('columnWidths: persistedColumnWidths()'), true);
+  assert.strictEqual(resultsPanelSource.includes("panel.post({ type: 'columnWidths', columnWidths: widths })"), true);
+  assert.strictEqual(resultsPanelSource.includes('persistColumnWidth(resizeState.column);'), true);
+  assert.strictEqual(resultsPanelSource.includes('position: Number(key),'), true);
+  assert.strictEqual(resultsPanelSource.includes('width: null'), true);
+  const panelUpdateSettingSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('private async updateSetting(message: any)'),
+    resultsPanelSource.indexOf('private isCurrentVersion(version: number)')
+  );
+  assert.match(
+    panelUpdateSettingSource,
+    /normalized\.key === 'cellWidth' \|\| normalized\.key === 'density'[\s\S]*?positionalColumnWidthPersistence\.update\(/,
+    'all-column cell-width and density presets must clear persisted drag overrides'
+  );
+  assert.strictEqual(extensionSource.includes('KdbResultsPanel.configurationChanged(event);'), true);
+  assert.strictEqual(resultsPanelSource.includes("event.affectsConfiguration('kdb-sqltools.results')"), true);
+  assert.strictEqual(resultsPanelSource.includes('KdbResultsPanel.postSettingsToOpenPanels();'), true);
+  const webviewUpdateSettingSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function updateSetting(key, value)'),
+    resultsPanelSource.indexOf('function updateDensitySetting(value)')
+  );
+  assert.match(
+    webviewUpdateSettingSource,
+    /if \(key === 'cellWidth' \|\| key === 'density'\) \{\s*columnWidthOverrides = \{\};/,
+    'all-column presets must clear local drag overrides before rerendering'
+  );
+  assert.strictEqual(
+    resultsPanelSource.includes("settingsCellWidth.addEventListener('change', () => updateNumberSetting('cellWidth', settingsCellWidth, 80, 600))"),
+    true
+  );
+  assert.strictEqual(
+    resultsPanelSource.includes("settingsDensity.addEventListener('change', () => updateDensitySetting(String(settingsDensity.value || 'standard')))"),
+    true
+  );
+  const resetWindowStateSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function resetWindowState()'),
+    resultsPanelSource.indexOf('function queueSearchRows()')
+  );
+  assert.strictEqual(resetWindowStateSource.includes('resizeState = null;'), true);
+  assert.strictEqual(resetWindowStateSource.includes("document.body.style.cursor = '';"), true);
+  const resetColumnWidthsSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function resetColumnWidthOverrides()'),
+    resultsPanelSource.indexOf('function hasColumnWidthOverrides()')
+  );
+  assert.strictEqual(resetColumnWidthsSource.includes("settings.autoFitMode === 'visibleRows'"), true);
+  assert.strictEqual(resetColumnWidthsSource.includes('updateAutoColumnWidthsFromSlice();'), true);
+  const columnWidthsMessageSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf("} else if (msg.type === 'columnWidths')"),
+    resultsPanelSource.indexOf("} else if (msg.type === 'wholeResultAutoFit')")
+  );
+  assert.strictEqual(columnWidthsMessageSource.includes('updateAutoColumnWidthsFromSlice();'), true);
   assert.strictEqual(packageSource.includes('hiddenColumn'), false, 'hidden columns must not be globally persisted');
   assert.deepStrictEqual(htmlSelectOptions(resultsPanelSource, 'interactionMode'), ['drag', 'select', 'sort']);
   assert.ok(
@@ -2823,10 +3686,6 @@ function panelFormatElapsedMs(milliseconds, display) {
   );
   assert.strictEqual(columnDragCleanupSource.includes('columnDragState = null;'), true);
   assert.strictEqual(columnDragCleanupSource.includes("document.body.style.cursor = '';"), true);
-  const resetWindowStateSource = resultsPanelSource.slice(
-    resultsPanelSource.indexOf('function resetWindowState'),
-    resultsPanelSource.indexOf('function queueSearchRows')
-  );
   assert.strictEqual(resetWindowStateSource.includes('clearColumnDragState();'), true);
   const mouseupSource = resultsPanelSource.slice(
     resultsPanelSource.indexOf("window.addEventListener('mouseup'"),
@@ -3471,7 +4330,7 @@ function panelFormatElapsedMs(milliseconds, display) {
 function loadResultsPanelInternals() {
   const filename = path.join(__dirname, '..', 'out', 'results-panel.js');
   const source = fs.readFileSync(filename, 'utf8') +
-    '\nmodule.exports.__test = { chartColumnSignature, chartDecimalPlacesSettingValue, chartMaxSourceRowsSettingValue, chartPngBytesFromDataUrl, chartRangeIsZoomed, chartSelectionStorageKey, chartZoomMaxSampledPointsSettingValue, chartZoomMinSampledPointsSettingValue, columnarToXlsx, compatibleChartSelection, normalizePanelSettingUpdate, normalizeSavedChartSelection, panelSettingConfigKey, panelSizeSettingValue, renderResultsPanelHtml: extensionPath => KdbResultsPanel.prototype.html.call({}, { extensionPath }, { cspSource: "vscode-webview:", asWebviewUri: uri => String(uri && uri.fsPath || "") }) };';
+    '\nmodule.exports.__test = { chartColumnSignature, chartDecimalPlacesSettingValue, chartMaxSourceRowsSettingValue, chartPngBytesFromDataUrl, chartRangeIsZoomed, chartSelectionStorageKey, columnarToXlsx, compatibleChartSelection, normalizePanelSettingUpdate, normalizeSavedChartSelection, panelSettingConfigKey, panelSizeSettingValue, renderResultsPanelHtml: extensionPath => KdbResultsPanel.prototype.html.call({}, { extensionPath }, { cspSource: "vscode-webview:", asWebviewUri: uri => String(uri && uri.fsPath || "") }) };';
   const testModule = new Module(filename, module);
   testModule.filename = filename;
   testModule.paths = Module._nodeModulePaths(path.dirname(filename));

@@ -36,14 +36,16 @@ Server-side interruption is best-effort. If the q process or gateway has already
 
 | Feature | Behavior |
 | --- | --- |
-| Resize | Drag column edges to set widths for the current panel session. |
-| Auto-fit | Enabled by default from `Settings` -> `Preferences`. It sizes visible columns from headers and currently rendered cells as you scroll. |
+| Resize | Drag column edges to set authoritative widths. Manual widths persist by zero-based source-column position across later queries, panel recreation, and VS Code restarts. |
+| Auto-fit | The persisted checkbox is enabled by default. `Whole result` sizes each column once from the widest displayed header/value in the complete result, including off-screen array/list values. `Visible rows` explicitly enables viewport-adaptive fitting. Unchecked means no automatic width calculation. |
+| Cell width and density | The `Cell width` textbox applies to every data column. Applying it or switching density clears/replaces all positional manual widths consistently, including the first column. |
+| Reset widths | `Reset column widths` clears positional manual widths and returns width resolution to the selected preset/auto-fit behavior. |
 | Reorder | `Settings` -> header mode `Drag` lets you drag headers to reorder visible columns. A drag cue marks the insertion position. |
 | Select columns | `Settings` -> header mode `Select` turns header clicks into whole-column selection. |
 | Sort | `Settings` -> header mode `Sort` cycles ascending, descending, and original order. Sorting uses visible cell text. |
 | Hidden columns | Hide columns from the panel settings menu for the current panel session. Reset restores all columns. |
 
-Column reorder, sort, search, copy, and export use the current visible column order. Hidden-column choices persist only for later results in the same panel when the full column list matches.
+Column reorder, sort, search, copy, and export use the current visible column order. Hidden-column choices persist only for later results in the same panel when the full column list matches. Positional widths remain tied to the source-column position through hide/reorder operations rather than following a query-specific column name.
 
 ## Toolbar
 
@@ -59,6 +61,8 @@ Output: [format] [Headers] [Row #] [Copy] [Export] [Chart] [Settings] [Cancel] [
 | Settings menu | Contains collapsible sections for view controls, search, hidden columns, output defaults, and local data server controls. Preferences opens by default; Data server is collapsed by default. The Data server section starts or stops the opt-in `127.0.0.1` server, copies current-result URLs, and reminds users that very large current.* exports may need a higher local server cell limit. |
 
 The local data server and chart both use the extension-side current result. Hidden, reordered, and sorted visible columns are honored where they apply.
+
+Every distinct completed chart zoom, including a second zoom inside an already refined range, requests and resamples that absolute range from the retained full source. Refinement renders all eligible rows below 3,000, keeps the available density from 3,000 through 7,000, and downsamples to about 7,000 above that. Identical scale notifications are deduplicated, programmatic rerenders do not recursively refine, and reset invalidates stale responses while restoring the original sample/domain without backend I/O.
 
 ## Selection
 

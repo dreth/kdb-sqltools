@@ -3,8 +3,14 @@ export interface ChartZoomRange {
   max: number;
 }
 
+export type ChartZoomAutoRefineQueueAction =
+  | { type: 'schedule'; range: ChartZoomRange }
+  | { type: 'duplicate' }
+  | { type: 'flush'; ranges: ChartZoomRange[] };
+
 export interface ChartZoomLifecycleState<T> {
   activeRequestId: number;
+  pendingRequestId: number | null;
   requestedRange: ChartZoomRange | null;
   fullRange: ChartZoomRange | null;
   fullData: T | null;
@@ -14,6 +20,7 @@ export type ChartZoomLifecycleAction<T> =
   | { type: 'clear'; requestId: number }
   | { type: 'request'; requestId: number; range: ChartZoomRange | null }
   | { type: 'response'; requestId: number; data: T }
+  | { type: 'failed'; requestId: number }
   | { type: 'rendered'; requestId: number; naturalRange: ChartZoomRange | null }
   | { type: 'reset' };
 
@@ -28,6 +35,7 @@ export function reduceChartZoomLifecycle<T>(
 ): ChartZoomLifecycleState<T> {
   const current = state || {
     activeRequestId: -1,
+    pendingRequestId: null,
     requestedRange: null,
     fullRange: null,
     fullData: null,
@@ -36,6 +44,7 @@ export function reduceChartZoomLifecycle<T>(
   if (action.type === 'clear') {
     return {
       activeRequestId: action.requestId,
+      pendingRequestId: null,
       requestedRange: null,
       fullRange: null,
       fullData: null,
@@ -52,12 +61,14 @@ export function reduceChartZoomLifecycle<T>(
     return range
       ? {
         activeRequestId: action.requestId,
+        pendingRequestId: action.requestId,
         requestedRange: range,
         fullRange: current.fullRange,
         fullData: current.fullData,
       }
       : {
         activeRequestId: action.requestId,
+        pendingRequestId: action.requestId,
         requestedRange: null,
         fullRange: null,
         fullData: null,
@@ -65,17 +76,40 @@ export function reduceChartZoomLifecycle<T>(
   }
 
   if (action.type === 'response') {
-    if (action.requestId !== current.activeRequestId) {
+    if (
+      action.requestId !== current.activeRequestId ||
+      action.requestId !== current.pendingRequestId
+    ) {
       return current;
     }
     return current.requestedRange
-      ? current
+      ? {
+        ...current,
+        pendingRequestId: null,
+      }
       : {
         activeRequestId: current.activeRequestId,
+        pendingRequestId: null,
         requestedRange: null,
         fullRange: current.fullRange,
         fullData: action.data,
       };
+  }
+
+  if (action.type === 'failed') {
+    if (
+      action.requestId !== current.activeRequestId ||
+      action.requestId !== current.pendingRequestId
+    ) {
+      return current;
+    }
+    return {
+      activeRequestId: current.activeRequestId,
+      pendingRequestId: null,
+      requestedRange: null,
+      fullRange: current.fullRange,
+      fullData: current.fullData,
+    };
   }
 
   if (action.type === 'rendered') {
@@ -90,6 +124,7 @@ export function reduceChartZoomLifecycle<T>(
       : null;
     return {
       activeRequestId: current.activeRequestId,
+      pendingRequestId: current.pendingRequestId,
       requestedRange: null,
       fullRange: range,
       fullData: current.fullData,
@@ -98,6 +133,7 @@ export function reduceChartZoomLifecycle<T>(
 
   return {
     activeRequestId: current.activeRequestId,
+    pendingRequestId: null,
     requestedRange: null,
     fullRange: current.fullRange,
     fullData: current.fullData,
@@ -105,7 +141,31 @@ export function reduceChartZoomLifecycle<T>(
 }
 
 export function chartZoomRangeKey(range: ChartZoomRange): string {
-  return Number(range.min).toPrecision(12) + ':' + Number(range.max).toPrecision(12);
+  return String(Number(range.min)) + ':' + String(Number(range.max));
+}
+
+/**
+ * Coalesces repeated notifications for one completed zoom without dropping two
+ * genuinely distinct zooms that both finish inside the debounce window.
+ */
+export function chartZoomAutoRefineQueueAction(
+  scheduledRange: ChartZoomRange | null | undefined,
+  nextRange: ChartZoomRange
+): ChartZoomAutoRefineQueueAction {
+  const next = { min: nextRange.min, max: nextRange.max };
+  if (!scheduledRange) {
+    return { type: 'schedule', range: next };
+  }
+  if (chartZoomRangeKey(scheduledRange) === chartZoomRangeKey(next)) {
+    return { type: 'duplicate' };
+  }
+  return {
+    type: 'flush',
+    ranges: [
+      { min: scheduledRange.min, max: scheduledRange.max },
+      next,
+    ],
+  };
 }
 
 export function chartZoomRequestedRenderRange<T>(
@@ -135,6 +195,30 @@ export function chartZoomRangeMatchesRequest<T>(
     range.max <= range.min) {
     return false;
   }
-  return Number(requested.min).toPrecision(12) === Number(range.min).toPrecision(12) &&
-    Number(requested.max).toPrecision(12) === Number(range.max).toPrecision(12);
+  return chartZoomRangeKey(requested) === chartZoomRangeKey(range);
+}
+
+export function chartZoomResponseIsPending<T>(
+  state: ChartZoomLifecycleState<T> | null | undefined,
+  requestId: number
+): boolean {
+  return !!state &&
+    Number.isFinite(requestId) &&
+    state.activeRequestId === requestId &&
+    state.pendingRequestId === requestId;
+}
+
+export function chartZoomShouldRequestRange<T>(
+  state: ChartZoomLifecycleState<T> | null | undefined,
+  range: ChartZoomRange | null | undefined,
+  lastRequestedKey = ''
+): boolean {
+  if (!range ||
+    !Number.isFinite(range.min) ||
+    !Number.isFinite(range.max) ||
+    range.max <= range.min) {
+    return false;
+  }
+  const key = chartZoomRangeKey(range);
+  return key !== lastRequestedKey && !chartZoomRangeMatchesRequest(state, range);
 }
