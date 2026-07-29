@@ -100,6 +100,11 @@ function registerInitialSuite() {
       const api = await extension.activate();
       assert.ok(api, 'extension activation should return a SQLTools driver API');
       assert.ok(api.driverAliases.some(alias => alias.value === 'KDB'), 'KDB alias should be registered');
+      const commands = await vscode.commands.getCommands(true);
+      assert.ok(
+        commands.includes('kdb-sqltools.selectKdbPanelQueryConnection'),
+        'expected the kdb panel session selector command to be registered in the Extension Host'
+      );
     });
 
     test('opens, tests, queries, and reads metadata through TCP q IPC', async () => {

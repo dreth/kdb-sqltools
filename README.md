@@ -86,6 +86,10 @@ The `kdb+: Copy Example Global Connection Settings` command copies this User-set
 
 The kdb results panel is the default target for `kdb+: Run q Script` and `kdb+: Run Selection`. It runs through this extension's direct driver path and avoids SQLTools `*.session.sql` editor documents. `Run Selection` sends the selected text exactly; with no selection, it sends the current physical line. A blank current line uses the normal no-code warning. For multi-line, lambda, or blank-line-bounded block execution, select the text explicitly or use the explicit `Run Selection or q Block` commands.
 
+In a fresh session, one configured kdb connection runs without a picker. With multiple kdb connections and no valid session choice, a panel run asks once and later panel runs reuse that connection silently. Run `kdb+: Select kdb Panel Query Connection` to always open the picker and change the session target without executing a query. Canceling that selector keeps a still-valid current choice. The session choice is not persisted across Extension Host sessions; if the selected connection is removed or is no longer a kdb connection, the next panel run asks again.
+
+The session target stores only a non-secret connection ID. When a panel query runs, password resolution happens after the target is selected or reused; the selector command itself does not request or cache a password. This behavior applies to every extension-owned kdb-panel variant, including replace, new-panel, chart, selection/current-line/block, and file runs. SQLTools Results commands retain SQLTools' own connection-selection behavior.
+
 Default kdb-panel runs open a new result tab unless you set `"kdb-sqltools.results.kdbPanel.defaultRunMode": "replace"`. Explicit commands are also available:
 
 - `kdb+: Run Selection in kdb Panel (Replace)` reuses the current or first existing kdb result tab.
