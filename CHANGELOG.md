@@ -1,5 +1,9 @@
 # Change Log
 
+## 0.3.18
+
+- Fixed zoom refinement to retain the requested viewport, avoid reconstruction-triggered re-refinement, and restore the original usable full sample on reset.
+
 ## 0.3.17
 
 - Added real OHLC candlestick charts with explicit, distinct numeric `Open`, `High`, `Low`, and `Close` selectors; strict row and range validation; financial first-open/max-high/min-low/last-close bucket aggregation; and dedicated uPlot canvas rendering for candle wicks, bodies, tooltips, and PNG export.
