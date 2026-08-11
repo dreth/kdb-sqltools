@@ -1,5 +1,11 @@
 # Change Log
 
+## Unreleased
+
+- Unified chart viewport handling across plain-drag x zoom, `Shift`+drag x pan, 20% Pan left/right controls, `ArrowLeft`/`ArrowRight`, and `Home`. For the same absolute range, pan completion uses the exact unchanged zoom range-loading/resampling decision, with automatic y scaling, stale-response rejection, and reset invalidation.
+- Removed the Header mode selector. Header clicks now tri-state sort, movement of at least 5 CSS pixels reorders without sorting, `Ctrl`/`Cmd` gestures select full columns, `Shift` extends from the selection anchor, and keyboard sorting/reordering is available with synchronized focus, `aria-sort`, labels, and visible indicators.
+- Added absolute virtual-row striping with the VS Code table-row theme color, a light/dark fallback, forced-colors safety, and selection/search/loading precedence. Preserved source-position width persistence.
+
 ## 0.3.20 - 2026-07-29
 
 - Remembered the selected kdb-panel query connection in Extension Host session memory, so a fresh one-connection session runs without a picker, panel runs with multiple connections and no valid choice prompt once, valid choices are reused, and invalidated choices prompt again.

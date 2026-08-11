@@ -4,7 +4,10 @@ const fs = require('fs');
 const net = require('net');
 const path = require('path');
 
-const KdbDriver = require('../../out/ls/driver').default;
+const TEST_OUT_ROOT = process.env.KDB_SQLTOOLS_TEST_OUT_ROOT
+  ? path.resolve(process.env.KDB_SQLTOOLS_TEST_OUT_ROOT)
+  : path.resolve(__dirname, '../../out');
+const KdbDriver = require(path.join(TEST_OUT_ROOT, 'ls', 'driver.js')).default;
 const { ContextValue } = require('@sqltools/types');
 
 const PROJECT_ROOT = path.resolve(__dirname, '../..');

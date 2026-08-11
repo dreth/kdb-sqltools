@@ -2,7 +2,7 @@
 
 !!! note "Current status"
 
-    Built-in line, scatter, step, clustered bar, box, and real OHLC candlestick charts have shipped, together with extension-side sampling and zoom refinement. See [Charting](charting.md) for the supported controls and validation rules. This page tracks architectural boundaries and future work rather than promising additional chart types.
+    Built-in line, scatter, step, clustered bar, box, and real OHLC candlestick charts have shipped, together with extension-side sampling and unified zoom/pan viewport refinement. See [Charting](charting.md) for the supported controls and validation rules. This page tracks architectural boundaries and future work rather than promising additional chart types.
 
 ## Current architecture
 
@@ -30,7 +30,7 @@ The extension guards the number of source rows scanned, derives the initial samp
 - Bar data is consolidated into complete distinct-x clusters and, when necessary, evenly thinned without dropping individual series from a retained cluster.
 - Box data keeps each numeric y series together long enough to compute min, q1, median, q3, and max for each x value or bucket.
 - Candlestick data targets roughly one candle per horizontal pixel and uses financial aggregation: first valid open, maximum high, minimum low, and last valid close per x bucket. The four roles are never sampled independently.
-- Every distinct completed drag zoom can request a debounced refinement from the retained full source, including repeated nested zooms; `Refine zoom` requests the current range explicitly. Refined ranges keep all available density through 7,000 eligible rows and reduce larger ranges to about 7,000 without upsampling. `Reset zoom` invalidates stale refinement responses and restores the original full sample/range without backend I/O.
+- A completed horizontal pan uses the exact unchanged drag-zoom range-loading/resampling decision for the same clamped absolute viewport, including zoom/pan/zoom composition; `Refine view` applies that current-range path explicitly. Plain drag zooms, `Shift`+drag grabs the content, buttons and arrow keys pan by 20%, and y remains automatic. Reset invalidates stale refinement responses and restores the original full sample/range without backend I/O.
 
 The webview receives sampled arrays plus source/eligible/sample counts, the algorithm name, and warnings. It does not rescan data on cursor movement.
 

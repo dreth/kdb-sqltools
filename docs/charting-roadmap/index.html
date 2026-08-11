@@ -907,7 +907,7 @@
 <h1 id="charting-roadmap">Charting Roadmap</h1>
 <div class="admonition note">
 <p class="admonition-title">Current status</p>
-<p>Built-in line, scatter, step, clustered bar, box, and real OHLC candlestick charts have shipped, together with extension-side sampling and zoom refinement. See <a href="../charting/">Charting</a> for the supported controls and validation rules. This page tracks architectural boundaries and future work rather than promising additional chart types.</p>
+<p>Built-in line, scatter, step, clustered bar, box, and real OHLC candlestick charts have shipped, together with extension-side sampling and unified zoom/pan viewport refinement. See <a href="../charting/">Charting</a> for the supported controls and validation rules. This page tracks architectural boundaries and future work rather than promising additional chart types.</p>
 </div>
 <h2 id="current-architecture">Current architecture</h2>
 <p>The built-in renderer is uPlot-first and optimized for numeric or temporal x data from the kdb results panel. The extension host owns eligibility checks, sorting, grouping, validation, and type-aware data reduction before bounded chart data enters the webview.</p>
@@ -948,7 +948,7 @@
 <li>Bar data is consolidated into complete distinct-x clusters and, when necessary, evenly thinned without dropping individual series from a retained cluster.</li>
 <li>Box data keeps each numeric y series together long enough to compute min, q1, median, q3, and max for each x value or bucket.</li>
 <li>Candlestick data targets roughly one candle per horizontal pixel and uses financial aggregation: first valid open, maximum high, minimum low, and last valid close per x bucket. The four roles are never sampled independently.</li>
-<li>Drag zoom can request one debounced viewport refinement, and <code>Refine zoom</code> can request it explicitly. <code>Reset zoom</code> restores the original full range.</li>
+<li>A completed horizontal pan uses the exact unchanged drag-zoom range-loading/resampling decision for the same clamped absolute viewport, including zoom/pan/zoom composition; <code>Refine view</code> applies that current-range path explicitly. Plain drag zooms, <code>Shift</code>+drag grabs the content, buttons and arrow keys pan by 20%, and y remains automatic. Reset invalidates stale refinement responses and restores the original full sample/range without backend I/O.</li>
 </ul>
 <p>The webview receives sampled arrays plus source/eligible/sample counts, the algorithm name, and warnings. It does not rescan data on cursor movement.</p>
 <h2 id="current-validation-boundaries">Current validation boundaries</h2>

@@ -40,12 +40,14 @@ Server-side interruption is best-effort. If the q process or gateway has already
 | Auto-fit | The persisted checkbox is enabled by default. `Whole result` sizes each column once from the widest displayed header/value in the complete result, including off-screen array/list values. `Visible rows` explicitly enables viewport-adaptive fitting. Unchecked means no automatic width calculation. |
 | Cell width and density | The `Cell width` textbox applies to every data column. Applying it or switching density clears/replaces all positional manual widths consistently, including the first column. |
 | Reset widths | `Reset column widths` clears positional manual widths and returns width resolution to the selected preset/auto-fit behavior. |
-| Reorder | `Settings` -> header mode `Drag` lets you drag headers to reorder visible columns. A drag cue marks the insertion position. |
-| Select columns | `Settings` -> header mode `Select` turns header clicks into whole-column selection. |
-| Sort | `Settings` -> header mode `Sort` cycles ascending, descending, and original order. Sorting uses visible cell text. |
+| Reorder | Move a header at least 5 CSS pixels. The drag cue marks the insertion position and the gesture never sorts. `Alt+Left`/`Alt+Right` moves the focused column one position. |
+| Select columns | `Ctrl`/`Cmd`+click or `Ctrl`/`Cmd`+Space selects a full column. Add `Shift` to extend from the selection anchor. |
+| Sort | Click, `Enter`, or `Space` cycles ascending, descending, and immutable source order. Visible indicators and `aria-sort` report the state. |
 | Hidden columns | Hide columns from the panel settings menu for the current panel session. Reset restores all columns. |
 
-Column reorder, sort, search, copy, and export use the current visible column order. Hidden-column choices persist only for later results in the same panel when the full column list matches. Positional widths remain tied to the source-column position through hide/reorder operations rather than following a query-specific column name.
+Column reorder, sort, search, copy, and export use the current visible column order. Hidden-column choices persist only for later results in the same panel when the full column list matches. Positional widths remain tied to the source-column position through hide/reorder operations rather than following a query-specific column name. Header labels expose position/state, focused headers have a visible outline, and resize handles stop pointer propagation; resize drag or double-click reset never sorts.
+
+Virtual rows carry parity from their absolute displayed row index, so shading stays stable after sorting and at every scroll window. Odd rows use `--vscode-tree-tableOddRowsBackground` with a subtle neutral fallback; selection, search matches, loading cells, and forced/high-contrast colors take precedence.
 
 ## Toolbar
 
@@ -57,12 +59,12 @@ Output: [format] [Headers] [Row #] [Copy] [Export] [Chart] [Settings] [Cancel] [
 
 | Tool | Behavior |
 | --- | --- |
-| Chart button | Opens the uPlot-powered chart UI for the current visible result. Line, scatter, step, clustered bar, and box use numeric y selections; real candlestick charts instead show explicit, distinct numeric `Open`, `High`, `Low`, and `Close` selectors. All types use numeric/temporal x. `Group by` is available only for line, scatter, step, and bar; box and candlestick hide it with an explanatory status. The panel also provides auto-thinned readable x-axis labels, OHLC-aware tooltips, drag zoom, debounced and explicit `Refine zoom`, reset zoom, splitter resize, legend toggling, compatible selection persistence, and PNG export after render. Changing controls leaves the old rendered chart visible until `Render` is pressed. |
+| Chart button | Opens the uPlot-powered chart UI for the current visible result. Line, scatter, step, clustered bar, and box use numeric y selections; real candlestick charts instead show explicit, distinct numeric `Open`, `High`, `Low`, and `Close` selectors. All types use numeric/temporal x. `Group by` is available only for line, scatter, step, and bar; box and candlestick hide it with an explanatory status. The panel also provides auto-thinned readable x-axis labels, OHLC-aware tooltips, plain-drag x zoom, `Shift`+drag/button/keyboard x pan, `Refine view`, reset, splitter resize, legend toggling, compatible selection persistence, and PNG export after render. Changing controls leaves the old rendered chart visible until `Render` is pressed. |
 | Settings menu | Contains collapsible sections for view controls, search, hidden columns, output defaults, and local data server controls. Preferences opens by default; Data server is collapsed by default. The Data server section starts or stops the opt-in `127.0.0.1` server, copies current-result URLs, and reminds users that very large current.* exports may need a higher local server cell limit. |
 
 The local data server and chart both use the extension-side current result. Hidden, reordered, and sorted visible columns are honored where they apply.
 
-Every distinct completed chart zoom, including a second zoom inside an already refined range, requests and resamples that absolute range from the retained full source. Refinement renders all eligible rows below 3,000, keeps the available density from 3,000 through 7,000, and downsamples to about 7,000 above that. Identical scale notifications are deduplicated, programmatic rerenders do not recursively refine, and reset invalidates stale responses while restoring the original sample/domain without backend I/O.
+For the same clamped absolute range, settled chart pan uses the exact unchanged zoom range-loading/resampling decision. `Shift`+drag grabs the content, buttons and arrow keys move 20% of the visible span, and `Home`, double-click, or Reset restores the immutable full range. Y stays automatic. Mousemove only supplies local feedback; source work starts after completion. Identical scale notifications are deduplicated, programmatic rerenders do not recursively refine, and reset invalidates stale responses while restoring the original sample/domain without backend I/O.
 
 ## Selection
 

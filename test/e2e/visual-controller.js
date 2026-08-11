@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
@@ -54,18 +55,67 @@ async function runChartVisualAcceptance(port, controlDir) {
         'initial chart render'
       );
       const first = await dragAndWaitForRefinement(session, initial, 0.12, 0.82, 'first drag zoom');
-      const second = await dragAndWaitForRefinement(session, first, 0.25, 0.72, 'nested drag zoom');
+      const buttonPan = await clickChartControlAndWaitForRefinement(
+        session,
+        first,
+        'panChartRight',
+        'Pan right button refinement'
+      );
+      const shiftPan = await shiftPanAndWaitForRefinement(
+        session,
+        buttonPan,
+        0.45,
+        0.55,
+        'Shift drag pan refinement'
+      );
+      const second = await dragAndWaitForRefinement(session, shiftPan, 0.25, 0.72, 'nested drag zoom');
 
       assertVisualEvidence(initial, first, second);
-      const screenshot = await session.root.send('Page.captureScreenshot', { format: 'png' }).catch(() => null);
-      if (screenshot && typeof screenshot.data === 'string') {
-        fs.writeFileSync(path.join(controlDir, 'nested-zoom.png'), Buffer.from(screenshot.data, 'base64'));
+      assertPanEvidence(first, buttonPan, shiftPan);
+      await resetChartWithNativeHome(session, second, 'nested chart reset');
+      const families = [];
+      let familyBefore = second;
+      for (const chartType of ['line', 'scatter', 'step', 'bar', 'box', 'candlestick']) {
+        const evidence = await renderChartFamily(session, chartType, familyBefore, controlDir);
+        families.push(evidence);
+        familyBefore = evidence;
+      }
+      if (new Set(families.map(family => family.screenshotSha256)).size !== families.length) {
+        throw new Error(`Chart family screenshots were not visually distinct: ${JSON.stringify(families)}`);
+      }
+      await focusChartControl(session, 'chartType');
+      await dispatchChartKey(session.webview, 'Home');
+      await waitForChartState(
+        session.webview,
+        state => state && state.controlChartType === 'line' &&
+          state.chartType === familyBefore.chartType &&
+          state.requestId === familyBefore.requestId,
+        REFINEMENT_TIMEOUT_MS,
+        'dirty chart controls with the prior chart still rendered'
+      );
+      await nativeChartClick(session, 'exportChart');
+      const dirtyControlExport = await waitForJson(
+        path.join(controlDir, 'chart-dirty-control-export.json'),
+        REFINEMENT_TIMEOUT_MS,
+        'dirty-control chart export message'
+      );
+      if (!dirtyControlExport.png || !dirtyControlExport.productionGuardAccepted ||
+        dirtyControlExport.requestId !== familyBefore.requestId ||
+        dirtyControlExport.activeRequestId !== familyBefore.requestId) {
+        throw new Error(`Dirty-control export lost the rendered chart identity: ${JSON.stringify({
+          familyBefore: compactState(familyBefore),
+          dirtyControlExport,
+        })}`);
       }
       writeResult(resultPath, {
         ok: true,
         initial: compactState(initial),
         first: compactState(first),
+        buttonPan: compactState(buttonPan),
+        shiftPan: compactState(shiftPan),
         second: compactState(second),
+        families: families.map(compactFamilyState),
+        dirtyControlExport,
       });
     } finally {
       client.close();
@@ -95,6 +145,7 @@ async function runGridBeforeReload(port, controlDir) {
       GRID_TIMEOUT_MS,
       'initial virtual grid viewport'
     );
+    const interactions = await exerciseGridInteractions(session, GRID_PHASE_ONE_HEADERS);
     assertUncheckedAutoFit(initial);
     const fallbackWidth = initial.cellWidth;
     const initialWidths = assertAllRenderedColumns(initial, fallbackWidth);
@@ -103,6 +154,9 @@ async function runGridBeforeReload(port, controlDir) {
     assertUncheckedAutoFit(uncheckedBottom);
     if (uncheckedBottom.rowRange.max !== 239) {
       throw new Error(`Unchecked grid did not virtual-scroll to row 239: ${JSON.stringify(uncheckedBottom.rowRange)}`);
+    }
+    if (!uncheckedBottom.rowParityValid) {
+      throw new Error('Absolute row parity classes were incorrect at the bottom virtual window');
     }
     const uncheckedBottomWidths = assertAllRenderedColumns(uncheckedBottom, fallbackWidth);
     assertSameWidths(
@@ -115,6 +169,11 @@ async function runGridBeforeReload(port, controlDir) {
     }
 
     await scrollGridTo(session, 'top');
+    interactions.resizeDoubleClickReset = await exerciseGridResizeDoubleClickReset(
+      session,
+      1,
+      fallbackWidth
+    );
     const firstResized = await dragGridColumn(session, 0, 73);
     const firstWidth = firstResized.headerWidths[0];
     const laterResized = await dragGridColumn(session, 2, 157);
@@ -141,6 +200,7 @@ async function runGridBeforeReload(port, controlDir) {
       widthsByPosition,
       allRenderedCellsMatch: true,
       initialWidthsStable: true,
+      interactions,
     });
 
     const renamed = await waitForGridState(
@@ -661,6 +721,233 @@ async function dragAndWaitForRefinement(session, before, startRatio, endRatio, l
   );
 }
 
+async function clickChartControlAndWaitForRefinement(session, before, id, label) {
+  const client = session.webview;
+  await nativeChartClick(session, id);
+  return waitForChartState(
+    client,
+    state => state && state.rendered && state.requestId > before.requestId && state.requestedRange,
+    REFINEMENT_TIMEOUT_MS,
+    label
+  );
+}
+
+async function shiftPanAndWaitForRefinement(session, before, startRatio, endRatio, label) {
+  const client = session.webview;
+  await session.root.send('Page.bringToFront');
+  const outer = await visibleWebviewRect(session.root);
+  const y = outer.top + before.rect.top + Math.max(8, before.rect.height * 0.45);
+  const startX = outer.left + before.rect.left + before.rect.width * startRatio;
+  const endX = outer.left + before.rect.left + before.rect.width * endRatio;
+  await session.root.send('Input.dispatchMouseEvent', {
+    type: 'mouseMoved',
+    x: startX,
+    y,
+    modifiers: 8,
+  });
+  await session.root.send('Input.dispatchMouseEvent', {
+    type: 'mousePressed',
+    x: startX,
+    y,
+    button: 'left',
+    buttons: 1,
+    clickCount: 1,
+    modifiers: 8,
+  });
+  for (let step = 1; step <= 5; step++) {
+    await session.root.send('Input.dispatchMouseEvent', {
+      type: 'mouseMoved',
+      x: startX + (endX - startX) * step / 5,
+      y,
+      button: 'left',
+      buttons: 1,
+      modifiers: 8,
+    });
+  }
+  const duringMove = await chartState(client);
+  if (!duringMove || duringMove.requestId !== before.requestId) {
+    throw new Error(`Shift-pan mousemove must not issue a source request: ${JSON.stringify({
+      before: compactState(before),
+      duringMove: compactState(duringMove),
+    })}`);
+  }
+  await session.root.send('Input.dispatchMouseEvent', {
+    type: 'mouseReleased',
+    x: endX,
+    y,
+    button: 'left',
+    buttons: 0,
+    clickCount: 1,
+    modifiers: 8,
+  });
+  return waitForChartState(
+    client,
+    state => state && state.rendered && state.requestId > before.requestId && state.requestedRange,
+    REFINEMENT_TIMEOUT_MS,
+    label
+  );
+}
+
+async function renderChartFamily(session, chartType, before, controlDir) {
+  const order = ['line', 'scatter', 'step', 'bar', 'box', 'candlestick'];
+  const targetIndex = order.indexOf(chartType);
+  if (targetIndex < 0) {
+    throw new Error(`Unsupported chart family ${chartType}`);
+  }
+  await focusChartControl(session, 'chartType');
+  await dispatchChartKey(session.webview, 'Home');
+  for (let index = 0; index < targetIndex; index += 1) {
+    await dispatchChartKey(session.webview, 'ArrowDown');
+  }
+  await waitForChartState(
+    session.webview,
+    state => state && state.controlChartType === chartType,
+    REFINEMENT_TIMEOUT_MS,
+    `${chartType} native chart-type selection`
+  );
+  await nativeChartClick(session, 'renderChart');
+  const rendered = await waitForChartState(
+    session.webview,
+    state => state && state.rendered &&
+      state.requestId > before.requestId &&
+      state.chartType === chartType &&
+      state.controlChartType === chartType,
+    REFINEMENT_TIMEOUT_MS,
+    `${chartType} native chart render`
+  );
+  const proof = await chartCanvasPng(session.webview);
+  const bytes = proof.bytes;
+  if (bytes.length < 1_000) {
+    throw new Error(`${chartType} chart screenshot was unexpectedly small (${bytes.length} bytes)`);
+  }
+  fs.writeFileSync(path.join(controlDir, `chart-family-${chartType}.png`), bytes);
+  return {
+    ...rendered,
+    screenshotSha256: crypto.createHash('sha256').update(bytes).digest('hex'),
+    screenshotByteLength: bytes.length,
+    screenshotWidth: proof.width,
+    screenshotHeight: proof.height,
+  };
+}
+
+async function chartCanvasPng(client) {
+  const response = await client.send('Runtime.evaluate', {
+    expression: `(() => {
+      const canvas = document.querySelector('#chartCanvasWrap .uplot canvas, #chartCanvasWrap canvas');
+      if (!(canvas instanceof HTMLCanvasElement)) return null;
+      return {
+        dataUrl: canvas.toDataURL('image/png'),
+        width: canvas.width,
+        height: canvas.height,
+      };
+    })()`,
+    returnByValue: true,
+    ...(client.chartContextId === undefined ? {} : { contextId: client.chartContextId }),
+  });
+  const value = response?.result?.value;
+  const prefix = 'data:image/png;base64,';
+  if (!value || typeof value.dataUrl !== 'string' || !value.dataUrl.startsWith(prefix) ||
+    !(value.width > 0) || !(value.height > 0)) {
+    throw new Error(`Rendered chart canvas PNG is unavailable: ${JSON.stringify(value)}`);
+  }
+  const bytes = Buffer.from(value.dataUrl.slice(prefix.length), 'base64');
+  if (bytes.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a') {
+    throw new Error('Rendered chart canvas proof is not a PNG');
+  }
+  return { bytes, width: value.width, height: value.height };
+}
+
+async function resetChartWithNativeHome(session, before, label) {
+  await focusChartPlotWithNativeTab(session);
+  await dispatchChartKey(session.root, 'Home');
+  return waitForChartState(
+    session.webview,
+    state => state && state.rendered && !state.requestedRange && state.fullRange &&
+      state.visibleRange && rangeKey(state.visibleRange) === rangeKey(state.fullRange) &&
+      state.requestId >= before.requestId,
+    REFINEMENT_TIMEOUT_MS,
+    label
+  );
+}
+
+async function assertChartPlotFocused(client) {
+  const response = await client.send('Runtime.evaluate', {
+    expression: `(() => document.activeElement && document.activeElement.id === 'chartCanvasWrap')()`,
+    returnByValue: true,
+    ...(client.chartContextId === undefined ? {} : { contextId: client.chartContextId }),
+  });
+  if (!response || !response.result || response.result.value !== true) {
+    throw new Error('Native chart click did not focus the keyboard-operable chart region');
+  }
+}
+
+async function focusChartPlotWithNativeTab(session) {
+  for (let step = 0; step < 24; step += 1) {
+    try {
+      await assertChartPlotFocused(session.webview);
+      return;
+    } catch {
+      await dispatchChartKey(session.root, 'Tab');
+    }
+  }
+  await assertChartPlotFocused(session.webview);
+}
+
+async function focusChartControl(session, id) {
+  const response = await session.webview.send('Runtime.evaluate', {
+    expression: `(() => {
+      const control = document.getElementById(${JSON.stringify(id)});
+      if (!control || control.disabled) return false;
+      control.focus({ preventScroll: true });
+      return document.activeElement === control;
+    })()`,
+    returnByValue: true,
+    ...(session.webview.chartContextId === undefined
+      ? {}
+      : { contextId: session.webview.chartContextId }),
+  });
+  if (!response || !response.result || response.result.value !== true) {
+    throw new Error(`Could not focus chart control ${id}`);
+  }
+}
+
+async function nativeChartClick(session, id) {
+  const response = await session.webview.send('Runtime.evaluate', {
+    expression: `(() => {
+      const control = document.getElementById(${JSON.stringify(id)});
+      if (!control || control.disabled) return null;
+      control.scrollIntoView({ block: 'center', inline: 'nearest' });
+      const rect = control.getBoundingClientRect();
+      return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+    })()`,
+    returnByValue: true,
+    ...(session.webview.chartContextId === undefined
+      ? {}
+      : { contextId: session.webview.chartContextId }),
+  });
+  const rect = response && response.result ? response.result.value : null;
+  if (!rect || !(rect.width > 0) || !(rect.height > 0)) {
+    throw new Error(`Could not locate native chart control ${id}`);
+  }
+  const outer = await visibleWebviewRect(session.root);
+  const x = outer.left + rect.left + rect.width / 2;
+  const y = outer.top + rect.top + rect.height / 2;
+  await session.root.send('Page.bringToFront');
+  await session.root.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+  await session.root.send('Input.dispatchMouseEvent', {
+    type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1,
+  });
+  await session.root.send('Input.dispatchMouseEvent', {
+    type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1,
+  });
+}
+
+async function dispatchChartKey(target, key) {
+  const description = cdpKeyDescription(key);
+  await target.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...description });
+  await target.send('Input.dispatchKeyEvent', { type: 'keyUp', ...description });
+}
+
 async function visibleWebviewRect(root) {
   const response = await root.send('Runtime.evaluate', {
     expression: `(() => {
@@ -719,6 +1006,8 @@ async function chartState(client) {
         eligibleRowCount: Number(status.dataset.eligibleRowCount || 0),
         sampledPointCount: Number(status.dataset.sampledPointCount || 0),
         algorithm: String(status.dataset.algorithm || ''),
+        chartType: String(status.dataset.chartType || ''),
+        controlChartType: String(document.getElementById('chartType')?.value || ''),
         requestedRange: Number.isFinite(rangeMin) && Number.isFinite(rangeMax) && rangeMax > rangeMin
           ? { min: rangeMin, max: rangeMax }
           : null,
@@ -766,6 +1055,512 @@ async function waitForGridState(client, predicate, timeoutMs, label) {
   throw new Error(`Timed out waiting for ${label}; last state: ${JSON.stringify(compactGridState(latest))}`);
 }
 
+async function exerciseGridInteractions(session, expectedHeaders) {
+  const client = session.webview;
+  const initial = await waitForGridState(
+    client,
+    state => gridHasHeaders(state, expectedHeaders) && state.rowParityValid,
+    GRID_TIMEOUT_MS,
+    'accessible striped grid'
+  );
+  if (initial.interactionModePresent ||
+    initial.headerAriaSort.some(value => value !== 'none') ||
+    initial.headerTabIndexes.some(value => value !== 0) ||
+    initial.headerAriaLabels.some((value, index) =>
+      !value.includes(expectedHeaders[index]) || !value.includes(`column ${index + 1} of ${expectedHeaders.length}`)
+    )) {
+    throw new Error(`Grid header accessibility contract is incomplete: ${JSON.stringify(initial)}`);
+  }
+  if (!initial.oddRowBackground || initial.oddRowBackground === initial.evenRowBackground) {
+    throw new Error(`Odd-row fallback/theme shade was not visible: ${JSON.stringify({
+      odd: initial.oddRowBackground,
+      even: initial.evenRowBackground,
+    })}`);
+  }
+  if (initial.gridAriaLabel !== 'KDB result table' ||
+    initial.gridAriaMultiselectable !== 'true' ||
+    initial.gridAriaRowCount !== 241 ||
+    initial.gridAriaColCount !== expectedHeaders.length + 1 ||
+    initial.headerRowIndex !== 1 ||
+    JSON.stringify(initial.headerAriaColIndexes) !== JSON.stringify([2, 3, 4, 5]) ||
+    initial.headerAriaSelected.some(value => value !== 'false') ||
+    !initial.bodyAccessibilityValid) {
+    throw new Error(`Grid DOM accessibility ownership is incomplete: ${JSON.stringify(initial)}`);
+  }
+  assertExactGridOrder(
+    await collectGridRows(session),
+    expectedGridRows('source'),
+    'source'
+  );
+
+  const accessibility = await gridAccessibilityState(client);
+  const namedGrid = accessibility.namedGrid;
+  if (!namedGrid || namedGrid.name !== 'KDB result table' ||
+    namedGrid.multiselectable !== true) {
+    throw new Error(`Named KDB grid is missing from the accessibility tree: ${JSON.stringify(accessibility)}`);
+  }
+  for (const role of ['row', 'columnheader', 'rowheader', 'gridcell']) {
+    if (!namedGrid.descendantRoles[role]) {
+      throw new Error(`Named KDB grid does not own ${role}: ${JSON.stringify(accessibility)}`);
+    }
+  }
+
+  await activateGridHeader(session, 0);
+  const ascending = await waitForGridState(
+    client,
+    state => state.headerAriaSort[0] === 'ascending' && numericColumnIsOrdered(state, 0, 1),
+    GRID_TIMEOUT_MS,
+    'header ascending sort'
+  );
+  if ((ascending.bodyTexts[0] || []).some(value => value === '')) {
+    throw new Error(`Ascending sort placed a q null in the top viewport: ${JSON.stringify(ascending.bodyTexts[0])}`);
+  }
+  assertExactGridOrder(
+    await collectGridRows(session),
+    expectedGridRows('ascending'),
+    'ascending'
+  );
+  const ascendingAccessibility = await gridAccessibilityState(client);
+  if (!ascendingAccessibility.namedGrid ||
+    (!ascendingAccessibility.namedGrid.sortValues.includes('ascending') &&
+      !ascendingAccessibility.namedGrid.columnHeaderNames.some(name =>
+        name.includes('sorted ascending')
+      ))) {
+    throw new Error(`Ascending sort is absent from the named grid AX tree: ${JSON.stringify(ascendingAccessibility)}`);
+  }
+
+  await activateGridHeader(session, 0);
+  const descending = await waitForGridState(
+    client,
+    state => state.headerAriaSort[0] === 'descending' && numericColumnIsOrdered(state, 0, -1),
+    GRID_TIMEOUT_MS,
+    'header descending sort'
+  );
+  if ((descending.bodyTexts[0] || []).some(value => value === '')) {
+    throw new Error(`Descending sort placed a q null in the top viewport: ${JSON.stringify(descending.bodyTexts[0])}`);
+  }
+  assertExactGridOrder(
+    await collectGridRows(session),
+    expectedGridRows('descending'),
+    'descending'
+  );
+
+  await activateGridHeader(session, 0);
+  const sourceRestored = await waitForGridState(
+    client,
+    state => gridHasHeaders(state, expectedHeaders) &&
+      state.headerAriaSort.every(value => value === 'none') &&
+      JSON.stringify(state.bodyTexts[0] || []) === JSON.stringify(initial.bodyTexts[0] || []),
+    GRID_TIMEOUT_MS,
+    'header source-order restore'
+  );
+  if (!sourceRestored.rowParityValid) {
+    throw new Error('Source-order restoration lost absolute row parity');
+  }
+  assertExactGridOrder(
+    await collectGridRows(session),
+    expectedGridRows('source'),
+    'restored source'
+  );
+
+  await activateGridHeader(session, 0, { jitterPixels: 3 });
+  await waitForGridState(client, state => state.headerAriaSort[0] === 'ascending', GRID_TIMEOUT_MS, 'sub-threshold jitter sort');
+  await activateGridHeader(session, 0);
+  await waitForGridState(client, state => state.headerAriaSort[0] === 'descending', GRID_TIMEOUT_MS, 'post-jitter descending sort');
+  await activateGridHeader(session, 0);
+  await waitForGridState(
+    client,
+    state => gridHasHeaders(state, expectedHeaders) && state.headerAriaSort.every(value => value === 'none'),
+    GRID_TIMEOUT_MS,
+    'post-jitter source-order restore'
+  );
+
+  await dragGridHeader(session, 0, 1);
+  const reorderedHeaders = [expectedHeaders[1], expectedHeaders[0], ...expectedHeaders.slice(2)];
+  await waitForGridState(
+    client,
+    state => gridHasHeaders(state, reorderedHeaders) && state.headerAriaSort.every(value => value === 'none'),
+    GRID_TIMEOUT_MS,
+    'threshold drag reorder without sort'
+  );
+  await dispatchGridHeaderKey(session, 1, 'ArrowLeft', { altKey: true });
+  await waitForGridState(
+    client,
+    state => gridHasHeaders(state, expectedHeaders) && state.headerAriaSort.every(value => value === 'none'),
+    GRID_TIMEOUT_MS,
+    'Alt+Left header reorder restore'
+  );
+
+  // Establish outer-frame focus with a real pointer event before routing native
+  // keyboard input through the workbench target. Focusing only the child CDP
+  // execution context does not reliably focus its embedding iframe.
+  await activateGridHeader(session, 0);
+  await waitForGridState(client, state => state.headerAriaSort[0] === 'ascending', GRID_TIMEOUT_MS, 'native focus header sort');
+  await dispatchGridHeaderKey(session, 0, 'Enter');
+  await waitForGridState(client, state => state.headerAriaSort[0] === 'descending', GRID_TIMEOUT_MS, 'Enter header sort');
+  await dispatchGridHeaderKey(session, 0, ' ');
+  await waitForGridState(
+    client,
+    state => gridHasHeaders(state, expectedHeaders) && state.headerAriaSort.every(value => value === 'none'),
+    GRID_TIMEOUT_MS,
+    'keyboard source-order restore'
+  );
+
+  await activateGridHeader(session, 0, { ctrlKey: true });
+  await waitForGridState(
+    client,
+    state => JSON.stringify(state.selectedHeaderColumns) === JSON.stringify([0]),
+    GRID_TIMEOUT_MS,
+    'Control+click full-column selection'
+  );
+  await dispatchGridHeaderKey(session, 1, ' ', { ctrlKey: true });
+  await waitForGridState(
+    client,
+    state => JSON.stringify(state.selectedHeaderColumns) === JSON.stringify([1]) &&
+      state.activeHeaderColumn === 1,
+    GRID_TIMEOUT_MS,
+    'Control+Space full-column selection with retained header focus'
+  );
+  await dispatchGridHeaderKey(session, 3, ' ', { ctrlKey: true, shiftKey: true });
+  const extended = await waitForGridState(
+    client,
+    state => JSON.stringify(state.selectedHeaderColumns) === JSON.stringify([1, 2, 3]) &&
+      JSON.stringify(state.ariaSelectedHeaderColumns) === JSON.stringify([1, 2, 3]) &&
+      JSON.stringify(state.selectedBodyColumns) === JSON.stringify([1, 2, 3]) &&
+      state.activeHeaderColumn === 3,
+    GRID_TIMEOUT_MS,
+    'Control+Shift header selection extension with retained header focus'
+  );
+  const selectedAccessibility = await gridAccessibilityState(client);
+  if (!selectedAccessibility.namedGrid ||
+    selectedAccessibility.namedGrid.selectedColumnHeaders < 3 ||
+    selectedAccessibility.namedGrid.selectedGridCells < 1) {
+    throw new Error(`Grid AX selection is not owned by the named grid: ${JSON.stringify(selectedAccessibility)}`);
+  }
+  return {
+    triState: true,
+    jitterSort: true,
+    dragReorderWithoutSort: true,
+    keyboardSortAndReorder: true,
+    pointerKeyboardAndShiftSelection: true,
+    nativeInput: true,
+    aria: true,
+    accessibilityTree: selectedAccessibility,
+    absoluteRowParity: extended.rowParityValid,
+    oddRowBackground: initial.oddRowBackground,
+    evenRowBackground: initial.evenRowBackground,
+  };
+}
+
+async function activateGridHeader(session, column, options = {}) {
+  const rect = await gridHeaderRect(session.webview, column);
+  const outer = await visibleWebviewRect(session.root);
+  const startX = outer.left + rect.left + Math.min(rect.width / 2, Math.max(8, rect.width - 20));
+  const endX = startX + Number(options.jitterPixels || 0);
+  const y = outer.top + rect.top + rect.height / 2;
+  const modifiers = inputModifiers(options);
+  await session.root.send('Page.bringToFront');
+  await session.root.send('Input.dispatchMouseEvent', {
+    type: 'mouseMoved', x: startX, y, modifiers,
+  });
+  await session.root.send('Input.dispatchMouseEvent', {
+    type: 'mousePressed', x: startX, y, button: 'left', buttons: 1, clickCount: 1, modifiers,
+  });
+  if (endX !== startX) {
+    await session.root.send('Input.dispatchMouseEvent', {
+      type: 'mouseMoved', x: endX, y, button: 'left', buttons: 1, modifiers,
+    });
+  }
+  await session.root.send('Input.dispatchMouseEvent', {
+    type: 'mouseReleased', x: endX, y, button: 'left', buttons: 0, clickCount: 1, modifiers,
+  });
+}
+
+async function dragGridHeader(session, sourceColumn, targetColumn) {
+  const source = await gridHeaderRect(session.webview, sourceColumn);
+  const target = await gridHeaderRect(session.webview, targetColumn);
+  const outer = await visibleWebviewRect(session.root);
+  const startX = outer.left + source.left + source.width / 2;
+  const startY = outer.top + source.top + source.height / 2;
+  const endX = outer.left + target.left + target.width / 2;
+  const endY = outer.top + target.top + target.height / 2;
+  await session.root.send('Page.bringToFront');
+  await session.root.send('Input.dispatchMouseEvent', {
+    type: 'mouseMoved', x: startX, y: startY,
+  });
+  await session.root.send('Input.dispatchMouseEvent', {
+    type: 'mousePressed', x: startX, y: startY, button: 'left', buttons: 1, clickCount: 1,
+  });
+  for (let step = 1; step <= 6; step++) {
+    await session.root.send('Input.dispatchMouseEvent', {
+      type: 'mouseMoved',
+      x: startX + (endX - startX) * step / 6,
+      y: startY + (endY - startY) * step / 6,
+      button: 'left',
+      buttons: 1,
+    });
+  }
+  await session.root.send('Input.dispatchMouseEvent', {
+    type: 'mouseReleased', x: endX, y: endY, button: 'left', buttons: 0, clickCount: 1,
+  });
+}
+
+async function dispatchGridHeaderKey(session, column, key, options = {}) {
+  await focusGridFrame(session);
+  const focused = await session.webview.send('Runtime.evaluate', {
+    expression: `(() => {
+      const cell = document.querySelector('#header .cell[data-column="${column}"]');
+      if (!cell) return false;
+      cell.focus();
+      return document.activeElement === cell;
+    })()`,
+    returnByValue: true,
+    ...(session.webview.gridContextId === undefined ? {} : { contextId: session.webview.gridContextId }),
+  });
+  if (!focused || !focused.result || focused.result.value !== true) {
+    throw new Error(`Could not focus grid header ${column}`);
+  }
+  const keyDescription = cdpKeyDescription(key);
+  const modifiers = inputModifiers(options);
+  await session.root.send('Input.dispatchKeyEvent', {
+    type: 'rawKeyDown',
+    modifiers,
+    ...keyDescription,
+  });
+  await session.root.send('Input.dispatchKeyEvent', {
+    type: 'keyUp',
+    modifiers,
+    ...keyDescription,
+  });
+}
+
+async function focusGridFrame(session) {
+  const response = await session.webview.send('Runtime.evaluate', {
+    expression: `(() => {
+      const focusAnchor = document.getElementById('outputControlsLabel');
+      if (!focusAnchor) return null;
+      const rect = focusAnchor.getBoundingClientRect();
+      return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+    })()`,
+    returnByValue: true,
+    ...(session.webview.gridContextId === undefined ? {} : { contextId: session.webview.gridContextId }),
+  });
+  const rect = response && response.result ? response.result.value : null;
+  if (!rect || !(rect.width > 0) || !(rect.height > 0)) {
+    throw new Error('Could not locate the inert grid-toolbar label used to focus its webview frame');
+  }
+  const outer = await visibleWebviewRect(session.root);
+  const x = outer.left + rect.left + rect.width / 2;
+  const y = outer.top + rect.top + rect.height / 2;
+  await session.root.send('Page.bringToFront');
+  await session.root.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+  await session.root.send('Input.dispatchMouseEvent', {
+    type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1,
+  });
+  await session.root.send('Input.dispatchMouseEvent', {
+    type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1,
+  });
+}
+
+async function gridHeaderRect(client, column) {
+  const response = await client.send('Runtime.evaluate', {
+    expression: `(() => {
+      const cell = document.querySelector('#header .cell[data-column="${column}"]');
+      if (!cell) return null;
+      const rect = cell.getBoundingClientRect();
+      return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+    })()`,
+    returnByValue: true,
+    ...(client.gridContextId === undefined ? {} : { contextId: client.gridContextId }),
+  });
+  const rect = response && response.result ? response.result.value : null;
+  if (!rect || !(rect.width > 0) || !(rect.height > 0)) {
+    throw new Error(`Could not locate grid header ${column}`);
+  }
+  return rect;
+}
+
+function inputModifiers(options = {}) {
+  return (options.altKey ? 1 : 0) |
+    (options.ctrlKey ? 2 : 0) |
+    (options.metaKey ? 4 : 0) |
+    (options.shiftKey ? 8 : 0);
+}
+
+function cdpKeyDescription(key) {
+  switch (key) {
+    case 'Enter': return { key, code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 };
+    case ' ': return { key, code: 'Space', windowsVirtualKeyCode: 32, nativeVirtualKeyCode: 32 };
+    case 'ArrowLeft': return { key, code: 'ArrowLeft', windowsVirtualKeyCode: 37, nativeVirtualKeyCode: 37 };
+    case 'ArrowDown': return { key, code: 'ArrowDown', windowsVirtualKeyCode: 40, nativeVirtualKeyCode: 40 };
+    case 'Home': return { key, code: 'Home', windowsVirtualKeyCode: 36, nativeVirtualKeyCode: 36 };
+    case 'Tab': return { key, code: 'Tab', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9 };
+    default: throw new Error(`Unsupported native grid key ${key}`);
+  }
+}
+
+async function gridAccessibilityState(client) {
+  await client.send('Accessibility.enable');
+  const activeContext = client.executionContexts.find(
+    context => context.id === client.gridContextId
+  );
+  const frameId = activeContext && activeContext.auxData
+    ? activeContext.auxData.frameId
+    : undefined;
+  const response = await client.send(
+    'Accessibility.getFullAXTree',
+    frameId ? { frameId } : {}
+  );
+  const roles = {};
+  const nodes = response.nodes || [];
+  const byId = new Map(nodes.map(node => [String(node.nodeId), node]));
+  for (const node of nodes) {
+    const role = String(node.role && node.role.value || '').toLowerCase();
+    if (role) roles[role] = (roles[role] || 0) + 1;
+  }
+  const property = (node, name) => {
+    const candidate = (node.properties || []).find(value => value.name === name);
+    return candidate && candidate.value ? candidate.value.value : undefined;
+  };
+  const ownedNodes = root => {
+    const owned = [];
+    const pending = [...(root.childIds || [])];
+    const seen = new Set();
+    while (pending.length > 0) {
+      const id = String(pending.shift());
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const node = byId.get(id);
+      if (!node) continue;
+      owned.push(node);
+      pending.push(...(node.childIds || []));
+    }
+    return owned;
+  };
+  const grids = nodes
+    .filter(node => String(node.role && node.role.value || '').toLowerCase() === 'grid')
+    .map(node => {
+      const descendants = ownedNodes(node);
+      const descendantRoles = {};
+      descendants.forEach(descendant => {
+        const role = String(descendant.role && descendant.role.value || '').toLowerCase();
+        if (role) descendantRoles[role] = (descendantRoles[role] || 0) + 1;
+      });
+      return {
+        name: String(node.name && node.name.value || ''),
+        multiselectable: property(node, 'multiselectable') === true,
+        descendantRoles,
+        selectedColumnHeaders: descendants.filter(descendant =>
+          String(descendant.role && descendant.role.value || '').toLowerCase() === 'columnheader' &&
+          property(descendant, 'selected') === true
+        ).length,
+        selectedGridCells: descendants.filter(descendant =>
+          String(descendant.role && descendant.role.value || '').toLowerCase() === 'gridcell' &&
+          property(descendant, 'selected') === true
+        ).length,
+        columnHeaderNames: descendants
+          .filter(descendant =>
+            String(descendant.role && descendant.role.value || '').toLowerCase() === 'columnheader'
+          )
+          .map(descendant => String(descendant.name && descendant.name.value || '')),
+        sortValues: descendants
+          .filter(descendant => String(descendant.role && descendant.role.value || '').toLowerCase() === 'columnheader')
+          .map(descendant => String(property(descendant, 'sort') || '').toLowerCase())
+          .filter(Boolean),
+      };
+    });
+  return {
+    frameId: String(frameId || ''),
+    roles,
+    grids,
+    namedGrid: grids.find(grid => grid.name === 'KDB result table') || null,
+  };
+}
+
+function expectedGridRows(direction) {
+  const firstValues = Array.from({ length: 240 }, (_, index) => 1000 + index);
+  firstValues.splice(0, 7, 1003, null, 999, 1005, 1002, 1000, 1004);
+  const rows = firstValues.map((first, sourceRow) => ({
+    first,
+    later: 1000 + sourceRow / 10,
+  }));
+  if (direction === 'source') return rows;
+  return rows.slice().sort((left, right) => {
+    if (left.first === null) return right.first === null ? 0 : 1;
+    if (right.first === null) return -1;
+    return direction === 'ascending'
+      ? left.first - right.first
+      : right.first - left.first;
+  });
+}
+
+function assertExactGridOrder(actual, expected, label) {
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(`${label} grid body order differs from the exact fixture: ${JSON.stringify({ actual, expected })}`);
+  }
+}
+
+async function collectGridRows(session) {
+  const client = session.webview;
+  await scrollGridTo(session, 'top');
+  const rows = new Map();
+  let targetRow = 0;
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const state = await waitForGridState(
+      client,
+      candidate => candidate.loadingCellCount === 0 &&
+        candidate.rowRange.min <= targetRow && candidate.rowRange.max >= targetRow,
+      GRID_TIMEOUT_MS,
+      `loaded grid rows around ${targetRow}`
+    );
+    state.bodyRows.forEach(row => {
+      if (Number.isSafeInteger(row.displayRow) && row.cells.length >= 3) {
+        rows.set(row.displayRow, {
+          first: row.cells[0] === '' ? null : Number(row.cells[0]),
+          later: Number(row.cells[2]),
+        });
+      }
+    });
+    if (state.rowRange.max >= 239) break;
+    targetRow = state.rowRange.max + 1;
+    const response = await client.send('Runtime.evaluate', {
+      expression: `(() => {
+        const viewport = document.getElementById('viewport');
+        if (!viewport) return false;
+        viewport.scrollTop = Math.min(viewport.scrollHeight, ${targetRow} * 28);
+        viewport.dispatchEvent(new Event('scroll'));
+        return true;
+      })()`,
+      returnByValue: true,
+      ...(client.gridContextId === undefined ? {} : { contextId: client.gridContextId }),
+    });
+    if (!response || !response.result || response.result.value !== true) {
+      throw new Error(`Could not advance grid collection to display row ${targetRow}`);
+    }
+  }
+  await scrollGridTo(session, 'top');
+  if (rows.size !== 240) {
+    throw new Error(`Exact grid-order collection saw ${rows.size} of 240 rows`);
+  }
+  return Array.from({ length: 240 }, (_, displayRow) => rows.get(displayRow));
+}
+
+function numericColumnIsOrdered(state, column, direction) {
+  const values = (state.bodyTexts[column] || [])
+    .filter(value => value !== '')
+    .map(Number);
+  return values.length > 1 && values.every((value, index) =>
+    Number.isFinite(value) && (index === 0 || direction * value >= direction * values[index - 1])
+  );
+}
+
+function assertNullLast(state, direction) {
+  const values = state.bodyTexts[0] || [];
+  if (values.length === 0 || values[values.length - 1] !== '') {
+    throw new Error(`${direction} sort did not keep the q null last: ${JSON.stringify(values)}`);
+  }
+}
+
 async function gridState(client) {
   const expression = `(() => {
     const viewport = document.getElementById('viewport');
@@ -787,10 +1582,24 @@ async function gridState(client) {
     const bodyCells = Array.from(document.querySelectorAll('#rows .cell[data-row][data-column]'));
     const headers = [];
     const headerWidths = [];
+    const headerAriaSort = [];
+    const headerAriaLabels = [];
+    const headerTabIndexes = [];
+    const headerAriaColIndexes = [];
+    const headerAriaSelected = [];
+    const selectedHeaderColumns = [];
     headerCells.forEach(cell => {
       const column = Number(cell.dataset.column);
       headers[column] = String(cell.childNodes[0] && cell.childNodes[0].textContent || '').trim();
       headerWidths[column] = width(cell);
+      headerAriaSort[column] = String(cell.getAttribute('aria-sort') || '');
+      headerAriaLabels[column] = String(cell.getAttribute('aria-label') || '');
+      headerTabIndexes[column] = Number(cell.tabIndex);
+      headerAriaColIndexes[column] = Number(cell.getAttribute('aria-colindex'));
+      headerAriaSelected[column] = String(cell.getAttribute('aria-selected') || '');
+      if (cell.classList.contains('selected')) {
+        selectedHeaderColumns.push(column);
+      }
     });
     const bodyWidths = {};
     const bodyTexts = {};
@@ -806,10 +1615,71 @@ async function gridState(client) {
       bodyTexts[column].push(String(cell.textContent || ''));
       rows.push(row);
     });
+    const renderedRows = Array.from(document.querySelectorAll('#rows .row'));
+    const bodyRows = renderedRows.map(row => ({
+      displayRow: Number(row.getAttribute('aria-rowindex')) - 2,
+      cells: Array.from(row.querySelectorAll('.cell[data-column]:not([data-column="-1"])'))
+        .sort((left, right) => Number(left.dataset.column) - Number(right.dataset.column))
+        .map(cell => String(cell.textContent || '')),
+    }));
+    const loadingCellCount = bodyCells.filter(cell => cell.classList.contains('loading')).length;
+    const dataColumns = headerCells.map(cell => Number(cell.dataset.column));
+    const selectedBodyColumns = dataColumns.filter(column => {
+      const cells = bodyCells.filter(cell => Number(cell.dataset.column) === column);
+      return cells.length > 0 && cells.every(cell => cell.getAttribute('aria-selected') === 'true');
+    });
+    const bodyAccessibilityValid = renderedRows.every(row => {
+      const displayRow = Number(row.getAttribute('aria-rowindex')) - 2;
+      const rowHeader = row.querySelector('.cell[data-column="-1"]');
+      const cells = Array.from(row.querySelectorAll('.cell[data-column]:not([data-column="-1"])'));
+      return row.getAttribute('role') === 'row' && Number.isSafeInteger(displayRow) &&
+        (!rowHeader || (rowHeader.getAttribute('role') === 'rowheader' &&
+          Number(rowHeader.getAttribute('aria-colindex')) === 1)) &&
+        cells.every(cell => cell.getAttribute('role') === 'gridcell' &&
+          Number(cell.getAttribute('aria-colindex')) === Number(cell.dataset.column) + 2 &&
+          (cell.getAttribute('aria-selected') === 'true' || cell.getAttribute('aria-selected') === 'false'));
+    });
+    const rowParityValid = renderedRows.every(row => {
+      const rowCell = row.querySelector('.cell[data-row]');
+      const rowIndex = Number(rowCell && rowCell.dataset.row);
+      return Number.isSafeInteger(rowIndex) &&
+        row.classList.contains(rowIndex % 2 === 0 ? 'row-even' : 'row-odd');
+    });
+    const oddRow = renderedRows.find(row => row.classList.contains('row-odd'));
+    const evenRow = renderedRows.find(row => row.classList.contains('row-even'));
+    const rowBackground = row => {
+      const cell = row && row.querySelector('.cell:not(.selected):not(.search-match):not(.loading)');
+      return cell ? getComputedStyle(cell).backgroundColor : '';
+    };
     return {
       summary: String(summary.textContent || ''),
       headers,
       headerWidths,
+      headerAriaSort,
+      headerAriaLabels,
+      headerTabIndexes,
+      headerAriaColIndexes,
+      headerAriaSelected,
+      selectedHeaderColumns,
+      ariaSelectedHeaderColumns: headerAriaSelected
+        .map((value, column) => value === 'true' ? column : -1)
+        .filter(column => column >= 0),
+      selectedBodyColumns,
+      activeHeaderColumn: document.activeElement && document.activeElement.matches('#header .cell[data-column]')
+        ? Number(document.activeElement.dataset.column)
+        : -1,
+      interactionModePresent: !!document.getElementById('interactionMode'),
+      rowParityValid,
+      bodyAccessibilityValid,
+      bodyRows,
+      loadingCellCount,
+      gridAriaLabel: String(viewport.getAttribute('aria-label') || ''),
+      gridAriaMultiselectable: String(viewport.getAttribute('aria-multiselectable') || ''),
+      gridAriaRowCount: Number(viewport.getAttribute('aria-rowcount')),
+      gridAriaColCount: Number(viewport.getAttribute('aria-colcount')),
+      headerRowIndex: Number(document.getElementById('header')?.getAttribute('aria-rowindex')),
+      oddRowBackground: rowBackground(oddRow),
+      evenRowBackground: rowBackground(evenRow),
       bodyWidths,
       bodyTexts,
       rowRange: {
@@ -949,6 +1819,54 @@ async function dragGridColumn(session, column, delta) {
     GRID_TIMEOUT_MS,
     `column ${column} width ${expectedWidth}px`
   );
+}
+
+async function exerciseGridResizeDoubleClickReset(session, column, fallbackWidth) {
+  const resized = await dragGridColumn(session, column, 47);
+  if (resized.headerWidths[column] === fallbackWidth) {
+    throw new Error(`Column ${column} did not resize before double-click reset`);
+  }
+  const client = session.webview;
+  await ensureGridResizeHandleVisible(client, column, 0);
+  const response = await client.send('Runtime.evaluate', {
+    expression: `(() => {
+      const handle = document.querySelector('#header .resize-handle[data-column="${column}"]');
+      if (!handle) return null;
+      const rect = handle.getBoundingClientRect();
+      return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+    })()`,
+    returnByValue: true,
+    ...(client.gridContextId === undefined ? {} : { contextId: client.gridContextId }),
+  });
+  const rect = response && response.result ? response.result.value : null;
+  if (!rect || !(rect.width > 0) || !(rect.height > 0)) {
+    throw new Error(`Could not locate native double-click target for grid column ${column}`);
+  }
+  const outer = await visibleWebviewRect(session.root);
+  const x = outer.left + rect.left + rect.width / 2;
+  const y = outer.top + rect.top + rect.height / 2;
+  await session.root.send('Page.bringToFront');
+  await session.root.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+  for (const clickCount of [1, 2]) {
+    await session.root.send('Input.dispatchMouseEvent', {
+      type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount,
+    });
+    await session.root.send('Input.dispatchMouseEvent', {
+      type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount,
+    });
+  }
+  const reset = await waitForGridState(
+    client,
+    state => renderedColumnHasWidth(state, column, fallbackWidth),
+    GRID_TIMEOUT_MS,
+    `column ${column} resize double-click reset`
+  );
+  return {
+    column,
+    resizedWidth: resized.headerWidths[column],
+    resetWidth: reset.headerWidths[column],
+    fallbackWidth,
+  };
 }
 
 async function ensureGridResizeHandleVisible(client, column, delta) {
@@ -1136,6 +2054,10 @@ function compactGridState(state) {
     summary: state.summary,
     headers: state.headers,
     headerWidths: state.headerWidths,
+    selectedHeaderColumns: state.selectedHeaderColumns,
+    ariaSelectedHeaderColumns: state.ariaSelectedHeaderColumns,
+    selectedBodyColumns: state.selectedBodyColumns,
+    activeHeaderColumn: state.activeHeaderColumn,
     rowRange: state.rowRange,
     autoFitChecked: state.autoFitChecked,
     autoFitMode: state.autoFitMode,
@@ -1228,6 +2150,46 @@ function assertVisualEvidence(initial, first, second) {
   }
 }
 
+function assertPanEvidence(first, buttonPan, shiftPan) {
+  const span = range => range.max - range.min;
+  const close = (left, right) => Math.abs(left - right) <= Math.max(1e-7, Math.abs(right) * 1e-9);
+  if (!first.requestedRange || !buttonPan.requestedRange || !shiftPan.requestedRange) {
+    throw new Error('Pan acceptance requires absolute requested ranges');
+  }
+  if (buttonPan.requestId !== first.requestId + 1 || shiftPan.requestId !== buttonPan.requestId + 1) {
+    throw new Error(`Each completed pan must issue exactly one settled request: ${JSON.stringify({
+      first: first.requestId,
+      buttonPan: buttonPan.requestId,
+      shiftPan: shiftPan.requestId,
+    })}`);
+  }
+  if (!close(span(buttonPan.requestedRange), span(first.requestedRange)) ||
+    buttonPan.requestedRange.min <= first.requestedRange.min) {
+    throw new Error(`Pan right must preserve span and move the viewport right: ${JSON.stringify({ first, buttonPan })}`);
+  }
+  if (!close(span(shiftPan.requestedRange), span(buttonPan.requestedRange)) ||
+    shiftPan.requestedRange.min >= buttonPan.requestedRange.min) {
+    throw new Error(`Shift drag must use grab-content direction and preserve span: ${JSON.stringify({ buttonPan, shiftPan })}`);
+  }
+  if (buttonPan.sourceRowCount !== first.sourceRowCount ||
+    shiftPan.sourceRowCount !== first.sourceRowCount) {
+    throw new Error('Completed pans must resample from the retained full chart source');
+  }
+  for (const state of [buttonPan, shiftPan]) {
+    if (rangeKey(state.fullRange || {}) !== rangeKey(first.fullRange || {}) ||
+      rangeKey(state.visibleRange || {}) !== rangeKey(state.requestedRange || {})) {
+      throw new Error(`Pan changed the immutable range or failed exact reconstruction: ${JSON.stringify(state)}`);
+    }
+    const expectedDensity = Math.min(state.eligibleRowCount, 7000);
+    if (state.sampledPointCount !== expectedDensity) {
+      throw new Error(`Panned range density mismatch: expected ${expectedDensity}, got ${state.sampledPointCount}`);
+    }
+    if (state.requestedRange.min < state.fullRange.min || state.requestedRange.max > state.fullRange.max) {
+      throw new Error(`Panned range escaped its immutable full range: ${JSON.stringify(state)}`);
+    }
+  }
+}
+
 function compactState(state) {
   if (!state) {
     return null;
@@ -1242,6 +2204,17 @@ function compactState(state) {
     requestedRange: state.requestedRange,
     visibleRange: state.visibleRange,
     fullRange: state.fullRange,
+  };
+}
+
+function compactFamilyState(state) {
+  return {
+    ...compactState(state),
+    chartType: state.chartType,
+    screenshotSha256: state.screenshotSha256,
+    screenshotByteLength: state.screenshotByteLength,
+    screenshotWidth: state.screenshotWidth,
+    screenshotHeight: state.screenshotHeight,
   };
 }
 

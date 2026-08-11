@@ -48,6 +48,8 @@ True q tables and keyed tables always use the grid. Function source is shown onl
 
 Very large values can make chart rendering slow or temporarily block the extension host, especially with multiple y columns. For very large data, prefer the local data server or sliced results.
 
+Chart viewport gestures do not add settings: plain drag zooms x, `Shift`+drag and the Pan/arrow controls pan x, and `Home` resets. For the same absolute x range, completed pans use the unchanged zoom range-loading/resampling decision and settings; y remains automatic.
+
 ## Panel size and density
 
 | Setting | Default | Use |
@@ -72,6 +74,8 @@ Very large values can make chart rendering slow or temporarily block the extensi
 `wholeResult` measures the widest displayed header/value in every row, including array/list values outside the virtual viewport, and therefore remains stable while scrolling. `visibleRows` preserves adaptive fitting from the currently rendered rows. Manual positional widths take precedence over auto-fit.
 
 The panel's `Cell width` textbox is an all-column preset control. Changing it or switching density clears/replaces positional manual widths for every data column, including column zero. Dragging a column then writes a new authoritative value for only that source position. The position mapping survives panel and VS Code recreation and does not change when columns are hidden or visually reordered.
+
+There is no Header mode setting. Header click/drag intent is determined by the shared 5 CSS-pixel threshold, with keyboard sort/reorder and modifier-based whole-column selection available directly on each focusable header.
 
 ## Copy, export, and warnings
 

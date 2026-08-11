@@ -74,7 +74,7 @@ The `kdb+: Copy Example Global Connection Settings` command copies this User-set
 - Result grids for q tables, keyed tables, dictionaries, vectors, lists, and scalars. Nested q values inside cells are displayed as compact strings, and unsafe-width q longs are displayed as exact decimal strings.
 - Cancellable kdb results panel runs from the panel toolbar or VS Code progress notification.
 - Opt-in local data server for the current kdb results panel, bound to `127.0.0.1` with tokenized URLs for metadata, CSV, JSON, NDJSON, slices, and selection.
-- Built-in uPlot-powered line, scatter, step, clustered bar, box, and real OHLC candlestick charts from the current kdb results panel, with extension-side type-aware downsampling, optional categorical group-by for line/scatter/step/bar charts, cursor tooltips, drag zoom, debounced and explicit zoom refinement, persisted compatible selections by column signature, reset zoom, splitter resizing, legend toggling, and PNG export.
+- Built-in uPlot-powered line, scatter, step, clustered bar, box, and real OHLC candlestick charts from the current kdb results panel, with extension-side type-aware downsampling, optional categorical group-by for line/scatter/step/bar charts, cursor tooltips, x-only drag zoom, `Shift`+drag/button/keyboard x pan, settled viewport resampling, persisted compatible selections by column signature, reset zoom, splitter resizing, legend toggling, and PNG export.
 - Object explorer groups for tables, root q views, functions, and table columns. Column metadata preserves q `meta` type, foreign-key, and attribute fields for SQLTools describe/explorer views.
 - Table preview and count support through SQLTools, using q `sublist` for limit/offset previews.
 - Definition query generation for tables, views, and functions.
@@ -128,7 +128,7 @@ The Settings -> Preferences Auto-fit checkbox is persisted and enabled by defaul
 
 Drag-resized widths are authoritative and persist by zero-based source-column position across later queries, panel recreation, and VS Code restarts. Hiding or reordering columns does not change that source-position mapping. The `Cell width` textbox is an all-column control, and switching density applies that density's saved size preset; either action clears/replaces positional manual widths consistently for every data column, including the first. `Reset column widths` also clears the positional overrides.
 
-Header mode defaults to Drag. Drag column headers to reorder visible columns for the current panel session; copy, export, search, and sort use that visible order. Change the Settings menu mode to Select for whole-column selection or Sort to sort visible columns in the extension; repeated sort clicks cycle ascending, descending, and original order. Sorting uses the panel's visible cell text, warns before sorting very large row counts, and resets on the third click.
+Headers use one consistent interaction model. A click cycles ascending, descending, and immutable source order; moving at least 5 CSS pixels reorders without sorting. `Ctrl`/`Cmd`+click or `Ctrl`/`Cmd`+Space selects a full column, and `Shift` extends from the selection anchor. `Enter`/`Space` sorts and `Alt+Left`/`Alt+Right` moves the focused column. Headers expose visible indicators, focus, position/state labels, and `aria-sort`. Resize handles remain separate, and double-click resets a width. Column order stays panel-session/schema-bound while persisted widths remain tied to source positions. Virtual rows use subtle absolute odd-row shading that respects selection, search, loading, and forced-color themes.
 
 Settings menu search runs in the extension against visible columns only. It returns capped row-match metadata to the webview instead of transferring all result cells, and the status marks capped or partial scans.
 
@@ -147,7 +147,7 @@ The top toolbar is a single compact line: `Output`, copy/export controls, a top-
 
 Candlestick rendering rejects missing, duplicate, or non-numeric OHLC selections. After invalid x values are removed using the normal x rules, every retained candle row must have finite OHLC values with `high >= open`, `high >= close`, `low <= open`, `low <= close`, and `high >= low`; otherwise the render fails with an actionable error instead of reinterpreting or silently dropping the row. Financial x-domain bucket aggregation is applied to the four roles together and never independently min/max-samples them as generic lines. Each aggregate is positioned at the midpoint of its first and last source x while the full source x domain remains available to zoom. The sampled result is capped at roughly one candle per horizontal pixel so dense bodies remain legible.
 
-All chart types keep auto-thinned readable x-axis labels, cursor tooltips, drag zoom, debounced zoom auto-refinement, explicit `Refine zoom`, reset zoom, splitter resizing, legend toggling, and PNG export after render. Every distinct completed zoom, including a zoom nested inside an already refined range, is resampled from the retained full source for that absolute range. Identical scale notifications are deduplicated, and programmatic reconstruction, resize, settings, and series-visibility rerenders do not issue recursive refinement requests.
+All chart types keep auto-thinned readable x-axis labels, cursor tooltips, plain-drag x zoom, `Shift`+drag x pan, 20% Pan left/right controls, `ArrowLeft`/`ArrowRight` pan, `Home`/double-click/reset, explicit `Refine view`, splitter resizing, legend toggling, and PNG export after render. For the same clamped absolute range, pan completion uses the exact unchanged zoom range-loading/resampling decision; y remains automatic. Identical scale notifications are deduplicated, mousemove feedback does not request source data, and programmatic reconstruction, resize, settings, and series-visibility rerenders do not issue recursive refinement requests.
 
 A refined range with fewer than 3,000 eligible rows renders every available row without upsampling. From 3,000 through 7,000 it keeps the available density; above 7,000 it uses the chart type's reduction model to return about 7,000 points. `Reset zoom` invalidates stale in-flight refinement responses and restores the immutable original full sample/domain without another q/backend request. Candlestick tooltips show open/high/low/close values, and exported PNGs include the rendered candle geometry. Changing chart type or another control updates visible fields and validation without removing the old rendered chart; press `Render` to apply the new settings. Successful selections are restored only when the visible-column signature and the type-specific roles remain valid, so older generic selections fall back safely.
 
@@ -289,7 +289,7 @@ This repository is not published to the VS Code Marketplace by the build scripts
 
 ### E2E Test Pipeline
 
-`npm run test:e2e` uses `@vscode/test-electron` to download a local VS Code build under `.vscode-test`, installs the real `mtxr.sqltools` Marketplace extension into an isolated test extensions directory, and launches a VS Code extension host for this extension. It also drives two nested native drag zooms in the real results-panel webview and verifies the requested ranges, immutable source row count, and 3,000–7,000 sampling contract.
+`npm run test:e2e` uses `@vscode/test-electron` to download a local VS Code build under `.vscode-test`, installs the real `mtxr.sqltools` Marketplace extension into an isolated test extensions directory, and launches a VS Code extension host for this extension.
 
 Inside that extension host the test suite:
 
@@ -308,6 +308,6 @@ Useful E2E environment variables:
 - `KDB_SQLTOOLS_E2E_FORCE_SQLTOOLS_INSTALL=1` reinstalls `mtxr.sqltools`.
 - `KDB_SQLTOOLS_E2E_SKIP_SQLTOOLS_INSTALL=1` skips the install step and uses whatever is already in `.vscode-test/e2e/extensions`.
 - `KDB_SQLTOOLS_E2E_ALLOW_SQLTOOLS_INSTALL_FAILURE=1` allows a driver-only VS Code host fallback when Marketplace access is unavailable; SQLTools activation and native webview visual tests are skipped in that mode.
-- `KDB_SQLTOOLS_E2E_SKIP_VISUAL=1` skips the native webview drag-zoom acceptance test while retaining the extension-host tests.
+- `KDB_SQLTOOLS_E2E_SKIP_VISUAL=1` skips native webview visual acceptance while retaining the other extension-host tests.
 - `KDB_SQLTOOLS_E2E_RUNTIME_LIB_DIR=/path/to/libs` prepends a custom Linux runtime library directory for minimal containers.
 - `KDB_SQLTOOLS_E2E_SKIP_LINUX_LIBS=1` skips the no-root `apt-get download`/`dpkg-deb` runtime-library bootstrap.

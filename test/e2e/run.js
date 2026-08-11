@@ -1,6 +1,7 @@
 const cp = require('child_process');
 const fs = require('fs');
 const net = require('net');
+const os = require('os');
 const path = require('path');
 const {
   downloadAndUnzipVSCode,
@@ -42,7 +43,7 @@ async function main() {
       console.warn('Skipping native visual acceptance because the SQLTools extension is unavailable.');
     }
     visualControlDir = visualAcceptance
-      ? fs.mkdtempSync(path.join(testRoot, 'visual-acceptance-'))
+      ? fs.mkdtempSync(path.join(os.tmpdir(), 'kdb-sqltools-visual-acceptance-'))
       : '';
     const remoteDebuggingPort = visualAcceptance ? await availablePort() : 0;
 
