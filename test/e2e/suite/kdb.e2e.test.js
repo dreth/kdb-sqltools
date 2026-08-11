@@ -148,7 +148,7 @@ function registerInitialSuite() {
       }
     });
 
-    test('renders and refines two nested browser drag zooms from the full source', async function () {
+    test('renders zoom, button/Shift pan, and nested zoom from the full source', async function () {
       if (!VISUAL_ENABLED) {
         this.skip();
       }
@@ -174,18 +174,37 @@ function registerInitialSuite() {
           },
         },
       };
-      const table = createColumnarPanelResult(['x', 'y'], 12000, (rowIndex, columnIndex) => {
-        return columnIndex === 0
-          ? rowIndex
-          : Math.sin(rowIndex / 37) * 100 + (rowIndex % 211);
-      });
-      KdbResultsPanel.showResult(context, {
+      const table = createColumnarPanelResult(
+        ['x', 'y', 'open', 'high', 'low', 'close'],
+        12000,
+        (rowIndex, columnIndex) => {
+          if (columnIndex === 0) {
+            return rowIndex;
+          }
+          if (columnIndex === 1) {
+            return Math.sin(rowIndex / 37) * 100 + (rowIndex % 211);
+          }
+          const open = 100 + Math.sin(rowIndex / 29) * 8 + rowIndex / 1_000;
+          if (columnIndex === 2) {
+            return open;
+          }
+          if (columnIndex === 3) {
+            return open + 3 + rowIndex % 4;
+          }
+          if (columnIndex === 4) {
+            return open - 2 - rowIndex % 3;
+          }
+          return open + Math.sin(rowIndex / 11) * 2;
+        }
+      );
+      const chartPanel = KdbResultsPanel.showResult(context, {
         query: 'visual nested zoom acceptance',
         connectionName: 'deterministic E2E source',
         elapsedMs: 1,
         messages: [],
         table,
       }, 'new', { autoChart: true });
+      installVisualChartExportHook(chartPanel);
 
       const result = await waitForVisualResult(
         gridControlPath('result.json'),
@@ -194,10 +213,44 @@ function registerInitialSuite() {
       assert.strictEqual(result.ok, true, result.error || 'visual controller failed');
       assert.strictEqual(result.initial.sourceRowCount, 12000);
       assert.strictEqual(result.first.sourceRowCount, 12000);
+      assert.strictEqual(result.buttonPan.sourceRowCount, 12000);
+      assert.strictEqual(result.shiftPan.sourceRowCount, 12000);
       assert.strictEqual(result.second.sourceRowCount, 12000);
       assert.ok(result.first.requestId > result.initial.requestId);
+      assert.strictEqual(result.buttonPan.requestId, result.first.requestId + 1);
+      assert.strictEqual(result.shiftPan.requestId, result.buttonPan.requestId + 1);
       assert.ok(result.second.requestId > result.first.requestId);
+      assert.ok(result.second.requestId > result.shiftPan.requestId);
+      const firstSpan = result.first.requestedRange.max - result.first.requestedRange.min;
+      const buttonPanSpan = result.buttonPan.requestedRange.max - result.buttonPan.requestedRange.min;
+      const shiftPanSpan = result.shiftPan.requestedRange.max - result.shiftPan.requestedRange.min;
+      assert.ok(Math.abs(buttonPanSpan - firstSpan) <= Math.max(1e-7, Math.abs(firstSpan) * 1e-9));
+      assert.ok(Math.abs(shiftPanSpan - buttonPanSpan) <= Math.max(1e-7, Math.abs(buttonPanSpan) * 1e-9));
+      assert.ok(result.buttonPan.requestedRange.min > result.first.requestedRange.min);
+      assert.ok(result.shiftPan.requestedRange.min < result.buttonPan.requestedRange.min);
       assert.ok(result.second.eligibleRowCount >= 3000);
+      assert.deepStrictEqual(
+        result.families.map(family => family.chartType),
+        ['line', 'scatter', 'step', 'bar', 'box', 'candlestick']
+      );
+      assert.strictEqual(new Set(result.families.map(family => family.screenshotSha256)).size, 6);
+      result.families.forEach(family => {
+        assert.strictEqual(family.sourceRowCount, 12000);
+        assert.match(family.screenshotSha256, /^[0-9a-f]{64}$/);
+        assert.ok(family.screenshotByteLength >= 1_000);
+        assert.ok(family.screenshotWidth > 0 && family.screenshotHeight > 0);
+      });
+      assert.match(
+        result.families.find(family => family.chartType === 'bar').status,
+        /Dense bar clusters too narrow to distinguish were skipped/
+      );
+      assert.strictEqual(result.dirtyControlExport.png, true);
+      assert.strictEqual(result.dirtyControlExport.productionGuardAccepted, true);
+      const savedSelections = Array.from(savedState.entries())
+        .filter(([key]) => key.startsWith('kdb-sqltools.results.kdbPanel.chartSelection.v1.'))
+        .map(([, value]) => value);
+      assert.strictEqual(savedSelections.length, 1);
+      assert.strictEqual(savedSelections[0].chartType, 'candlestick');
       console.log(`Visual nested zoom evidence: ${JSON.stringify(result)}`);
       await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
     });
@@ -236,6 +289,37 @@ function registerInitialSuite() {
         assert.strictEqual(widthResult.autoFitMode, 'wholeResult');
         assert.strictEqual(widthResult.allRenderedCellsMatch, true);
         assert.strictEqual(widthResult.initialWidthsStable, true);
+        assert.deepStrictEqual(
+          {
+            triState: widthResult.interactions.triState,
+            jitterSort: widthResult.interactions.jitterSort,
+            dragReorderWithoutSort: widthResult.interactions.dragReorderWithoutSort,
+            keyboardSortAndReorder: widthResult.interactions.keyboardSortAndReorder,
+            pointerKeyboardAndShiftSelection: widthResult.interactions.pointerKeyboardAndShiftSelection,
+            nativeInput: widthResult.interactions.nativeInput,
+            aria: widthResult.interactions.aria,
+            absoluteRowParity: widthResult.interactions.absoluteRowParity,
+          },
+          {
+            triState: true,
+            jitterSort: true,
+            dragReorderWithoutSort: true,
+            keyboardSortAndReorder: true,
+            pointerKeyboardAndShiftSelection: true,
+            nativeInput: true,
+            aria: true,
+            absoluteRowParity: true,
+          }
+        );
+        assert.ok(widthResult.interactions.oddRowBackground);
+        assert.notStrictEqual(
+          widthResult.interactions.oddRowBackground,
+          widthResult.interactions.evenRowBackground
+        );
+        assert.strictEqual(
+          widthResult.interactions.resizeDoubleClickReset.resetWidth,
+          widthResult.interactions.resizeDoubleClickReset.fallbackWidth
+        );
 
         const widthsByPosition = assertManualWidths(widthResult.widthsByPosition);
         await waitForConfigValue(
@@ -456,6 +540,48 @@ function createDriver(port) {
 
 async function waitForVisualResult(resultPath, timeoutMs) {
   return waitForJson(resultPath, timeoutMs, 'browser visual acceptance result');
+}
+
+function installVisualChartExportHook(panel) {
+  const exportPath = gridControlPath('chart-dirty-control-export.json');
+  const originalExportChartPng = panel.exportChartPng.bind(panel);
+  const originalPost = panel.post.bind(panel);
+  let pendingExportProbe;
+  panel.post = message => {
+    if (pendingExportProbe && message?.type === 'chartExportError' &&
+      Number(message.version) === pendingExportProbe.version &&
+      Number(message.requestId) === pendingExportProbe.requestId) {
+      writeJsonAtomic(exportPath, {
+        ...pendingExportProbe,
+        activeRequestId: Number(panel.activeChartRequestId),
+        productionGuardAccepted: true,
+        responseType: message.type,
+      });
+      pendingExportProbe = undefined;
+    }
+    return originalPost(message);
+  };
+  panel.exportChartPng = async message => {
+    pendingExportProbe = {
+      version: Number(message.version),
+      requestId: Number(message.requestId),
+      png: typeof message.dataUrl === 'string' && message.dataUrl.startsWith('data:image/png;base64,'),
+    };
+    const notificationCloser = setInterval(() => {
+      void vscode.commands.executeCommand('notifications.clearAll');
+    }, 100);
+    try {
+      return await originalExportChartPng({
+        ...message,
+        // The real Chromium PNG is proven above. Substituting an invalid copy
+        // after receipt avoids a native save dialog while still exercising the
+        // production version/request guard and its chartExportError response.
+        dataUrl: 'data:text/plain;base64,Zm9v',
+      });
+    } finally {
+      clearInterval(notificationCloser);
+    }
+  };
 }
 
 async function waitForJson(resultPath, timeoutMs, label) {

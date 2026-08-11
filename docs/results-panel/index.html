@@ -920,23 +920,31 @@
 <tbody>
 <tr>
 <td>Resize</td>
-<td>Drag column edges to set widths for the current panel session.</td>
+<td>Drag column edges to set source-position widths. Double-click a resize handle to reset that source column.</td>
 </tr>
 <tr>
 <td>Auto-fit</td>
-<td>Enabled by default from <code>Settings</code> -&gt; <code>Preferences</code>. It sizes visible columns from headers and currently rendered cells as you scroll.</td>
+<td>The persisted checkbox is enabled by default. <code>Whole result</code> sizes each column once from the widest displayed header/value in the complete result, including off-screen array/list values. <code>Visible rows</code> explicitly enables viewport-adaptive fitting. Unchecked means no automatic width calculation.</td>
+</tr>
+<tr>
+<td>Cell width and density</td>
+<td>The <code>Cell width</code> textbox applies to every data column. Applying it or switching density clears/replaces all positional manual widths consistently, including the first column.</td>
+</tr>
+<tr>
+<td>Reset widths</td>
+<td><code>Reset column widths</code> clears positional manual widths and returns width resolution to the selected preset/auto-fit behavior.</td>
 </tr>
 <tr>
 <td>Reorder</td>
-<td><code>Settings</code> -&gt; header mode <code>Drag</code> lets you drag headers to reorder visible columns. A drag cue marks the insertion position.</td>
+<td>Move a header at least 5 CSS pixels. The drag cue marks the insertion position and the gesture never sorts. <code>Alt+Left</code>/<code>Alt+Right</code> moves the focused column one position.</td>
 </tr>
 <tr>
 <td>Select columns</td>
-<td><code>Settings</code> -&gt; header mode <code>Select</code> turns header clicks into whole-column selection.</td>
+<td><code>Ctrl</code>/<code>Cmd</code>+click or <code>Ctrl</code>/<code>Cmd</code>+Space selects a full column. Add <code>Shift</code> to extend from the selection anchor.</td>
 </tr>
 <tr>
 <td>Sort</td>
-<td><code>Settings</code> -&gt; header mode <code>Sort</code> cycles ascending, descending, and original order. Sorting uses visible cell text.</td>
+<td>Click, <code>Enter</code>, or <code>Space</code> cycles ascending, descending, and immutable source order. Visible indicators and <code>aria-sort</code> report the state.</td>
 </tr>
 <tr>
 <td>Hidden columns</td>
@@ -944,7 +952,8 @@
 </tr>
 </tbody>
 </table>
-<p>Column reorder, sort, search, copy, and export use the current visible column order. Hidden-column choices persist only for later results in the same panel when the full column list matches.</p>
+<p>Column reorder, sort, search, copy, and export use the current visible column order. Hidden-column choices persist only for later results in the same panel when the full column list matches. Positional widths remain tied to the source-column position through hide/reorder operations rather than following a query-specific column name. Header labels expose position/state, focused headers have a visible outline, and resize handles stop pointer propagation; resize drag or double-click reset never sorts.</p>
+<p>Virtual rows carry parity from their absolute displayed row index, so shading stays stable after sorting and at every scroll window. Odd rows use <code>--vscode-tree-tableOddRowsBackground</code> with a subtle neutral fallback; selection, search matches, loading cells, and forced/high-contrast colors take precedence.</p>
 <h2 id="toolbar">Toolbar</h2>
 <p>The toolbar is a single compact line:</p>
 <div class="highlight"><pre><span></span><code>Output: [format] [Headers] [Row #] [Copy] [Export] [Chart] [Settings] [Cancel] [spinner/status]
@@ -959,7 +968,7 @@
 <tbody>
 <tr>
 <td>Chart button</td>
-<td>Opens the uPlot-powered chart UI for the current visible result. Line, scatter, step, clustered bar, and box use numeric y selections; real candlestick charts instead show explicit, distinct numeric <code>Open</code>, <code>High</code>, <code>Low</code>, and <code>Close</code> selectors. All types use numeric/temporal x. <code>Group by</code> is available only for line, scatter, step, and bar; box and candlestick hide it with an explanatory status. The panel also provides auto-thinned readable x-axis labels, OHLC-aware tooltips, drag zoom, debounced and explicit <code>Refine zoom</code>, reset zoom, splitter resize, legend toggling, compatible selection persistence, and PNG export after render. Changing controls leaves the old rendered chart visible until <code>Render</code> is pressed.</td>
+<td>Opens the uPlot-powered chart UI for the current visible result. Line, scatter, step, clustered bar, and box use numeric y selections; real candlestick charts instead show explicit, distinct numeric <code>Open</code>, <code>High</code>, <code>Low</code>, and <code>Close</code> selectors. All types use numeric/temporal x. <code>Group by</code> is available only for line, scatter, step, and bar; box and candlestick hide it with an explanatory status. The panel also provides auto-thinned readable x-axis labels, OHLC-aware tooltips, plain-drag x zoom, <code>Shift</code>+drag/button/keyboard x pan, <code>Refine view</code>, reset, splitter resize, legend toggling, compatible selection persistence, and PNG export after render. Changing controls leaves the old rendered chart visible until <code>Render</code> is pressed.</td>
 </tr>
 <tr>
 <td>Settings menu</td>
@@ -968,6 +977,7 @@
 </tbody>
 </table>
 <p>The local data server and chart both use the extension-side current result. Hidden, reordered, and sorted visible columns are honored where they apply.</p>
+<p>For the same clamped absolute range, settled chart pan uses the exact unchanged zoom range-loading/resampling decision. <code>Shift</code>+drag grabs the content, buttons and arrow keys move 20% of the visible span, and <code>Home</code>, double-click, or Reset restores the immutable full range. Y stays automatic. Mousemove only supplies local feedback; source work starts after completion. Identical scale notifications are deduplicated, programmatic rerenders do not recursively refine, and reset invalidates stale responses while restoring the original sample/domain without backend I/O.</p>
 <h2 id="selection">Selection</h2>
 <p>The panel supports:</p>
 <ul>

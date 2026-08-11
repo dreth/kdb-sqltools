@@ -279,11 +279,23 @@ function sampleTradeTable() {
 function gridAcceptanceTable(columns, offset) {
   const rowIndexes = Array.from({ length: GRID_ACCEPTANCE_ROW_COUNT }, (_, index) => index);
   const longArray = Array.from({ length: 96 }, (_, index) => offset * 10 + index);
+  const sortableValues = rowIndexes.map(index => offset + index);
+  sortableValues.splice(
+    0,
+    7,
+    offset + 3,
+    -2147483648,
+    offset - 1,
+    offset + 5,
+    offset + 2,
+    offset,
+    offset + 4
+  );
 
   return qTable(
     columns,
     [
-      intVector(rowIndexes.map(index => offset + index)),
+      intVector(sortableValues),
       genericList(rowIndexes.map(index => intVector(
         index === GRID_ACCEPTANCE_ROW_COUNT - 1
           ? longArray

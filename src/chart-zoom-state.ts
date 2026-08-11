@@ -24,6 +24,19 @@ export type ChartZoomLifecycleAction<T> =
   | { type: 'rendered'; requestId: number; naturalRange: ChartZoomRange | null }
   | { type: 'reset' };
 
+/** Yield once, then skip a chart build whose owning request became stale. */
+export async function runCurrentChartBuild<T>(
+  yieldControl: () => Promise<void>,
+  isCurrent: () => boolean,
+  build: () => T | Promise<T>
+): Promise<T | undefined> {
+  await yieldControl();
+  if (!isCurrent()) {
+    return undefined;
+  }
+  return build();
+}
+
 /**
  * Tracks the full sampled response and exact refinement viewport independently.
  * The function is self-contained so the same reducer can run in the webview and
@@ -221,4 +234,67 @@ export function chartZoomShouldRequestRange<T>(
   }
   const key = chartZoomRangeKey(range);
   return key !== lastRequestedKey && !chartZoomRangeMatchesRequest(state, range);
+}
+
+export function isValidChartRange(
+  value: ChartZoomRange | null | undefined
+): value is ChartZoomRange {
+  return !!value && Number.isFinite(value.min) && Number.isFinite(value.max) &&
+    value.max > value.min;
+}
+
+/** Clamp an absolute viewport while preserving its span whenever possible. */
+export function clampChartViewport(
+  range: ChartZoomRange | null | undefined,
+  fullRange: ChartZoomRange | null | undefined
+): ChartZoomRange | null {
+  if (!isValidChartRange(range) || !isValidChartRange(fullRange)) {
+    return null;
+  }
+  const fullSpan = fullRange.max - fullRange.min;
+  const requestedSpan = range.max - range.min;
+  if (requestedSpan >= fullSpan) {
+    return { min: fullRange.min, max: fullRange.max };
+  }
+  let min = range.min;
+  let max = range.max;
+  if (min < fullRange.min) {
+    min = fullRange.min;
+    max = min + requestedSpan;
+  }
+  if (max > fullRange.max) {
+    max = fullRange.max;
+    min = max - requestedSpan;
+  }
+  return { min, max };
+}
+
+export function panChartViewport(
+  currentRange: ChartZoomRange | null | undefined,
+  fullRange: ChartZoomRange | null | undefined,
+  spanFraction: number
+): ChartZoomRange | null {
+  if (!isValidChartRange(currentRange) || !isValidChartRange(fullRange) ||
+    !Number.isFinite(spanFraction)) {
+    return null;
+  }
+  const span = currentRange.max - currentRange.min;
+  const delta = span * spanFraction;
+  return clampChartViewport({
+    min: currentRange.min + delta,
+    max: currentRange.max + delta,
+  }, fullRange);
+}
+
+/** Dragging content right moves the viewed domain left. */
+export function panChartViewportByPixels(
+  currentRange: ChartZoomRange | null | undefined,
+  fullRange: ChartZoomRange | null | undefined,
+  deltaPixels: number,
+  plotWidth: number
+): ChartZoomRange | null {
+  if (!Number.isFinite(deltaPixels) || !Number.isFinite(plotWidth) || plotWidth <= 0) {
+    return null;
+  }
+  return panChartViewport(currentRange, fullRange, -deltaPixels / plotWidth);
 }

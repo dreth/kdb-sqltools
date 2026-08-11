@@ -5,6 +5,9 @@ const Module = require('module');
 const net = require('net');
 const path = require('path');
 const JSZip = require('jszip');
+const TEST_OUT_ROOT = process.env.KDB_SQLTOOLS_TEST_OUT_ROOT
+  ? path.resolve(process.env.KDB_SQLTOOLS_TEST_OUT_ROOT)
+  : path.resolve(__dirname, '../out');
 
 const {
   KdbIpcClient,
@@ -16,9 +19,9 @@ const {
   qValueToQText,
   qValueToTabular,
   serializeTextQuery,
-} = require('../out/ls/q-ipc');
-const perfModule = require('../out/perf');
-const queriesModule = require('../out/ls/queries');
+} = requireOut('ls/q-ipc');
+const perfModule = requireOut('perf');
+const queriesModule = requireOut('ls/queries');
 const {
   CHART_MAX_SOURCE_ROWS,
   CHART_ZOOM_MAX_SAMPLED_POINTS,
@@ -34,20 +37,40 @@ const {
   chartTargetPointCount,
   chartTypeCapabilities,
   normalizeChartType,
-} = require('../out/charting');
+} = requireOut('charting');
 const {
   chartLegendToggleKey,
   updateHiddenChartSeriesKeys,
-} = require('../out/chart-series-state');
+} = requireOut('chart-series-state');
 const {
   chartZoomAutoRefineQueueAction,
+  clampChartViewport,
   chartZoomRangeMatchesRequest,
   chartZoomRangeKey,
   chartZoomRequestedRenderRange,
   chartZoomResponseIsPending,
   chartZoomShouldRequestRange,
+  isValidChartRange,
+  panChartViewport,
+  panChartViewportByPixels,
   reduceChartZoomLifecycle,
-} = require('../out/chart-zoom-state');
+  runCurrentChartBuild,
+} = requireOut('chart-zoom-state');
+const {
+  HEADER_REORDER_THRESHOLD_CSS_PIXELS,
+  absoluteDisplayRowClass,
+  beginHeaderPointer,
+  compareResultCellText,
+  fullResultColumnSelection,
+  headerPointerIntent,
+  moveResultColumn,
+  moveResultColumnBy,
+  nextResultTableSortState,
+  resultTableAriaSort,
+  resultTableHeaderAriaLabel,
+  resultTableSortIndicator,
+  updateHeaderPointer,
+} = requireOut('result-table-interaction');
 const {
   GRID_COLUMN_WIDTH_MAX,
   GRID_COLUMN_WIDTH_MIN,
@@ -61,8 +84,8 @@ const {
   updatePositionalColumnWidth,
   visibleRowsColumnTextLengths,
   wholeResultColumnTextLengths,
-} = require('../out/grid-column-widths');
-const { currentQBlock, selectedTextOrCurrentBlock, selectedTextOrCurrentLine } = require('../out/q-text');
+} = requireOut('grid-column-widths');
+const { currentQBlock, selectedTextOrCurrentBlock, selectedTextOrCurrentLine } = requireOut('q-text');
 const {
   allCellsRange,
   applyColumnarRowOrder,
@@ -87,29 +110,38 @@ const {
   sortedColumnarRowOrder,
   validateXlsxSheetLimits,
   visibleIndexRange,
-} = require('../out/kdb-results');
+} = requireOut('kdb-results');
 const {
   DEFAULT_LOCAL_DATA_SERVER_PORT,
   LOCAL_DATA_SERVER_HOST,
   LOCAL_DATA_SERVER_FULL_EXPORT_CELL_LIMIT,
   LocalDataServer,
   randomLocalDataServerToken,
-} = require('../out/local-data-server');
+} = requireOut('local-data-server');
 const {
   fallbackConnectionId,
   KdbPanelConnectionSession,
-} = require('../out/kdb-panel-connection-session');
-const { executeForResultsTarget } = require('../out/query-results-target');
-const driverModule = require('../out/ls/driver');
+} = requireOut('kdb-panel-connection-session');
+const { executeForResultsTarget } = requireOut('query-results-target');
+const driverModule = requireOut('ls/driver');
 const KdbDriver = driverModule.default;
 const { queryInNamespace } = driverModule;
-const { DRIVER_ALIASES, DRIVER_ID } = require('../out/constants');
+const { DRIVER_ALIASES, DRIVER_ID } = requireOut('constants');
 const { ContextValue } = require('@sqltools/types');
 const connectionSchema = require('../connection.schema.json');
 const packageJson = require('../package.json');
 
 const queries = queriesModule.default;
 const { normalizeNamespace, qString, qSymbolExpression } = queriesModule;
+
+function requireOut(moduleName) {
+  const filename = path.resolve(TEST_OUT_ROOT, `${moduleName}.js`);
+  const relative = path.relative(TEST_OUT_ROOT, filename);
+  if (relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error(`Compiled test module escapes isolated output root: ${moduleName}`);
+  }
+  return require(filename);
+}
 
 function hex(value) {
   return Buffer.from(value.replace(/\s/g, ''), 'hex');
@@ -2068,6 +2100,16 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(compareColumnarCellText('', '1', 'asc') > 0, true);
   assert.strictEqual(compareColumnarCellText('', '1', 'desc') > 0, true);
   assert.strictEqual(compareColumnarCellText('10', '2', 'asc') > 0, true);
+  assert.strictEqual(
+    compareColumnarCellText('9007199254740993', '9007199254740992', 'asc') > 0,
+    true,
+    'panel sorting must retain exact adjacent bigint text order'
+  );
+  assert.strictEqual(
+    compareResultCellText('', '9007199254740992', 'desc') > 0,
+    true,
+    'shared descending sorting must retain null-like values last'
+  );
   assert.strictEqual(compareColumnarCellText('false', 'true', 'asc') < 0, true);
   assert.strictEqual(compareColumnarCellText('2024.01.02', '2024.01.01', 'asc') > 0, true);
   assert.deepStrictEqual(sortedColumnarRowOrder(sortableColumnar, 1, 'asc'), [1, 3, 0, 2, 4]);
@@ -2869,6 +2911,27 @@ function panelFormatElapsedMs(milliseconds, display) {
   });
   assert.ok(sampledGapChart.sampledPointCount <= 10);
   assert.ok(sampledGapChart.series[0].values.includes(null), 'min/max chart sampling should retain a source gap sample');
+  for (const chartType of ['line', 'scatter', 'step']) {
+    const onePointChart = buildChartData(createColumnarPanelResult(
+      ['x', 'y'],
+      10,
+      (rowIndex, columnIndex) => columnIndex === 0 ? rowIndex : rowIndex * 2
+    ), {
+      chartType,
+      version: 1,
+      requestId: 21,
+      xColumn: 'x',
+      yColumns: ['y'],
+      width: 10,
+      maxSampledPoints: 1,
+    });
+    assert.strictEqual(
+      onePointChart.sampledPointCount,
+      2,
+      `${chartType} must preserve the baseline two-endpoint minimum`
+    );
+    assert.strictEqual(onePointChart.algorithm, 'minmax-bucket/1');
+  }
   assert.ok(chartTargetPointCount(1000) < 1000000, 'chart target should not send million-point series by default');
   const zoomAllRowsTable = createColumnarPanelResult(['x', 'y'], 5000, (rowIndex, columnIndex) => {
     return columnIndex === 0 ? rowIndex : rowIndex * 2;
@@ -3352,6 +3415,30 @@ function panelFormatElapsedMs(milliseconds, display) {
   const commandTitle = commandId => packageJson.contributes.commands.find(command => command.command === commandId).title;
   const keybinding = commandId => packageJson.contributes.keybindings.find(binding => binding.command === commandId);
 
+  let currentChartBuilds = 0;
+  let chartRequestCurrent = true;
+  const staleChartBuild = await runCurrentChartBuild(
+    async () => {
+      chartRequestCurrent = false;
+    },
+    () => chartRequestCurrent,
+    () => {
+      currentChartBuilds += 1;
+      return 'stale';
+    }
+  );
+  assert.strictEqual(staleChartBuild, undefined);
+  assert.strictEqual(currentChartBuilds, 0, 'a superseded chart request must never scan source data');
+  chartRequestCurrent = true;
+  assert.strictEqual(
+    await runCurrentChartBuild(async () => {}, () => chartRequestCurrent, () => {
+      currentChartBuilds += 1;
+      return 'current';
+    }),
+    'current'
+  );
+  assert.strictEqual(currentChartBuilds, 1, 'a current chart request must build exactly once');
+
   const fullChartSample = {
     version: 1,
     requestId: 1,
@@ -3379,6 +3466,57 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(chartZoomLifecycle.fullData, fullChartSample);
   assert.deepStrictEqual(chartZoomLifecycle.fullRange, { min: 0, max: 100 });
   const fullZoomLifecycle = chartZoomLifecycle;
+
+  const fullViewportRange = { min: 0, max: 100 };
+  assert.strictEqual(isValidChartRange(fullViewportRange), true);
+  assert.strictEqual(isValidChartRange({ min: 1, max: 1 }), false);
+  assert.deepStrictEqual(
+    clampChartViewport({ min: -20, max: 20 }, fullViewportRange),
+    { min: 0, max: 40 }
+  );
+  assert.deepStrictEqual(
+    clampChartViewport({ min: 85, max: 125 }, fullViewportRange),
+    { min: 60, max: 100 }
+  );
+  assert.deepStrictEqual(
+    clampChartViewport({ min: -50, max: 150 }, fullViewportRange),
+    fullViewportRange
+  );
+  assert.deepStrictEqual(
+    panChartViewport({ min: 20, max: 40 }, fullViewportRange, 0.2),
+    { min: 24, max: 44 }
+  );
+  assert.deepStrictEqual(
+    panChartViewport({ min: 0, max: 20 }, fullViewportRange, -0.2),
+    { min: 0, max: 20 },
+    'pan must preserve span and stop at the immutable lower boundary'
+  );
+  assert.deepStrictEqual(
+    panChartViewport({ min: 90, max: 100 }, fullViewportRange, 0.2),
+    { min: 90, max: 100 },
+    'pan must preserve span and stop at the immutable upper boundary'
+  );
+  assert.deepStrictEqual(
+    panChartViewportByPixels({ min: 20, max: 40 }, fullViewportRange, 100, 500),
+    { min: 16, max: 36 },
+    'Shift-drag uses grab-content direction'
+  );
+  assert.deepStrictEqual(
+    panChartViewport({ min: 1700000000000, max: 1700000010000 }, {
+      min: 1699999990000,
+      max: 1700000100000,
+    }, 0.2),
+    { min: 1700000002000, max: 1700000012000 },
+    'epoch domains must retain their absolute offset during pan'
+  );
+  const firstComposedZoom = { min: 20, max: 60 };
+  const composedPan = panChartViewport(firstComposedZoom, fullViewportRange, 0.2);
+  assert.deepStrictEqual(composedPan, { min: 28, max: 68 });
+  assert.deepStrictEqual(
+    clampChartViewport({ min: composedPan.min + 7, max: composedPan.max - 13 }, fullViewportRange),
+    { min: 35, max: 55 },
+    'zoom/pan/zoom composition must stay in the absolute source domain'
+  );
 
   const requestedZoomRange = { min: 20, max: 40 };
   chartZoomLifecycle = reduceChartZoomLifecycle(chartZoomLifecycle, {
@@ -3647,6 +3785,76 @@ function panelFormatElapsedMs(milliseconds, display) {
     assert.strictEqual(opaqueState.fullData, opaqueChartData, `${opaqueChartData.chartType} baseline must survive refinement`);
   }
 
+  let tableSort = nextResultTableSortState(undefined, 'price');
+  assert.deepStrictEqual(tableSort, { column: 'price', direction: 'asc' });
+  tableSort = nextResultTableSortState(tableSort, 'price');
+  assert.deepStrictEqual(tableSort, { column: 'price', direction: 'desc' });
+  tableSort = nextResultTableSortState(tableSort, 'price');
+  assert.strictEqual(tableSort, undefined, 'third header activation restores source row order');
+  const headerStart = beginHeaderPointer(1, 100, 30);
+  const headerJitter = updateHeaderPointer(headerStart, 103, 33, 1);
+  assert.strictEqual(headerJitter.reorder, false);
+  assert.strictEqual(headerPointerIntent(headerJitter, false), 'sort');
+  assert.strictEqual(headerPointerIntent(headerJitter, true), 'select');
+  assert.strictEqual(
+    headerPointerIntent(headerJitter, false, true),
+    'sort',
+    'Shift alone must preserve tri-state sorting; Ctrl/Cmd+Shift extends selection'
+  );
+  const headerDrag = updateHeaderPointer(
+    headerStart,
+    100 + HEADER_REORDER_THRESHOLD_CSS_PIXELS,
+    30,
+    2
+  );
+  assert.strictEqual(headerDrag.reorder, true);
+  assert.strictEqual(headerPointerIntent(headerDrag, true, true), 'reorder');
+  assert.strictEqual(
+    updateHeaderPointer(headerDrag, 101, 30, 2).reorder,
+    true,
+    'crossing the drag threshold permanently suppresses the sort click'
+  );
+  const injectedHeaderPointerUpdate = Function(
+    `'use strict'; return (${updateHeaderPointer.toString()});`
+  )();
+  assert.strictEqual(
+    injectedHeaderPointerUpdate(headerStart, 105, 30, 2).reorder,
+    true,
+    'the toString-injected webview helper must be self-contained at the 5px boundary'
+  );
+  assert.deepStrictEqual(moveResultColumn([0, 1, 2, 3], 1, 3), [0, 2, 3, 1]);
+  assert.deepStrictEqual(moveResultColumnBy(4, 2, -1), { sourceColumn: 2, targetColumn: 1 });
+  assert.strictEqual(moveResultColumnBy(4, 0, -1), null);
+  assert.strictEqual(fullResultColumnSelection(undefined, 1, 0, false), undefined);
+  assert.deepStrictEqual(
+    fullResultColumnSelection(undefined, 1, 3, false),
+    { anchorRow: 0, anchorColumn: 1, focusRow: 2, focusColumn: 1 }
+  );
+  assert.deepStrictEqual(
+    fullResultColumnSelection(
+      { anchorRow: 0, anchorColumn: 2, focusRow: 2, focusColumn: 2 },
+      0,
+      3,
+      true
+    ),
+    { anchorRow: 0, anchorColumn: 2, focusRow: 2, focusColumn: 0 }
+  );
+  assert.strictEqual(resultTableAriaSort(false), 'none');
+  assert.strictEqual(resultTableAriaSort(true, 'asc'), 'ascending');
+  assert.strictEqual(resultTableAriaSort(true, 'desc'), 'descending');
+  assert.strictEqual(resultTableSortIndicator(false), '');
+  assert.strictEqual(resultTableSortIndicator(true, 'asc'), '▲');
+  assert.strictEqual(resultTableSortIndicator(true, 'desc'), '▼');
+  assert.strictEqual(
+    resultTableHeaderAriaLabel('price', 1, 4, true, 'desc'),
+    'price, column 2 of 4, sorted descending; click to sort, drag to reorder, ' +
+      'Control or Command click to select column'
+  );
+  assert.strictEqual(absoluteDisplayRowClass(0), 'row-even');
+  assert.strictEqual(absoluteDisplayRowClass(1), 'row-odd');
+  assert.strictEqual(absoluteDisplayRowClass(250), 'row-even');
+  assert.strictEqual(absoluteDisplayRowClass(251), 'row-odd');
+
   let hiddenSeriesKeys = updateHiddenChartSeriesKeys([], ['price', 'size'], ['price']);
   assert.deepStrictEqual(hiddenSeriesKeys, ['price']);
   for (const refreshPath of [
@@ -3743,7 +3951,7 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="includeHeaders"'), 1);
   assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="includeRowIndex"'), 1);
   assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="searchInput"'), 1);
-  assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="interactionMode"'), 1);
+  assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="interactionMode"'), 0);
   assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="chartType"'), 1);
   assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="chartGroupColumn"'), 1);
   assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="refineChartZoom"'), 1);
@@ -3804,10 +4012,7 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('.settings-row > span {\n      overflow-wrap: anywhere;\n    }'), true);
   assert.strictEqual(settingsMenuSource.includes('<span>View</span>'), true);
   assert.strictEqual(settingsMenuSource.includes('id="autoFit"'), true);
-  assert.strictEqual(settingsMenuSource.includes('id="interactionMode"'), true);
-  assert.strictEqual(settingsMenuSource.includes('<option value="drag">Drag</option>'), true);
-  assert.strictEqual(settingsMenuSource.includes('<option value="select">Select</option>'), true);
-  assert.strictEqual(settingsMenuSource.includes('<option value="sort">Sort</option>'), true);
+  assert.strictEqual(settingsMenuSource.includes('Header mode'), false);
   assert.strictEqual(settingsMenuSource.includes('id="searchInput"'), true);
   assert.strictEqual(settingsMenuSource.includes('<span>Data server</span>'), true);
   assert.strictEqual(settingsMenuSource.includes('id="localDataServerBadge" class="tool-summary-status">Stopped</span>'), true);
@@ -3831,8 +4036,23 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('id="exportChart" hidden disabled'), true);
   assert.strictEqual(resultsPanelSource.includes('id="resetChartZoom" disabled'), true);
   assert.strictEqual(resultsPanelSource.includes('id="refineChartZoom" disabled'), true);
+  assert.strictEqual(resultsPanelSource.includes('id="panChartLeft" disabled'), true);
+  assert.strictEqual(resultsPanelSource.includes('id="panChartRight" disabled'), true);
+  assert.strictEqual(resultsPanelSource.includes('Shift drag to pan x'), true);
+  assert.strictEqual(resultsPanelSource.includes('.chart-canvas-wrap:focus'), true);
+  assert.strictEqual(resultsPanelSource.includes('.header .cell:focus'), true);
+  assert.strictEqual(resultsPanelSource.includes(':focus-visible'), false);
   assert.strictEqual(resultsPanelSource.includes('role="separator" aria-orientation="horizontal"'), true);
   assert.strictEqual(resultsPanelSource.includes('function chartCanExport()'), true);
+  const chartCanExportSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function chartCanExport()'),
+    resultsPanelSource.indexOf('function chartCanRefineZoom()')
+  );
+  assert.strictEqual(
+    chartCanExportSource.includes('chartControlsDirty'),
+    false,
+    'changing controls must leave export enabled for the currently rendered chart'
+  );
   assert.strictEqual(resultsPanelSource.includes('function chartCanRefineZoom()'), true);
   assert.strictEqual(resultsPanelSource.includes('function currentChartZoomRange()'), true);
   assert.strictEqual(resultsPanelSource.includes('function startChartResize(event)'), true);
@@ -3852,10 +4072,14 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('show: chartHiddenSeriesKeys.indexOf(chartRenderedSeriesKeys[index]) === -1'), true);
   assert.strictEqual(resultsPanelSource.includes('const nextSeriesKeys = chartSeriesKeys(chartData);'), true);
   assert.strictEqual(resultsPanelSource.includes('chartRenderedSeriesKeys = nextSeriesKeys;'), true);
+  assert.strictEqual(resultsPanelSource.includes('chartStatus.dataset.intentRequestId'), false);
+  assert.strictEqual(resultsPanelSource.includes('chartStatus.dataset.acceptedRequestId'), false);
+  assert.strictEqual(resultsPanelSource.includes('config.paths = () => null;'), true);
   assert.strictEqual(resultsPanelSource.includes('captureChartSeriesVisibility(self);'), true);
   assert.strictEqual(resultsPanelSource.includes('function decorateChartLegendAccessibility(self)'), true);
-  assert.strictEqual(resultsPanelSource.includes('label.tabIndex = 0;'), true);
-  assert.strictEqual(resultsPanelSource.includes("label.setAttribute('role', 'button');"), true);
+  assert.strictEqual(resultsPanelSource.includes("const labels = Array.from(chartLegend.querySelectorAll('.u-series > th'))"), true);
+  assert.strictEqual(resultsPanelSource.includes("label.setAttribute('role', 'button')"), true);
+  assert.strictEqual(resultsPanelSource.includes("toggle.className = 'chart-legend-toggle';"), false);
   assert.strictEqual(resultsPanelSource.includes("'aria-pressed'"), true);
   assert.strictEqual(resultsPanelSource.includes('chartLegendToggleKey(event.key)'), true);
   assert.strictEqual(resultsPanelSource.includes('syncChartLegendAccessibility(self);'), true);
@@ -3958,11 +4182,22 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(barDrawSource.includes('const maxBodyWidth = Math.max(Number.EPSILON, slotWidth * 0.86);'), true);
   assert.strictEqual(barDrawSource.includes('const barWidth = Math.max(Number.EPSILON, Math.min(28 * pxRatio, maxBodyWidth));'), true);
   assert.strictEqual(barDrawSource.includes('Math.min(28 * pxRatio, maxBodyWidth)'), true);
-  assert.strictEqual(barDrawSource.includes('Dense bar clusters too narrow to distinguish were skipped'), true);
+  assert.strictEqual(barDrawSource.includes('let skippedDenseBars = false;'), true);
+  assert.strictEqual(barDrawSource.includes('denseBins[seriesIndex].set(pixel'), false);
+  assert.strictEqual(barDrawSource.includes('bins.forEach((bin, pixel)'), false);
+  assert.strictEqual(
+    barDrawSource.includes('Dense bar clusters too narrow to distinguish were skipped'),
+    true
+  );
+  assert.strictEqual(barDrawSource.includes('pixel-density strokes'), false);
+  assert.strictEqual(
+    resultsPanelSource.includes('chartCanvasWrap.focus({ preventScroll: true });'),
+    true
+  );
   assert.strictEqual(resultsPanelSource.includes('window.uPlot.paths.bars'), false);
   const chartYScaleSource = resultsPanelSource.slice(
-    resultsPanelSource.indexOf('function chartYScaleRange(min, max)'),
-    resultsPanelSource.indexOf('function chartCandlestickYRange()')
+    resultsPanelSource.indexOf('function chartYScaleRange(self, min, max)'),
+    resultsPanelSource.indexOf('function chartXIsVisible(self, index)')
   );
   assert.strictEqual(chartYScaleSource.includes("chartData.chartType === 'bar'"), true);
   assert.strictEqual(chartYScaleSource.includes('low = Math.min(0, low);'), true);
@@ -3992,6 +4227,11 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resetChartZoomSource.includes('chartData = Object.assign({}, fullData,'), true);
   assert.strictEqual(resetChartZoomSource.includes('drawChart();'), true);
   assert.strictEqual(resetChartZoomSource.includes("chartUPlot.setScale('x', { min: xRange.min, max: xRange.max });"), true);
+  assert.strictEqual(
+    (resetChartZoomSource.match(/chartUPlot\.setScale\('x', \{ min: xRange\.min, max: xRange\.max \}\);/g) || []).length,
+    2,
+    'pending reset redraw and ordinary reset must both restore the immutable full range'
+  );
   assert.strictEqual(resetChartZoomSource.includes("chartUPlot.setScale('x', { min: null, max: null });"), false);
   assert.strictEqual(resetChartZoomSource.includes('updateChartZoomState(chartUPlot);'), true);
   assert.strictEqual(resetChartZoomSource.includes('chartZoomed = false;'), false);
@@ -4050,7 +4290,7 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('function queueChartAutoRefine()'), true);
   assert.strictEqual(resultsPanelSource.includes('const CHART_AUTO_REFINE_DELAY_MS = 450;'), true);
   assert.strictEqual(resultsPanelSource.includes('chartLastAutoRefineKey'), true);
-  assert.strictEqual(resultsPanelSource.includes('chartZoomShouldRequestRange(chartZoomLifecycle, range, chartLastAutoRefineKey)'), true);
+  assert.strictEqual(resultsPanelSource.includes('chartZoomShouldRequestRange(chartZoomLifecycle, clamped, chartLastAutoRefineKey)'), true);
   assert.strictEqual(resultsPanelSource.includes('function chartCanQueueAutoRefine()'), true);
   assert.strictEqual(resultsPanelSource.includes('function chartVisibleSamplePointCount(range)'), false);
   assert.strictEqual(resultsPanelSource.includes('function chartAutoRefineMinVisiblePoints()'), false);
@@ -4072,9 +4312,11 @@ function panelFormatElapsedMs(milliseconds, display) {
     resultsPanelSource.indexOf('function queueChartAutoRefine()'),
     resultsPanelSource.indexOf('function chartCanQueueAutoRefine()')
   );
+  assert.strictEqual(chartAutoRefineSource.includes('function completeChartViewport(range, reason)'), true);
+  assert.strictEqual(chartAutoRefineSource.includes('clampChartViewport(range, chartZoomLifecycle.fullRange)'), true);
   assert.strictEqual(chartAutoRefineSource.includes('chartZoomLifecycle.pendingRequestId !== null'), true);
-  assert.strictEqual(chartAutoRefineSource.includes("'Auto-refining nested zoom range...'"), true);
-  assert.strictEqual(chartAutoRefineSource.includes('chartZoomAutoRefineQueueAction(chartAutoRefineScheduledRange, range)'), true);
+  assert.strictEqual(chartAutoRefineSource.includes("'Auto-refining nested chart view...'"), true);
+  assert.strictEqual(chartAutoRefineSource.includes('chartZoomAutoRefineQueueAction(chartAutoRefineScheduledRange, clamped)'), true);
   assert.strictEqual(chartAutoRefineSource.includes("action.type === 'duplicate'"), true);
   assert.strictEqual(chartAutoRefineSource.includes("action.type === 'flush'"), true);
   assert.strictEqual(chartAutoRefineSource.includes('action.ranges.forEach'), true);
@@ -4085,6 +4327,50 @@ function panelFormatElapsedMs(milliseconds, display) {
   );
   assert.strictEqual(resultsPanelSource.includes('message.minSampledPoints'), false);
   assert.strictEqual(resultsPanelSource.includes('message.maxSampledPoints'), false);
+  assert.strictEqual(resultsPanelSource.includes("panChartByFraction(-0.2, 'button')"), true);
+  assert.strictEqual(resultsPanelSource.includes("panChartByFraction(0.2, 'button')"), true);
+  assert.strictEqual(resultsPanelSource.includes('!chartZoomLifecycle.fullRange || chartControlsDirty'), true);
+  const panByFractionSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function panChartByFraction(fraction, reason)'),
+    resultsPanelSource.indexOf('function startChartPan(event)')
+  );
+  assert.strictEqual(panByFractionSource.includes('if (chartControlsDirty)'), true);
+  const localViewportSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function setChartViewportLocally(range)'),
+    resultsPanelSource.indexOf('function panChartByFraction(fraction, reason)')
+  );
+  assert.strictEqual(
+    localViewportSource.includes("chartUPlot.setScale('y', { min: null, max: null });"),
+    true,
+    'all local pan/zoom feedback must leave Y on automatic scaling'
+  );
+  const startChartPanSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function startChartPan(event)'),
+    resultsPanelSource.indexOf('function updateChartPan(event)')
+  );
+  assert.strictEqual(startChartPanSource.includes('chartControlsDirty && event.button === 0'), true);
+  assert.strictEqual(startChartPanSource.includes('event.stopPropagation();'), true);
+  const updateChartPanSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function updateChartPan(event)'),
+    resultsPanelSource.indexOf('function finishChartPan(event)')
+  );
+  assert.strictEqual(updateChartPanSource.includes('setChartViewportLocally(range);'), true);
+  assert.strictEqual(updateChartPanSource.includes('requestChartDataForRange'), false);
+  assert.strictEqual(updateChartPanSource.includes('vscode.postMessage'), false);
+  const finishChartPanSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function finishChartPan(event)'),
+    resultsPanelSource.indexOf('function clearChartPanState()')
+  );
+  assert.strictEqual(finishChartPanSource.includes("completeChartViewport(range, 'pan')"), true);
+  assert.strictEqual(
+    finishChartPanSource.includes('updateChartPan(event);'),
+    true,
+    'the final mouseup coordinate must be applied before the settled pan is requested'
+  );
+  assert.strictEqual(resultsPanelSource.includes("completeChartViewport(range, 'pan')"), true);
+  assert.strictEqual(resultsPanelSource.includes("event.key === 'Home'"), true);
+  assert.strictEqual(resultsPanelSource.includes('Refining chart to zoom range'), false);
+  assert.strictEqual(resultsPanelSource.includes('Refining the current chart view'), true);
   assert.strictEqual(packageJson.dependencies.uplot, '^1.6.32');
   assert.strictEqual(/cdn\.jsdelivr|unpkg|cdnjs|https:\/\/cdn/i.test(resultsPanelSource), false);
   assert.strictEqual(resultsPanelSource.includes("vscode.postMessage({ type: 'startLocalDataServer' })"), true);
@@ -4682,6 +4968,14 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelInternals.chartRangeIsZoomed({ min: 0, max: 100 }, { min: 0, max: 100 }), false);
   assert.strictEqual(resultsPanelInternals.chartRangeIsZoomed({ min: 0, max: 100 }, { min: 1e-8, max: 100 - 1e-8 }), false);
   assert.strictEqual(resultsPanelInternals.chartRangeIsZoomed({ min: 0, max: 100 }, { min: 10, max: 90 }), true);
+  assert.strictEqual(
+    resultsPanelInternals.chartRangeIsZoomed(
+      { min: 0, max: 1e-12 },
+      { min: 1e-14, max: 0.99e-12 }
+    ),
+    true,
+    'sub-nanounit domains must not be swallowed by an absolute zoom tolerance floor'
+  );
   assert.strictEqual(resultsPanelInternals.chartRangeIsZoomed({ min: 0, max: 100 }, null), false);
   assert.strictEqual(resultsPanelInternals.chartColumnSignature(['time', 'sym', 'price']), '["time","sym","price"]');
   assert.ok(resultsPanelInternals.chartSelectionStorageKey(['time', 'sym', 'price']).startsWith('kdb-sqltools.results.kdbPanel.chartSelection.v1.'));
@@ -4934,7 +5228,10 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsDocsSource.includes('auto-thinned readable x-axis labels'), true);
   assert.strictEqual(chartingDocsSource.includes('uPlot powers the built-in chart'), true);
   assert.strictEqual(chartingDocsSource.includes('cursor/crosshair tooltip'), true);
-  assert.strictEqual(chartingDocsSource.includes('drag-select zoom'), true);
+  assert.strictEqual(chartingDocsSource.includes('x-only drag zoom'), true);
+  assert.strictEqual(chartingDocsSource.includes('`Shift`+drag x pan'), true);
+  assert.strictEqual(resultsDocsSource.includes('5 CSS pixels'), true);
+  assert.strictEqual(resultsDocsSource.includes('`aria-sort`'), true);
   assert.strictEqual(chartingDocsSource.includes('Reset zoom'), true);
   assert.strictEqual(chartingDocsSource.includes('restores the immutable original full sample and x-range'), true);
   assert.strictEqual(chartingDocsSource.includes('disables again at that baseline'), true);
@@ -5011,7 +5308,9 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(kdbResultsSource.includes('filterColumnarPanelResult'), true);
   assert.strictEqual(resultsPanelSource.includes('hiddenColumnNames'), true);
   assert.strictEqual(resultsPanelSource.includes('private hiddenColumnSchema'), true);
-  assert.strictEqual(resultsPanelSource.includes('hiddenColumnNamesForNewResult(result.table.columns)'), true);
+  assert.strictEqual(resultsPanelSource.includes('hiddenColumnOrdinalsForNewResult(result.table.columns)'), true);
+  assert.strictEqual(resultsPanelSource.includes('hiddenSourceOrdinals'), true);
+  assert.strictEqual(resultsPanelSource.includes('visibleOrdinals[columnIndex] !== sourceOrdinal'), true);
   assert.strictEqual(resultsPanelSource.includes('sameColumnNames(this.hiddenColumnSchema, columns)'), true);
   assert.strictEqual(resultsPanelSource.includes('At least one column must stay visible'), false);
   assert.strictEqual(resultsPanelSource.includes("message.type === 'hideAllColumns'"), true);
@@ -5100,12 +5399,12 @@ function panelFormatElapsedMs(milliseconds, display) {
   );
   assert.strictEqual(resultsPanelSource.includes('measuredColumnTextWidth(data.columns[column])'), true);
   assert.strictEqual(resultsPanelSource.includes('AUTO_COLUMN_WIDTH_CAP'), true);
-  const visibleColumnPositionsSource = resultsPanelSource.slice(
-    resultsPanelSource.indexOf('private visibleColumnPositions(result: KdbPanelTableResult)'),
-    resultsPanelSource.indexOf('private orderedColumnNames(columns: string[])')
+  const visibleColumnOrdinalsSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('private visibleColumnOrdinals(result: KdbPanelTableResult)'),
+    resultsPanelSource.indexOf('private orderedColumnOrdinals(columns: string[])')
   );
-  assert.strictEqual(visibleColumnPositionsSource.includes('sourceColumnPositions('), true);
-  assert.strictEqual(resultsPanelSource.includes('columnPositions: this.visibleColumnPositions(result)'), true);
+  assert.strictEqual(visibleColumnOrdinalsSource.includes('this.orderedColumnOrdinals('), true);
+  assert.strictEqual(resultsPanelSource.includes('columnPositions: sourceOrdinals'), true);
   const columnWidthResolutionSource = resultsPanelSource.slice(
     resultsPanelSource.indexOf('function columnWidth(column)'),
     resultsPanelSource.indexOf('function requestSlice(rows, columns)')
@@ -5125,7 +5424,7 @@ function panelFormatElapsedMs(milliseconds, display) {
     resultsPanelSource.indexOf('private async updateColumnWidth(message: any)'),
     resultsPanelSource.indexOf('private async resetColumnWidths()')
   );
-  assert.strictEqual(updateColumnWidthSource.includes('this.visibleColumnPositions(this.result).indexOf(position) === -1'), true);
+  assert.strictEqual(updateColumnWidthSource.includes('this.visibleColumnOrdinals(this.result).indexOf(position) === -1'), true);
   assert.strictEqual(updateColumnWidthSource.includes('updatePositionalColumnWidth('), true);
   assert.strictEqual(
     updateColumnWidthSource.includes('positionalColumnWidthPersistence.update('),
@@ -5181,6 +5480,7 @@ function panelFormatElapsedMs(milliseconds, display) {
     resultsPanelSource.indexOf('function queueSearchRows()')
   );
   assert.strictEqual(resetWindowStateSource.includes('resizeState = null;'), true);
+  assert.strictEqual(resetWindowStateSource.includes('headerPointerState = null;'), true);
   assert.strictEqual(resetWindowStateSource.includes("document.body.style.cursor = '';"), true);
   const resetColumnWidthsSource = resultsPanelSource.slice(
     resultsPanelSource.indexOf('function resetColumnWidthOverrides()'),
@@ -5194,11 +5494,7 @@ function panelFormatElapsedMs(milliseconds, display) {
   );
   assert.strictEqual(columnWidthsMessageSource.includes('updateAutoColumnWidthsFromSlice();'), true);
   assert.strictEqual(packageSource.includes('hiddenColumn'), false, 'hidden columns must not be globally persisted');
-  assert.deepStrictEqual(htmlSelectOptions(resultsPanelSource, 'interactionMode'), ['drag', 'select', 'sort']);
-  assert.ok(
-    resultsPanelSource.indexOf('<option value="drag">Drag</option>') < resultsPanelSource.indexOf('<option value="select">Select</option>'),
-    'header mode must default to Drag'
-  );
+  assert.strictEqual(resultsPanelSource.includes('function headerMode()'), false);
   const visibleTableSource = resultsPanelSource.slice(
     resultsPanelSource.indexOf('private visibleTable'),
     resultsPanelSource.indexOf('private visibleSortState')
@@ -5241,6 +5537,18 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(sortColumnSource.includes('sortedColumnarRowOrder(table, columnIndex, nextSort.direction, panelCellTextOptions())'), true);
   assert.strictEqual(sortColumnSource.includes('perfSpan(\'results-panel.sort\''), true);
   assert.strictEqual(sortColumnSource.includes('SORT_CONFIRM_ROW_THRESHOLD'), true);
+  assert.strictEqual(sortColumnSource.includes('const sortId = ++this.activeSortId;'), true);
+  assert.strictEqual(sortColumnSource.includes('this.sortIntentState'), true);
+  assert.strictEqual(
+    sortColumnSource.includes('this.activeSortId === sortId && this.isCurrentVersion(requestVersion)'),
+    true,
+    'same-version asynchronous sort completions must be guarded by their intent generation'
+  );
+  assert.strictEqual(
+    sortColumnSource.includes('if (!isCurrentSort()) {\n          return;\n        }\n        sortedRowOrder'),
+    true,
+    'stale sort work must be rejected before the synchronous column scan'
+  );
   const sortHelperSource = kdbResultsSource.slice(
     kdbResultsSource.indexOf('export function sortedColumnarRowOrder'),
     kdbResultsSource.indexOf('export function compareColumnarCellText')
@@ -5251,14 +5559,33 @@ function panelFormatElapsedMs(milliseconds, display) {
     resultsPanelSource.indexOf('function onColumnMouseDown'),
     resultsPanelSource.indexOf('function onColumnMouseEnter')
   );
-  assert.strictEqual(columnMouseSource.includes("if (headerMode() === 'sort')"), true);
-  assert.strictEqual(columnMouseSource.includes("if (headerMode() === 'drag')"), true);
-  assert.strictEqual(columnMouseSource.includes("type: 'sortColumn'"), true);
+  assert.strictEqual(columnMouseSource.includes('!hasTableColumns()'), true);
+  assert.strictEqual(columnMouseSource.includes('beginHeaderPointer('), true);
+  assert.strictEqual(columnMouseSource.includes('headerMode()'), false);
   assert.strictEqual(resultsPanelSource.includes("type: 'reorderColumn'"), true);
-  assert.ok(
-    columnMouseSource.indexOf("type: 'sortColumn'") < columnMouseSource.indexOf("dragging = true"),
-    'header click sorting must require Sort mode before column selection starts'
+  assert.strictEqual(resultsPanelSource.includes("type: 'sortColumn'"), true);
+  assert.strictEqual(resultsPanelSource.includes('headerPointerIntent('), true);
+  assert.strictEqual(resultsPanelSource.includes('fullResultColumnSelection('), true);
+  const fullColumnSelectionSource = resultsPanelSource.slice(
+    resultsPanelSource.indexOf('function selectFullColumn'),
+    resultsPanelSource.indexOf('function onColumnKeyDown')
   );
+  assert.strictEqual(fullColumnSelectionSource.includes('viewport.focus'), false);
+  assert.strictEqual(resultsPanelSource.includes('moveResultColumnBy('), true);
+  assert.strictEqual(resultsPanelSource.includes("event.altKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')"), true);
+  assert.strictEqual(resultsPanelSource.includes("(event.ctrlKey || event.metaKey) && event.key === ' '"), true);
+  assert.strictEqual(resultsPanelSource.includes('cell.tabIndex = 0;'), true);
+  assert.strictEqual(resultsPanelSource.includes("cell.setAttribute('aria-sort', options.ariaSort);"), true);
+  assert.strictEqual(resultsPanelSource.includes("rowElement.className = 'row ' + absoluteDisplayRowClass(row);"), true);
+  assert.strictEqual(
+    resultsPanelSource.includes('var(--vscode-tree-tableOddRowsBackground, rgba(127, 127, 127, 0.055))'),
+    true
+  );
+  assert.strictEqual(resultsPanelSource.includes('@media (forced-colors: active)'), true);
+  assert.strictEqual(resultsPanelSource.includes('body.vscode-high-contrast .row.row-odd'), true);
+  assert.strictEqual(resultsPanelSource.includes('body.vscode-high-contrast-light .row.row-odd'), true);
+  assert.strictEqual(resultsPanelSource.includes('var(--vscode-tree-tableOddRowsBackground, transparent)'), true);
+  assert.strictEqual(resultsPanelSource.includes('color-mix'), false);
   const postSliceSource = resultsPanelSource.slice(
     resultsPanelSource.indexOf('private postSlice'),
     resultsPanelSource.indexOf('private async copyRange')
@@ -5867,7 +6194,7 @@ function panelFormatElapsedMs(milliseconds, display) {
 });
 
 function loadResultsPanelInternals() {
-  const filename = path.join(__dirname, '..', 'out', 'results-panel.js');
+  const filename = path.join(TEST_OUT_ROOT, 'results-panel.js');
   const source = fs.readFileSync(filename, 'utf8') +
     '\nmodule.exports.__test = { chartColumnSignature, chartDecimalPlacesSettingValue, chartMaxSourceRowsSettingValue, chartPngBytesFromDataUrl, chartRangeIsZoomed, chartSelectionStorageKey, columnarToXlsx, compatibleChartSelection, normalizePanelSettingUpdate, normalizeSavedChartSelection, panelSettingConfigKey, panelSizeSettingValue, renderResultsPanelHtml: extensionPath => KdbResultsPanel.prototype.html.call({}, { extensionPath }, { cspSource: "vscode-webview:", asWebviewUri: uri => String(uri && uri.fsPath || "") }) };';
   const testModule = new Module(filename, module);
