@@ -5198,7 +5198,7 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('id="settingsLocalDataServerFullExportCellLimit"'), true);
   assert.strictEqual(packageJson.contributes.configuration.properties['kdb-sqltools.results.copyExportConfirmCellThreshold'].minimum, 1);
   assert.strictEqual(packageJson.contributes.configuration.properties['kdb-sqltools.results.localDataServerFullExportCellLimit'].minimum, 1);
-  assert.strictEqual(packageJson.version, '0.3.20');
+  assert.strictEqual(packageJson.version, '0.3.21');
   assert.strictEqual(readmeSource.includes('`kdb+: Select kdb Panel Query Connection`'), true);
   assert.strictEqual(readmeSource.includes('With multiple kdb connections and no valid session choice'), true);
   assert.strictEqual(readmeSource.includes('The session target stores only a non-secret connection ID.'), true);

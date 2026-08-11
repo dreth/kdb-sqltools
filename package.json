@@ -2,7 +2,7 @@
   "name": "kdb-sqltools",
   "displayName": "SQLTools kdb Driver",
   "description": "SQLTools driver for kdb+/q using q IPC over TCP",
-  "version": "0.3.20",
+  "version": "0.3.21",
   "engines": {
     "vscode": "^1.42.0"
   },
@@ -19,6 +19,8 @@
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
+    "package": "npm run compile && npx @vscode/vsce package --out kdb-sqltools-0.3.21.vsix",
+    "package:vsix": "npm run compile && npx @vscode/vsce package --out kdb-sqltools-0.3.21.vsix",
     "test:unit": "npm run compile && node test/run.js",
     "test:e2e": "npm run compile && npm run prepare:e2e-linux-libs && node test/e2e/run.js",
     "test": "npm run compile && node test/run.js && npm run prepare:e2e-linux-libs && node test/e2e/run.js",

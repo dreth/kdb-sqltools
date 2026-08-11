@@ -6741,7 +6741,8 @@ export class KdbResultsPanel {
               column,
               data.columns.length,
               !!data.sort && data.sort.columnName === data.columns[column],
-              data.sort ? data.sort.direction : undefined
+              data.sort ? data.sort.direction : undefined,
+              isColumnSelected(column, range)
             )
           }));
         }

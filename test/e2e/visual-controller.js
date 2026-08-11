@@ -3,6 +3,9 @@ const fs = require('fs');
 const path = require('path');
 
 const POLL_MS = 200;
+const NATIVE_INPUT_ATTEMPTS = 3;
+const NATIVE_INPUT_DELAY_MS = 30;
+const NATIVE_RECEIPT_TIMEOUT_MS = 750;
 const TARGET_TIMEOUT_MS = 60000;
 const REFINEMENT_TIMEOUT_MS = 20000;
 const GRID_TIMEOUT_MS = 90000;
@@ -971,6 +974,53 @@ async function visibleWebviewRect(root) {
   return rect;
 }
 
+async function hitTestedWebviewRect(root, innerPoint, label) {
+  const response = await root.send('Runtime.evaluate', {
+    expression: `(() => {
+      const inner = ${JSON.stringify(innerPoint)};
+      const frames = Array.from(document.querySelectorAll('iframe.webview.ready'));
+      const active = document.activeElement;
+      const candidates = frames.map(frame => {
+        const rect = frame.getBoundingClientRect();
+        const style = getComputedStyle(frame);
+        const x = rect.left + Number(inner.x);
+        const y = rect.top + Number(inner.y);
+        return {
+          frame,
+          rect,
+          x,
+          y,
+          visible: rect.width > 0 && rect.height > 0 &&
+            style.display !== 'none' && style.visibility !== 'hidden' &&
+            Number(style.opacity || 1) > 0 &&
+            x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom &&
+            x >= 0 && x < window.innerWidth && y >= 0 && y < window.innerHeight
+        };
+      }).filter(candidate => candidate.visible &&
+        document.elementFromPoint(candidate.x, candidate.y) === candidate.frame);
+      const selected = candidates.find(candidate => candidate.frame === active) ||
+        (candidates.length === 1 ? candidates[0] : null);
+      return selected ? {
+        left: Number(selected.rect.left),
+        top: Number(selected.rect.top),
+        width: Number(selected.rect.width),
+        height: Number(selected.rect.height),
+        focused: selected.frame === active,
+        candidateCount: candidates.length
+      } : {
+        candidateCount: candidates.length,
+        activeIsWebview: active instanceof HTMLIFrameElement && active.matches('iframe.webview.ready')
+      };
+    })()`,
+    returnByValue: true,
+  });
+  const value = response && response.result ? response.result.value : null;
+  if (!value || !(value.width > 0) || !(value.height > 0)) {
+    throw new Error(`Could not uniquely hit-test the visible webview for ${label}: ${JSON.stringify(value)}`);
+  }
+  return value;
+}
+
 async function waitForChartState(client, predicate, timeoutMs, label) {
   const deadline = Date.now() + timeoutMs;
   let latest = null;
@@ -1183,7 +1233,13 @@ async function exerciseGridInteractions(session, expectedHeaders) {
     GRID_TIMEOUT_MS,
     'threshold drag reorder without sort'
   );
-  await dispatchGridHeaderKey(session, 1, 'ArrowLeft', { altKey: true });
+  await dispatchGridHeaderKey(session, 1, 'ArrowLeft', { altKey: true }, {
+    label: 'Alt+Left header reorder restore',
+    before: state => gridHasHeaders(state, reorderedHeaders) &&
+      state.headerAriaSort.every(value => value === 'none'),
+    after: state => gridHasHeaders(state, expectedHeaders) &&
+      state.headerAriaSort.every(value => value === 'none'),
+  });
   await waitForGridState(
     client,
     state => gridHasHeaders(state, expectedHeaders) && state.headerAriaSort.every(value => value === 'none'),
@@ -1196,9 +1252,21 @@ async function exerciseGridInteractions(session, expectedHeaders) {
   // execution context does not reliably focus its embedding iframe.
   await activateGridHeader(session, 0);
   await waitForGridState(client, state => state.headerAriaSort[0] === 'ascending', GRID_TIMEOUT_MS, 'native focus header sort');
-  await dispatchGridHeaderKey(session, 0, 'Enter');
+  await dispatchGridHeaderKey(session, 0, 'Enter', {}, {
+    label: 'Enter header sort',
+    before: state => JSON.stringify(state.headerAriaSort) ===
+      JSON.stringify(['ascending', 'none', 'none', 'none']),
+    after: state => JSON.stringify(state.headerAriaSort) ===
+      JSON.stringify(['descending', 'none', 'none', 'none']),
+  });
   await waitForGridState(client, state => state.headerAriaSort[0] === 'descending', GRID_TIMEOUT_MS, 'Enter header sort');
-  await dispatchGridHeaderKey(session, 0, ' ');
+  await dispatchGridHeaderKey(session, 0, ' ', {}, {
+    label: 'keyboard source-order restore',
+    before: state => JSON.stringify(state.headerAriaSort) ===
+      JSON.stringify(['descending', 'none', 'none', 'none']),
+    after: state => gridHasHeaders(state, expectedHeaders) &&
+      state.headerAriaSort.every(value => value === 'none'),
+  });
   await waitForGridState(
     client,
     state => gridHasHeaders(state, expectedHeaders) && state.headerAriaSort.every(value => value === 'none'),
@@ -1213,7 +1281,12 @@ async function exerciseGridInteractions(session, expectedHeaders) {
     GRID_TIMEOUT_MS,
     'Control+click full-column selection'
   );
-  await dispatchGridHeaderKey(session, 1, ' ', { ctrlKey: true });
+  await dispatchGridHeaderKey(session, 1, ' ', { ctrlKey: true }, {
+    label: 'Control+Space full-column selection',
+    before: state => JSON.stringify(state.selectedHeaderColumns) === JSON.stringify([0]),
+    after: state => JSON.stringify(state.selectedHeaderColumns) === JSON.stringify([1]) &&
+      state.activeHeaderColumn === 1,
+  });
   await waitForGridState(
     client,
     state => JSON.stringify(state.selectedHeaderColumns) === JSON.stringify([1]) &&
@@ -1221,7 +1294,16 @@ async function exerciseGridInteractions(session, expectedHeaders) {
     GRID_TIMEOUT_MS,
     'Control+Space full-column selection with retained header focus'
   );
-  await dispatchGridHeaderKey(session, 3, ' ', { ctrlKey: true, shiftKey: true });
+  await dispatchGridHeaderKey(session, 3, ' ', { ctrlKey: true, shiftKey: true }, {
+    label: 'Control+Shift header selection extension',
+    // Focusing column 3 is safe setup and intentionally changes only the
+    // active header before the native selection-extension key is dispatched.
+    before: state => JSON.stringify(state.selectedHeaderColumns) === JSON.stringify([1]),
+    after: state => JSON.stringify(state.selectedHeaderColumns) === JSON.stringify([1, 2, 3]) &&
+      JSON.stringify(state.ariaSelectedHeaderColumns) === JSON.stringify([1, 2, 3]) &&
+      JSON.stringify(state.selectedBodyColumns) === JSON.stringify([1, 2, 3]) &&
+      state.activeHeaderColumn === 3,
+  });
   const extended = await waitForGridState(
     client,
     state => JSON.stringify(state.selectedHeaderColumns) === JSON.stringify([1, 2, 3]) &&
@@ -1305,61 +1387,289 @@ async function dragGridHeader(session, sourceColumn, targetColumn) {
   });
 }
 
-async function dispatchGridHeaderKey(session, column, key, options = {}) {
-  await focusGridFrame(session);
-  const focused = await session.webview.send('Runtime.evaluate', {
-    expression: `(() => {
-      const cell = document.querySelector('#header .cell[data-column="${column}"]');
-      if (!cell) return false;
-      cell.focus();
-      return document.activeElement === cell;
-    })()`,
-    returnByValue: true,
-    ...(session.webview.gridContextId === undefined ? {} : { contextId: session.webview.gridContextId }),
-  });
-  if (!focused || !focused.result || focused.result.value !== true) {
-    throw new Error(`Could not focus grid header ${column}`);
+async function dispatchGridHeaderKey(session, column, key, options = {}, retryGuard) {
+  if (!retryGuard || typeof retryGuard.before !== 'function' ||
+    typeof retryGuard.after !== 'function') {
+    throw new Error(`Native grid key ${key} requires exact retry state guards`);
   }
   const keyDescription = cdpKeyDescription(key);
   const modifiers = inputModifiers(options);
-  await session.root.send('Input.dispatchKeyEvent', {
-    type: 'rawKeyDown',
-    modifiers,
-    ...keyDescription,
-  });
-  await session.root.send('Input.dispatchKeyEvent', {
-    type: 'keyUp',
-    modifiers,
-    ...keyDescription,
-  });
+  let lastReceipt = null;
+  let lastSetupError = null;
+  for (let attempt = 1; attempt <= NATIVE_INPUT_ATTEMPTS; attempt += 1) {
+    const phase = await guardedGridInputPhase(session.webview, retryGuard);
+    if (phase === 'after') {
+      if (attempt === 1) {
+        throw new Error(`Native grid key ${key} ${retryGuard.label} was already complete before dispatch`);
+      }
+      return;
+    }
+    const token = crypto.randomBytes(12).toString('hex');
+    let armed = false;
+    try {
+      try {
+        await focusGridHeaderForNativeInput(session, column);
+        await armGridNativeKeyProbe(session.webview, token, key);
+        armed = true;
+      } catch (error) {
+        lastSetupError = error;
+        const setupPhase = await guardedGridInputPhase(session.webview, retryGuard);
+        if (setupPhase === 'after') {
+          return;
+        }
+        await delay(NATIVE_INPUT_DELAY_MS);
+        continue;
+      }
+      await delay(NATIVE_INPUT_DELAY_MS);
+      await session.root.send('Input.dispatchKeyEvent', {
+        type: 'rawKeyDown',
+        modifiers,
+        ...keyDescription,
+      });
+      await delay(NATIVE_INPUT_DELAY_MS);
+      await session.root.send('Input.dispatchKeyEvent', {
+        type: 'keyUp',
+        modifiers,
+        ...keyDescription,
+      });
+      lastReceipt = await waitForGridNativeKeyReceipt(session.webview, token);
+      if (!lastReceipt) {
+        const receiptPhase = await guardedGridInputPhase(session.webview, retryGuard);
+        if (receiptPhase === 'after') {
+          return;
+        }
+        continue;
+      }
+      if (!lastReceipt.trusted || lastReceipt.targetColumn !== column ||
+        lastReceipt.modifiers !== modifiers) {
+        throw new Error(`Native grid key reached an unexpected target: ${JSON.stringify({
+          column,
+          key,
+          modifiers,
+          receipt: lastReceipt,
+        })}`);
+      }
+      return;
+    } finally {
+      if (armed) {
+        await clearGridNativeKeyProbe(session.webview, token);
+      }
+    }
+  }
+  throw new Error(`Native grid key ${key} was not delivered to header ${column} after ` +
+    `${NATIVE_INPUT_ATTEMPTS} guarded attempts; last receipt: ${JSON.stringify(lastReceipt)}; ` +
+    `last setup error: ${lastSetupError ? lastSetupError.message : 'none'}`);
+}
+
+async function guardedGridInputPhase(client, retryGuard) {
+  const state = await gridState(client);
+  if (state && retryGuard.after(state)) {
+    return 'after';
+  }
+  if (state && retryGuard.before(state)) {
+    return 'before';
+  }
+  throw new Error(`Native input ${retryGuard.label} reached an unsafe retry state: ` +
+    JSON.stringify(compactGridState(state)));
 }
 
 async function focusGridFrame(session) {
-  const response = await session.webview.send('Runtime.evaluate', {
+  let lastError = null;
+  for (let attempt = 1; attempt <= NATIVE_INPUT_ATTEMPTS; attempt += 1) {
+    let point;
+    let outer;
+    try {
+      await session.root.send('Page.bringToFront');
+      point = await gridElementHitPoint(
+        session.webview,
+        '#outputControlsLabel',
+        'inert grid-toolbar focus label'
+      );
+      outer = await hitTestedWebviewRect(
+        session.root,
+        point,
+        'inert grid-toolbar focus label'
+      );
+    } catch (error) {
+      lastError = error;
+      await delay(NATIVE_INPUT_DELAY_MS);
+      continue;
+    }
+    const x = outer.left + point.x;
+    const y = outer.top + point.y;
+    await session.root.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+    await delay(NATIVE_INPUT_DELAY_MS);
+    await session.root.send('Input.dispatchMouseEvent', {
+      type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1,
+    });
+    await delay(NATIVE_INPUT_DELAY_MS);
+    await session.root.send('Input.dispatchMouseEvent', {
+      type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1,
+    });
+    if (await waitForGridDocumentFocus(session.webview)) {
+      return;
+    }
+    lastError = new Error('Native focus click did not focus the grid document');
+  }
+  throw new Error(`Could not focus the grid webview after ${NATIVE_INPUT_ATTEMPTS} native attempts: ` +
+    (lastError ? lastError.message : 'unknown focus failure'));
+}
+
+async function focusGridHeaderForNativeInput(session, column) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= NATIVE_INPUT_ATTEMPTS; attempt += 1) {
+    try {
+      await focusGridFrame(session);
+      const focused = await session.webview.send('Runtime.evaluate', {
+        expression: `(async () => {
+          const cell = document.querySelector('#header .cell[data-column="${column}"]');
+          if (!cell) return false;
+          cell.focus({ preventScroll: true });
+          await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          return document.hasFocus() && document.activeElement === cell && cell.isConnected;
+        })()`,
+        returnByValue: true,
+        awaitPromise: true,
+        ...(session.webview.gridContextId === undefined ? {} : { contextId: session.webview.gridContextId }),
+      });
+      if (focused && focused.result && focused.result.value === true) {
+        return;
+      }
+      lastError = new Error('Grid header was not the focused connected element');
+    } catch (error) {
+      lastError = error;
+    }
+    await delay(NATIVE_INPUT_DELAY_MS);
+  }
+  throw new Error(`Could not establish native focus on grid header ${column}: ` +
+    (lastError ? lastError.message : 'unknown header focus failure'));
+}
+
+async function gridElementHitPoint(client, selector, label) {
+  const response = await client.send('Runtime.evaluate', {
     expression: `(() => {
-      const focusAnchor = document.getElementById('outputControlsLabel');
-      if (!focusAnchor) return null;
-      const rect = focusAnchor.getBoundingClientRect();
-      return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+      const element = document.querySelector(${JSON.stringify(selector)});
+      if (!element || !element.isConnected) return null;
+      const rect = element.getBoundingClientRect();
+      const x = rect.left + rect.width / 2;
+      const y = rect.top + rect.height / 2;
+      const hit = document.elementFromPoint(x, y);
+      return {
+        x: Number(x),
+        y: Number(y),
+        width: Number(rect.width),
+        height: Number(rect.height),
+        hit: hit === element || element.contains(hit),
+        hitTag: hit ? String(hit.tagName || '') : '',
+        hitClass: hit ? String(hit.className || '') : ''
+      };
     })()`,
     returnByValue: true,
-    ...(session.webview.gridContextId === undefined ? {} : { contextId: session.webview.gridContextId }),
+    ...(client.gridContextId === undefined ? {} : { contextId: client.gridContextId }),
   });
-  const rect = response && response.result ? response.result.value : null;
-  if (!rect || !(rect.width > 0) || !(rect.height > 0)) {
-    throw new Error('Could not locate the inert grid-toolbar label used to focus its webview frame');
+  const point = response && response.result ? response.result.value : null;
+  if (!point || !(point.width > 0) || !(point.height > 0) || point.hit !== true) {
+    throw new Error(`Could not hit-test ${label}: ${JSON.stringify(point)}`);
   }
-  const outer = await visibleWebviewRect(session.root);
-  const x = outer.left + rect.left + rect.width / 2;
-  const y = outer.top + rect.top + rect.height / 2;
-  await session.root.send('Page.bringToFront');
-  await session.root.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
-  await session.root.send('Input.dispatchMouseEvent', {
-    type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1,
+  return point;
+}
+
+async function waitForGridDocumentFocus(client) {
+  const deadline = Date.now() + NATIVE_RECEIPT_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const response = await client.send('Runtime.evaluate', {
+      expression: 'document.hasFocus()',
+      returnByValue: true,
+      ...(client.gridContextId === undefined ? {} : { contextId: client.gridContextId }),
+    });
+    if (response && response.result && response.result.value === true) {
+      return true;
+    }
+    await delay(NATIVE_INPUT_DELAY_MS);
+  }
+  return false;
+}
+
+async function armGridNativeKeyProbe(client, token, key) {
+  const response = await client.send('Runtime.evaluate', {
+    expression: `(() => {
+      const probeKey = '__kdbSqltoolsE2eNativeKeyProbe';
+      const previous = globalThis[probeKey];
+      if (previous && typeof previous.cleanup === 'function') previous.cleanup();
+      const probe = {
+        token: ${JSON.stringify(token)},
+        key: ${JSON.stringify(key)},
+        received: false,
+        trusted: false,
+        targetColumn: null,
+        modifiers: null,
+        cleanup: null
+      };
+      const listener = event => {
+        if (event.key !== probe.key) return;
+        const target = event.target instanceof Element
+          ? event.target.closest('#header .cell[data-column]')
+          : null;
+        probe.received = true;
+        probe.trusted = event.isTrusted === true;
+        probe.targetColumn = target ? Number(target.dataset.column) : null;
+        probe.modifiers = (event.altKey ? 1 : 0) |
+          (event.ctrlKey ? 2 : 0) |
+          (event.metaKey ? 4 : 0) |
+          (event.shiftKey ? 8 : 0);
+        probe.cleanup();
+      };
+      probe.cleanup = () => document.removeEventListener('keydown', listener, true);
+      document.addEventListener('keydown', listener, true);
+      globalThis[probeKey] = probe;
+      return true;
+    })()`,
+    returnByValue: true,
+    ...(client.gridContextId === undefined ? {} : { contextId: client.gridContextId }),
   });
-  await session.root.send('Input.dispatchMouseEvent', {
-    type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1,
-  });
+  if (!response || !response.result || response.result.value !== true) {
+    throw new Error(`Could not arm native grid key probe ${token}`);
+  }
+}
+
+async function waitForGridNativeKeyReceipt(client, token) {
+  const deadline = Date.now() + NATIVE_RECEIPT_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const response = await client.send('Runtime.evaluate', {
+      expression: `(() => {
+        const probe = globalThis.__kdbSqltoolsE2eNativeKeyProbe;
+        if (!probe || probe.token !== ${JSON.stringify(token)} || !probe.received) return null;
+        return {
+          trusted: probe.trusted,
+          targetColumn: probe.targetColumn,
+          modifiers: probe.modifiers
+        };
+      })()`,
+      returnByValue: true,
+      ...(client.gridContextId === undefined ? {} : { contextId: client.gridContextId }),
+    });
+    const receipt = response && response.result ? response.result.value : null;
+    if (receipt) {
+      return receipt;
+    }
+    await delay(NATIVE_INPUT_DELAY_MS);
+  }
+  return null;
+}
+
+async function clearGridNativeKeyProbe(client, token) {
+  await client.send('Runtime.evaluate', {
+    expression: `(() => {
+      const probeKey = '__kdbSqltoolsE2eNativeKeyProbe';
+      const probe = globalThis[probeKey];
+      if (!probe || probe.token !== ${JSON.stringify(token)}) return false;
+      if (typeof probe.cleanup === 'function') probe.cleanup();
+      delete globalThis[probeKey];
+      return true;
+    })()`,
+    returnByValue: true,
+    ...(client.gridContextId === undefined ? {} : { contextId: client.gridContextId }),
+  }).catch(() => null);
 }
 
 async function gridHeaderRect(client, column) {
@@ -1827,34 +2137,12 @@ async function exerciseGridResizeDoubleClickReset(session, column, fallbackWidth
     throw new Error(`Column ${column} did not resize before double-click reset`);
   }
   const client = session.webview;
-  await ensureGridResizeHandleVisible(client, column, 0);
-  const response = await client.send('Runtime.evaluate', {
-    expression: `(() => {
-      const handle = document.querySelector('#header .resize-handle[data-column="${column}"]');
-      if (!handle) return null;
-      const rect = handle.getBoundingClientRect();
-      return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
-    })()`,
-    returnByValue: true,
-    ...(client.gridContextId === undefined ? {} : { contextId: client.gridContextId }),
-  });
-  const rect = response && response.result ? response.result.value : null;
-  if (!rect || !(rect.width > 0) || !(rect.height > 0)) {
-    throw new Error(`Could not locate native double-click target for grid column ${column}`);
-  }
-  const outer = await visibleWebviewRect(session.root);
-  const x = outer.left + rect.left + rect.width / 2;
-  const y = outer.top + rect.top + rect.height / 2;
-  await session.root.send('Page.bringToFront');
-  await session.root.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
-  for (const clickCount of [1, 2]) {
-    await session.root.send('Input.dispatchMouseEvent', {
-      type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount,
-    });
-    await session.root.send('Input.dispatchMouseEvent', {
-      type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount,
-    });
-  }
+  await dispatchGridResizeDoubleClick(
+    session,
+    column,
+    resized.headerWidths[column],
+    fallbackWidth
+  );
   const reset = await waitForGridState(
     client,
     state => renderedColumnHasWidth(state, column, fallbackWidth),
@@ -1867,6 +2155,170 @@ async function exerciseGridResizeDoubleClickReset(session, column, fallbackWidth
     resetWidth: reset.headerWidths[column],
     fallbackWidth,
   };
+}
+
+async function dispatchGridResizeDoubleClick(session, column, resizedWidth, fallbackWidth) {
+  const client = session.webview;
+  let lastReceipt = null;
+  let lastSetupError = null;
+  for (let attempt = 1; attempt <= NATIVE_INPUT_ATTEMPTS; attempt += 1) {
+    const phase = await guardedGridResizePhase(client, column, resizedWidth, fallbackWidth);
+    if (phase === 'after') {
+      if (attempt === 1) {
+        throw new Error(`Column ${column} was reset before native double-click dispatch`);
+      }
+      return;
+    }
+    const token = crypto.randomBytes(12).toString('hex');
+    let armed = false;
+    let point;
+    let outer;
+    try {
+      try {
+        await focusGridFrame(session);
+        await ensureGridResizeHandleVisible(client, column, 0);
+        point = await gridElementHitPoint(
+          client,
+          `#header .resize-handle[data-column="${column}"]`,
+          `grid column ${column} resize handle`
+        );
+        await session.root.send('Page.bringToFront');
+        outer = await hitTestedWebviewRect(
+          session.root,
+          point,
+          `grid column ${column} resize handle`
+        );
+        await armGridNativeDoubleClickProbe(client, token);
+        armed = true;
+      } catch (error) {
+        lastSetupError = error;
+        const setupPhase = await guardedGridResizePhase(client, column, resizedWidth, fallbackWidth);
+        if (setupPhase === 'after') {
+          return;
+        }
+        await delay(NATIVE_INPUT_DELAY_MS);
+        continue;
+      }
+      const x = outer.left + point.x;
+      const y = outer.top + point.y;
+      await session.root.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+      await delay(NATIVE_INPUT_DELAY_MS);
+      // One clickCount=2 press/release makes Chromium emit dblclick before the
+      // resize mouseup's queued render can replace the handle EventTarget.
+      await session.root.send('Input.dispatchMouseEvent', {
+        type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 2,
+      });
+      await delay(NATIVE_INPUT_DELAY_MS);
+      await session.root.send('Input.dispatchMouseEvent', {
+        type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 2,
+      });
+      lastReceipt = await waitForGridNativeDoubleClickReceipt(client, token);
+      if (!lastReceipt) {
+        const receiptPhase = await guardedGridResizePhase(client, column, resizedWidth, fallbackWidth);
+        if (receiptPhase === 'after') {
+          return;
+        }
+        continue;
+      }
+      if (!lastReceipt.trusted || lastReceipt.targetColumn !== column) {
+        throw new Error(`Native resize double-click reached an unexpected target: ${JSON.stringify({
+          column,
+          receipt: lastReceipt,
+        })}`);
+      }
+      return;
+    } finally {
+      if (armed) {
+        await clearGridNativeDoubleClickProbe(client, token);
+      }
+    }
+  }
+  throw new Error(`Native resize double-click was not delivered to column ${column} after ` +
+    `${NATIVE_INPUT_ATTEMPTS} guarded attempts; last receipt: ${JSON.stringify(lastReceipt)}; ` +
+    `last setup error: ${lastSetupError ? lastSetupError.message : 'none'}`);
+}
+
+async function guardedGridResizePhase(client, column, resizedWidth, fallbackWidth) {
+  const state = await gridState(client);
+  if (renderedColumnHasWidth(state, column, fallbackWidth)) {
+    return 'after';
+  }
+  if (renderedColumnHasWidth(state, column, resizedWidth)) {
+    return 'before';
+  }
+  throw new Error(`Column ${column} reached an unsafe resize-reset retry state: ` +
+    JSON.stringify(compactGridState(state)));
+}
+
+async function armGridNativeDoubleClickProbe(client, token) {
+  const response = await client.send('Runtime.evaluate', {
+    expression: `(() => {
+      const probeKey = '__kdbSqltoolsE2eNativeDoubleClickProbe';
+      const previous = globalThis[probeKey];
+      if (previous && typeof previous.cleanup === 'function') previous.cleanup();
+      const probe = {
+        token: ${JSON.stringify(token)},
+        received: false,
+        trusted: false,
+        targetColumn: null,
+        cleanup: null
+      };
+      const listener = event => {
+        const target = event.target instanceof Element
+          ? event.target.closest('#header .resize-handle[data-column]')
+          : null;
+        probe.received = true;
+        probe.trusted = event.isTrusted === true;
+        probe.targetColumn = target ? Number(target.dataset.column) : null;
+        probe.cleanup();
+      };
+      probe.cleanup = () => document.removeEventListener('dblclick', listener, true);
+      document.addEventListener('dblclick', listener, true);
+      globalThis[probeKey] = probe;
+      return true;
+    })()`,
+    returnByValue: true,
+    ...(client.gridContextId === undefined ? {} : { contextId: client.gridContextId }),
+  });
+  if (!response || !response.result || response.result.value !== true) {
+    throw new Error(`Could not arm native grid double-click probe ${token}`);
+  }
+}
+
+async function waitForGridNativeDoubleClickReceipt(client, token) {
+  const deadline = Date.now() + NATIVE_RECEIPT_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const response = await client.send('Runtime.evaluate', {
+      expression: `(() => {
+        const probe = globalThis.__kdbSqltoolsE2eNativeDoubleClickProbe;
+        if (!probe || probe.token !== ${JSON.stringify(token)} || !probe.received) return null;
+        return { trusted: probe.trusted, targetColumn: probe.targetColumn };
+      })()`,
+      returnByValue: true,
+      ...(client.gridContextId === undefined ? {} : { contextId: client.gridContextId }),
+    });
+    const receipt = response && response.result ? response.result.value : null;
+    if (receipt) {
+      return receipt;
+    }
+    await delay(NATIVE_INPUT_DELAY_MS);
+  }
+  return null;
+}
+
+async function clearGridNativeDoubleClickProbe(client, token) {
+  await client.send('Runtime.evaluate', {
+    expression: `(() => {
+      const probeKey = '__kdbSqltoolsE2eNativeDoubleClickProbe';
+      const probe = globalThis[probeKey];
+      if (!probe || probe.token !== ${JSON.stringify(token)}) return false;
+      if (typeof probe.cleanup === 'function') probe.cleanup();
+      delete globalThis[probeKey];
+      return true;
+    })()`,
+    returnByValue: true,
+    ...(client.gridContextId === undefined ? {} : { contextId: client.gridContextId }),
+  }).catch(() => null);
 }
 
 async function ensureGridResizeHandleVisible(client, column, delta) {
@@ -2053,6 +2505,7 @@ function compactGridState(state) {
   return {
     summary: state.summary,
     headers: state.headers,
+    headerAriaSort: state.headerAriaSort,
     headerWidths: state.headerWidths,
     selectedHeaderColumns: state.selectedHeaderColumns,
     ariaSelectedHeaderColumns: state.ariaSelectedHeaderColumns,

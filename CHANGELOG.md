@@ -1,6 +1,6 @@
 # Change Log
 
-## Unreleased
+## 0.3.21 - 2026-08-11
 
 - Unified chart viewport handling across plain-drag x zoom, `Shift`+drag x pan, 20% Pan left/right controls, `ArrowLeft`/`ArrowRight`, and `Home`. For the same absolute range, pan completion uses the exact unchanged zoom range-loading/resampling decision, with automatic y scaling, stale-response rejection, and reset invalidation.
 - Removed the Header mode selector. Header clicks now tri-state sort, movement of at least 5 CSS pixels reorders without sorting, `Ctrl`/`Cmd` gestures select full columns, `Shift` extends from the selection anchor, and keyboard sorting/reordering is available with synchronized focus, `aria-sort`, labels, and visible indicators.
