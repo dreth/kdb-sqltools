@@ -209,6 +209,7 @@ export const CHART_MAX_SOURCE_ROWS = 2000000;
 export const CHART_MAX_SAMPLED_POINTS = 12000;
 export const CHART_ZOOM_MIN_SAMPLED_POINTS = 3000;
 export const CHART_ZOOM_MAX_SAMPLED_POINTS = 7000;
+export const CHART_ORDINARY_TARGET_POINTS = 7000;
 export const CHART_POINTS_PER_PIXEL = 3;
 export const CHART_CANDLES_PER_PIXEL = 1;
 export const CHART_MAX_BOX_GROUPS = 120;
@@ -313,7 +314,9 @@ function buildXyChartData(table: ColumnarPanelResult, request: LineChartRequest,
     throw new ChartDataError('No selected y column has finite numeric values.');
   }
 
-  const maxSampledPoints = chartRequestTargetPointCount(request, xRange);
+  const maxSampledPoints = chartType === 'bar'
+    ? chartRequestTargetPointCount(request, xRange)
+    : CHART_ORDINARY_TARGET_POINTS;
   const preparedPoints = chartType === 'bar' || !!source.groupColumnName
     ? consolidateChartPointsByX(grouped.points, grouped.series, chartType, warnings)
     : grouped.points;
@@ -324,7 +327,7 @@ function buildXyChartData(table: ColumnarPanelResult, request: LineChartRequest,
       grouped.series.length,
       maxSampledPoints,
       chartType === 'line' || chartType === 'step',
-      !!xRange
+      true
     );
   const xDomain = preparedPoints.length > 0
     ? { min: preparedPoints[0].x, max: preparedPoints[preparedPoints.length - 1].x }

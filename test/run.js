@@ -43,6 +43,10 @@ const {
   updateHiddenChartSeriesKeys,
 } = requireOut('chart-series-state');
 const {
+  adjustChartNavigatorRange,
+  chartNavigatorSliderBounds,
+  chartNavigatorWindow,
+  chartVisibleSampledPointCount,
   chartZoomAutoRefineQueueAction,
   clampChartViewport,
   chartZoomRangeMatchesRequest,
@@ -53,6 +57,7 @@ const {
   isValidChartRange,
   panChartViewport,
   panChartViewportByPixels,
+  recenterChartNavigatorRange,
   reduceChartZoomLifecycle,
   runCurrentChartBuild,
 } = requireOut('chart-zoom-state');
@@ -85,9 +90,27 @@ const {
   visibleRowsColumnTextLengths,
   wholeResultColumnTextLengths,
 } = requireOut('grid-column-widths');
-const { currentQBlock, selectedTextOrCurrentBlock, selectedTextOrCurrentLine } = requireOut('q-text');
+const {
+  currentQBlock,
+  lexQText,
+  qTextRenderModel,
+  selectedTextOrCurrentBlock,
+  selectedTextOrCurrentLine,
+} = requireOut('q-text');
+const {
+  computeResultColumnSummaries,
+  evenlySpacedRowIndexes,
+  planResultColumnSummaries,
+} = requireOut('result-column-summary');
+const {
+  DEFAULT_LARGE_SORT_WARNING_ROW_THRESHOLD,
+  ExactResultSortWarningApproval,
+  normalizeLargeSortWarningRowThreshold,
+  shouldWarnForLargeSort,
+} = requireOut('result-sort-warning');
 const {
   allCellsRange,
+  analystExportColumnNames,
   applyColumnarRowOrder,
   cellValueToText,
   columnarToCellWindow,
@@ -1737,9 +1760,9 @@ function panelFormatElapsedMs(milliseconds, display) {
     () => assert.rejects(
       () => new KdbIpcClient({ host: LOCAL_DATA_SERVER_HOST, port: closedPort, timeoutMs: 250 }).connect(),
       error => error &&
-        /kdb\+ connect failed/.test(error.message) &&
+        /kdb\+ (connect|handshake) failed/.test(error.message) &&
         error.message.includes(`${LOCAL_DATA_SERVER_HOST}:${closedPort}`) &&
-        /ECONNREFUSED/.test(error.message)
+        /ECONNREFUSED|ECONNRESET/.test(error.message)
     ),
     1000
   );
@@ -1803,6 +1826,53 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(selectedTextOrCurrentLine('first\nsecond', '', -10), 'first');
   assert.strictEqual(selectedTextOrCurrentLine('first\nsecond', '', 99), 'second');
   assert.strictEqual(selectedTextOrCurrentLine('first\nsecond', '  ', 0), '  ');
+  const highlightedQText = 'select avg price by sym from trade where size>100 / bounded output';
+  const qTextLex = lexQText(highlightedQText);
+  assert.strictEqual(qTextLex.valid, true);
+  assert.strictEqual(qTextLex.tokens.map(token => token.text).join(''), highlightedQText);
+  assert.strictEqual(qTextLex.tokens.some(token => token.kind === 'keyword' && token.text === 'select'), true);
+  assert.strictEqual(qTextLex.tokens.some(token => token.kind === 'builtin' && token.text === 'avg'), true);
+  assert.strictEqual(qTextLex.tokens.some(token => token.kind === 'comment'), true);
+  const renderedQText = qTextRenderModel('{x:1;y:2}', { syntaxHighlighting: true, displayFormatting: true });
+  assert.strictEqual(renderedQText.formatted, true);
+  assert.strictEqual(renderedQText.highlighted, true);
+  assert.strictEqual(renderedQText.segments.map(segment => segment.text).join(''), renderedQText.text);
+  const invalidQText = qTextRenderModel('"unterminated', { syntaxHighlighting: true, displayFormatting: true });
+  assert.strictEqual(invalidQText.highlighted, false);
+  assert.strictEqual(invalidQText.text, '"unterminated');
+
+  assert.strictEqual(normalizeLargeSortWarningRowThreshold(undefined), DEFAULT_LARGE_SORT_WARNING_ROW_THRESHOLD);
+  assert.strictEqual(normalizeLargeSortWarningRowThreshold(25), 25);
+  assert.strictEqual(shouldWarnForLargeSort(25, { rowThreshold: 25 }), false);
+  assert.strictEqual(shouldWarnForLargeSort(26, { rowThreshold: 25 }), true);
+  assert.strictEqual(shouldWarnForLargeSort(26, { rowThreshold: 25, hideWarnings: true }), false);
+  const sortApproval = new ExactResultSortWarningApproval();
+  const displayedResult = {};
+  const firstSortToken = sortApproval.replace(displayedResult);
+  assert.strictEqual(sortApproval.isApproved(firstSortToken), false);
+  assert.strictEqual(sortApproval.approve(firstSortToken), true);
+  assert.strictEqual(sortApproval.isApproved(firstSortToken), true);
+  const replacementToken = sortApproval.replace(displayedResult);
+  assert.strictEqual(sortApproval.isApproved(firstSortToken), false);
+  assert.strictEqual(sortApproval.approve(firstSortToken), false);
+  assert.strictEqual(sortApproval.isApproved(replacementToken), false);
+
+  const summaryTable = createColumnarPanelResult(['size', 'sym'], 4, (row, column) => {
+    const rows = [[10, 'A'], [20, 'A'], [null, 'B'], [30, 'C']];
+    return rows[row][column];
+  });
+  const summaryPlan = planResultColumnSummaries(summaryTable);
+  assert.strictEqual(summaryPlan.mode, 'exact');
+  const summaryBatch = await computeResultColumnSummaries(summaryTable);
+  assert.strictEqual(summaryBatch.mode, 'exact');
+  assert.strictEqual(summaryBatch.columns[0].mean.text, '20');
+  assert.strictEqual(summaryBatch.columns[0].nullCount, 1);
+  assert.strictEqual(summaryBatch.columns[1].distinctCount, 3);
+  assert.deepStrictEqual(evenlySpacedRowIndexes(11, 3), [0, 5, 10]);
+  const sampledSummaryPlan = planResultColumnSummaries(createColumnarPanelResult(['x', 'y'], 100000, () => 1));
+  assert.strictEqual(sampledSummaryPlan.mode, 'sampled');
+  assert.strictEqual(sampledSummaryPlan.evaluatedRowCount, 10000);
+  assert.strictEqual(sampledSummaryPlan.endpointsIncluded, true);
   assert.deepStrictEqual(
     normalizeCellRange({ row: 4, column: 3 }, { row: 2, column: 6 }),
     { startRow: 2, endRow: 4, startColumn: 3, endColumn: 6 }
@@ -1922,6 +1992,16 @@ function panelFormatElapsedMs(milliseconds, display) {
     rowIndexColumnName(['#', '#_1', 'sym'], { startRow: 0, endRow: 0, startColumn: 0, endColumn: 2 }),
     '#_2'
   );
+  assert.deepStrictEqual(
+    analystExportColumnNames(['a', 'a', '#'], { startRow: 0, endRow: 0, startColumn: 0, endColumn: 2 }, ['#']),
+    ['a', 'a_2', '#_2']
+  );
+  const duplicateNamedColumnar = createColumnarPanelResult(['a', 'a', '__proto__'], 1, (_row, column) => column + 1);
+  assert.strictEqual(
+    duplicateNamedColumnar.toText('json', { startRow: 0, endRow: 0, startColumn: 0, endColumn: 2 }, { includeRowIndex: true }),
+    '[{"#":1,"a":1,"a_2":2,"__proto__":3}]'
+  );
+  assert.strictEqual(cellValueToText('x'.repeat(20), { maxChars: 10, truncationMarker: '…' }), 'xxxxxxxxx…');
   assert.deepStrictEqual(
     rowsToCellWindow(
       [
@@ -2896,8 +2976,8 @@ function panelFormatElapsedMs(milliseconds, display) {
     width: 10,
     maxSampledPoints: 10,
   });
-  assert.strictEqual(sampledChart.algorithm, 'minmax-bucket/10');
-  assert.ok(sampledChart.sampledPointCount <= 10);
+  assert.strictEqual(sampledChart.algorithm, 'none');
+  assert.strictEqual(sampledChart.sampledPointCount, 100);
   assert.ok(sampledChart.series[0].values.includes(999), 'min/max chart sampling should preserve spikes');
   const sampledGapChart = buildLineChartData(createColumnarPanelResult(['x', 'y'], 100, (rowIndex, columnIndex) => {
     return columnIndex === 0 ? rowIndex : (rowIndex === 55 ? null : rowIndex);
@@ -2909,7 +2989,7 @@ function panelFormatElapsedMs(milliseconds, display) {
     width: 10,
     maxSampledPoints: 10,
   });
-  assert.ok(sampledGapChart.sampledPointCount <= 10);
+  assert.strictEqual(sampledGapChart.sampledPointCount, 100);
   assert.ok(sampledGapChart.series[0].values.includes(null), 'min/max chart sampling should retain a source gap sample');
   for (const chartType of ['line', 'scatter', 'step']) {
     const onePointChart = buildChartData(createColumnarPanelResult(
@@ -2925,12 +3005,8 @@ function panelFormatElapsedMs(milliseconds, display) {
       width: 10,
       maxSampledPoints: 1,
     });
-    assert.strictEqual(
-      onePointChart.sampledPointCount,
-      2,
-      `${chartType} must preserve the baseline two-endpoint minimum`
-    );
-    assert.strictEqual(onePointChart.algorithm, 'minmax-bucket/1');
+    assert.strictEqual(onePointChart.sampledPointCount, 10, `${chartType} must keep all points below the fixed target`);
+    assert.strictEqual(onePointChart.algorithm, 'none');
   }
   assert.ok(chartTargetPointCount(1000) < 1000000, 'chart target should not send million-point series by default');
   const zoomAllRowsTable = createColumnarPanelResult(['x', 'y'], 5000, (rowIndex, columnIndex) => {
@@ -3665,6 +3741,29 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.deepStrictEqual(rapidDistinctState.requestedRange, rapidNestedRange);
   assert.strictEqual(rapidDistinctState.pendingRequestId, 41);
 
+  assert.deepStrictEqual(chartNavigatorWindow({ min: 20, max: 60 }, { min: 0, max: 100 }), {
+    startFraction: 0.2,
+    endFraction: 0.6,
+  });
+  assert.deepStrictEqual(
+    adjustChartNavigatorRange({ min: 20, max: 60 }, { min: 0, max: 100 }, 'window', 0.1),
+    { min: 30, max: 70 }
+  );
+  assert.deepStrictEqual(
+    adjustChartNavigatorRange({ min: 20, max: 60 }, { min: 0, max: 100 }, 'start', 0.1),
+    { min: 30, max: 60 }
+  );
+  assert.deepStrictEqual(
+    recenterChartNavigatorRange({ min: 20, max: 60 }, { min: 0, max: 100 }, 0.8),
+    { min: 60, max: 100 }
+  );
+  assert.deepStrictEqual(chartNavigatorSliderBounds({ min: 20, max: 60 }, { min: 0, max: 100 }), {
+    window: { minimum: 0, maximum: 1000, now: 400 },
+    start: { minimum: 0, maximum: 599, now: 200 },
+    end: { minimum: 201, maximum: 1000, now: 600 },
+  });
+  assert.strictEqual(chartVisibleSampledPointCount([0, 10, 20, 30, 40], { min: 10, max: 30 }), 3);
+
   const pendingFirstRange = { min: 10, max: 90 };
   const pendingNestedRange = { min: 20, max: 80 };
   let inFlightNestedState = reduceChartZoomLifecycle(fullZoomLifecycle, {
@@ -3954,7 +4053,9 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="interactionMode"'), 0);
   assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="chartType"'), 1);
   assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="chartGroupColumn"'), 1);
-  assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="refineChartZoom"'), 1);
+  assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="refineChartZoom"'), 0);
+  assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="chartNavigatorWindow"'), 1);
+  assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="chartDragMode"'), 1);
   assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="chartSplitter"'), 1);
   assert.strictEqual(sourceOccurrences(resultsPanelSource, 'id="cancelQuery"'), 1);
   assert.ok(toolbarSource.indexOf('id="outputControls"') < toolbarSource.indexOf('id="openChart"'));
@@ -4035,9 +4136,10 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('id="chartPanel"'), true);
   assert.strictEqual(resultsPanelSource.includes('id="exportChart" hidden disabled'), true);
   assert.strictEqual(resultsPanelSource.includes('id="resetChartZoom" disabled'), true);
-  assert.strictEqual(resultsPanelSource.includes('id="refineChartZoom" disabled'), true);
-  assert.strictEqual(resultsPanelSource.includes('id="panChartLeft" disabled'), true);
-  assert.strictEqual(resultsPanelSource.includes('id="panChartRight" disabled'), true);
+  assert.strictEqual(resultsPanelSource.includes('id="refineChartZoom" disabled'), false);
+  assert.strictEqual(resultsPanelSource.includes('id="panChartLeft" disabled'), false);
+  assert.strictEqual(resultsPanelSource.includes('id="panChartRight" disabled'), false);
+  assert.strictEqual(resultsPanelSource.includes('id="chartNavigator"'), true);
   assert.strictEqual(resultsPanelSource.includes('Shift drag to pan x'), true);
   assert.strictEqual(resultsPanelSource.includes('.chart-canvas-wrap:focus'), true);
   assert.strictEqual(resultsPanelSource.includes('.header .cell:focus'), true);
@@ -4046,14 +4148,15 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('function chartCanExport()'), true);
   const chartCanExportSource = resultsPanelSource.slice(
     resultsPanelSource.indexOf('function chartCanExport()'),
-    resultsPanelSource.indexOf('function chartCanRefineZoom()')
+    resultsPanelSource.indexOf('function chartCanResetZoom()')
   );
   assert.strictEqual(
     chartCanExportSource.includes('chartControlsDirty'),
     false,
     'changing controls must leave export enabled for the currently rendered chart'
   );
-  assert.strictEqual(resultsPanelSource.includes('function chartCanRefineZoom()'), true);
+  assert.strictEqual(resultsPanelSource.includes('function chartCanRefineZoom()'), false);
+  assert.strictEqual(resultsPanelSource.includes('function updateChartNavigator()'), true);
   assert.strictEqual(resultsPanelSource.includes('function currentChartZoomRange()'), true);
   assert.strictEqual(resultsPanelSource.includes('function startChartResize(event)'), true);
   assert.strictEqual(resultsPanelSource.includes('exportChart.hidden = !canExport;'), true);
@@ -4327,9 +4430,9 @@ function panelFormatElapsedMs(milliseconds, display) {
   );
   assert.strictEqual(resultsPanelSource.includes('message.minSampledPoints'), false);
   assert.strictEqual(resultsPanelSource.includes('message.maxSampledPoints'), false);
-  assert.strictEqual(resultsPanelSource.includes("panChartByFraction(-0.2, 'button')"), true);
-  assert.strictEqual(resultsPanelSource.includes("panChartByFraction(0.2, 'button')"), true);
-  assert.strictEqual(resultsPanelSource.includes('!chartZoomLifecycle.fullRange || chartControlsDirty'), true);
+  assert.strictEqual(resultsPanelSource.includes("panChartByFraction(-0.2, 'button')"), false);
+  assert.strictEqual(resultsPanelSource.includes("panChartByFraction(0.2, 'button')"), false);
+  assert.strictEqual(resultsPanelSource.includes('chartNavigatorSliderBounds(current, fullRange)'), true);
   const panByFractionSource = resultsPanelSource.slice(
     resultsPanelSource.indexOf('function panChartByFraction(fraction, reason)'),
     resultsPanelSource.indexOf('function startChartPan(event)')
@@ -4370,7 +4473,8 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes("completeChartViewport(range, 'pan')"), true);
   assert.strictEqual(resultsPanelSource.includes("event.key === 'Home'"), true);
   assert.strictEqual(resultsPanelSource.includes('Refining chart to zoom range'), false);
-  assert.strictEqual(resultsPanelSource.includes('Refining the current chart view'), true);
+  assert.strictEqual(resultsPanelSource.includes('Refining the current chart view'), false);
+  assert.strictEqual(resultsPanelSource.includes('Auto-refining current chart view'), true);
   assert.strictEqual(packageJson.dependencies.uplot, '^1.6.32');
   assert.strictEqual(/cdn\.jsdelivr|unpkg|cdnjs|https:\/\/cdn/i.test(resultsPanelSource), false);
   assert.strictEqual(resultsPanelSource.includes("vscode.postMessage({ type: 'startLocalDataServer' })"), true);
@@ -4716,7 +4820,8 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('COPY_EXPORT_CONFIRM_CELL_THRESHOLD'), true);
   assert.strictEqual(resultsPanelSource.includes('largeCopyExportConfirmationMessage'), true);
   assert.strictEqual(resultsPanelSource.includes("showWarningMessage(message, 'Continue', 'Cancel')"), true);
-  assert.strictEqual(resultsPanelSource.includes('validateXlsxSheetLimits(clamped, { includeHeaders, includeRowIndex })'), true);
+  assert.strictEqual(resultsPanelSource.includes('validatePanelXlsxLimits(table, clamped, includeHeaders, includeRowIndex, panelCellTextOptions())'), true);
+  assert.strictEqual(resultsPanelSource.includes('validatePanelTextExportLimits'), true);
   assert.strictEqual(resultsPanelSource.includes('id="largeResultWarning"'), true);
   assert.strictEqual(resultsPanelSource.includes('function updateLargeResultWarning()'), true);
   assert.strictEqual(resultsPanelSource.includes("message.type === 'hideLargeResultWarningOnce'"), true);
@@ -4853,6 +4958,16 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes("type: 'copyText'"), true);
   assert.strictEqual(resultsPanelSource.includes("type: 'exportText'"), true);
   assert.strictEqual(resultsPanelSource.includes('white-space: pre-wrap;'), true);
+  assert.strictEqual(resultSettings['kdb-sqltools.results.qText.syntaxHighlighting'].default, false);
+  assert.strictEqual(resultSettings['kdb-sqltools.results.qText.displayFormatting'].default, false);
+  assert.strictEqual(resultSettings['kdb-sqltools.results.showColumnSummaryStatistics'].default, false);
+  assert.strictEqual(resultSettings['kdb-sqltools.results.largeSortWarningRowThreshold'].default, 5000000);
+  assert.strictEqual(resultsPanelSource.includes('class="q-token-'), false, 'qText tokens must be constructed as DOM nodes, not injected HTML');
+  assert.strictEqual(resultsPanelSource.includes("span.className = 'q-token-' + segment.kind"), true);
+  assert.strictEqual(resultsPanelSource.includes("maxChars: PANEL_SLICE_CELL_TEXT_CHARS"), true);
+  assert.strictEqual(resultsPanelSource.includes("maxChars: PANEL_SEARCH_CELL_TEXT_CHARS"), true);
+  assert.strictEqual(resultsPanelSource.includes('COPY_MAX_BYTES'), true);
+  assert.strictEqual(resultsPanelSource.includes('XLSX_EXPORT_MAX_XML_BYTES'), true);
   assert.strictEqual(extensionSource.includes("mode: 'text'"), true);
   const chartMaxSourceRowsSetting = resultSettings['kdb-sqltools.results.kdbPanel.chartMaxSourceRows'];
   assert.strictEqual(chartMaxSourceRowsSetting.type, 'integer');
@@ -4954,6 +5069,10 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(numberSettingUpdateSource.includes('integer >= min && integer <= max'), false);
   assert.strictEqual(resultsPanelSource.includes('Object.prototype.hasOwnProperty.call(RESULT_SETTING_UPDATE_ALLOWLIST, key)'), true);
   const resultsPanelInternals = loadResultsPanelInternals();
+  const renderedResultsPanelHtml = resultsPanelInternals.renderResultsPanelHtml(path.resolve(__dirname, '..'));
+  const inlineScripts = Array.from(renderedResultsPanelHtml.matchAll(/<script nonce="[^"]*">([\s\S]*?)<\/script>/g));
+  assert.ok(inlineScripts.length > 0, 'results panel should contain an inline webview script');
+  assert.doesNotThrow(() => new Function(inlineScripts[inlineScripts.length - 1][1]), 'embedded results-panel JavaScript must parse');
   assert.strictEqual(resultsPanelInternals.chartMaxSourceRowsSettingValue(undefined), CHART_MAX_SOURCE_ROWS);
   assert.strictEqual(resultsPanelInternals.chartMaxSourceRowsSettingValue('abc'), CHART_MAX_SOURCE_ROWS);
   assert.strictEqual(resultsPanelInternals.chartMaxSourceRowsSettingValue(Infinity), CHART_MAX_SOURCE_ROWS);
@@ -5198,7 +5317,7 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(resultsPanelSource.includes('id="settingsLocalDataServerFullExportCellLimit"'), true);
   assert.strictEqual(packageJson.contributes.configuration.properties['kdb-sqltools.results.copyExportConfirmCellThreshold'].minimum, 1);
   assert.strictEqual(packageJson.contributes.configuration.properties['kdb-sqltools.results.localDataServerFullExportCellLimit'].minimum, 1);
-  assert.strictEqual(packageJson.version, '0.3.21');
+  assert.strictEqual(packageJson.version, '0.3.22');
   assert.strictEqual(readmeSource.includes('`kdb+: Select kdb Panel Query Connection`'), true);
   assert.strictEqual(readmeSource.includes('With multiple kdb connections and no valid session choice'), true);
   assert.strictEqual(readmeSource.includes('The session target stores only a non-secret connection ID.'), true);
@@ -5225,21 +5344,21 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(chartingDocsSource.includes('X-axis labels are auto-thinned'), true);
   assert.strictEqual(chartingDocsSource.includes('dense numeric and timestamp axes readable'), true);
   assert.strictEqual(readmeSource.includes('auto-thinned readable x-axis labels'), true);
-  assert.strictEqual(resultsDocsSource.includes('auto-thinned readable x-axis labels'), true);
+  assert.strictEqual(resultsDocsSource.includes('full-range navigator'), true);
   assert.strictEqual(chartingDocsSource.includes('uPlot powers the built-in chart'), true);
   assert.strictEqual(chartingDocsSource.includes('cursor/crosshair tooltip'), true);
-  assert.strictEqual(chartingDocsSource.includes('x-only drag zoom'), true);
+  assert.strictEqual(chartingDocsSource.includes('selectable Zoom/Pan drag modes'), true);
   assert.strictEqual(chartingDocsSource.includes('`Shift`+drag x pan'), true);
   assert.strictEqual(resultsDocsSource.includes('5 CSS pixels'), true);
   assert.strictEqual(resultsDocsSource.includes('`aria-sort`'), true);
   assert.strictEqual(chartingDocsSource.includes('Reset zoom'), true);
-  assert.strictEqual(chartingDocsSource.includes('restores the immutable original full sample and x-range'), true);
-  assert.strictEqual(chartingDocsSource.includes('disables again at that baseline'), true);
+  assert.strictEqual(chartingDocsSource.includes('restores that full sample and x-range'), true);
+  assert.strictEqual(chartingDocsSource.includes('disables again at the baseline'), true);
   assert.strictEqual(chartingDocsSource.includes('kdb-sqltools.results.kdbPanel.chartDecimalPlaces'), true);
-  assert.strictEqual(chartingDocsSource.includes('kdb-sqltools.results.kdbPanel.chartZoomMinSampledPoints'), true);
-  assert.strictEqual(chartingDocsSource.includes('kdb-sqltools.results.kdbPanel.chartZoomMaxSampledPoints'), true);
-  assert.strictEqual(chartingDocsSource.includes('deprecated compatibility entries'), true);
-  assert.strictEqual(chartingDocsSource.includes('They are ignored'), true);
+  assert.strictEqual(chartingDocsSource.includes('kdb-sqltools.results.kdbPanel.chartZoomMinSampledPoints'), false);
+  assert.strictEqual(chartingDocsSource.includes('kdb-sqltools.results.kdbPanel.chartZoomMaxSampledPoints'), false);
+  assert.strictEqual(chartingDocsSource.includes('full-range navigator'), true);
+  assert.strictEqual(chartingDocsSource.includes('sparser viewport automatically'), true);
   assert.strictEqual(chartingDocsSource.includes('debounced for about 450 ms'), true);
   assert.strictEqual(chartingDocsSource.includes('visible column names and order as the signature'), true);
   assert.strictEqual(chartingDocsSource.includes('Temporal timestamp labels do not use this numeric decimal formatting.'), true);
@@ -5249,9 +5368,9 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(chartingDocsSource.includes('kdb-sqltools.results.kdbPanel.chartMaxSourceRows'), true);
   assert.strictEqual(settingsDocsSource.includes('kdb-sqltools.results.kdbPanel.chartMaxSourceRows'), true);
   assert.strictEqual(settingsDocsSource.includes('kdb-sqltools.results.kdbPanel.chartDecimalPlaces'), true);
-  assert.strictEqual(settingsDocsSource.includes('kdb-sqltools.results.kdbPanel.chartZoomMinSampledPoints'), true);
-  assert.strictEqual(settingsDocsSource.includes('kdb-sqltools.results.kdbPanel.chartZoomMaxSampledPoints'), true);
-  assert.strictEqual(settingsDocsSource.includes('Deprecated compatibility key; ignored.'), true);
+  assert.strictEqual(settingsDocsSource.includes('kdb-sqltools.results.kdbPanel.chartZoomMinSampledPoints'), false);
+  assert.strictEqual(settingsDocsSource.includes('kdb-sqltools.results.kdbPanel.chartZoomMaxSampledPoints'), false);
+  assert.strictEqual(settingsDocsSource.includes('move or resize the navigator window'), true);
   assert.strictEqual(resultsDocsSource.includes('## Non-table q result display'), true);
   assert.strictEqual(resultsDocsSource.includes('kdb-sqltools.results.kdbPanel.dictionaryDisplayStrategy'), true);
   assert.strictEqual(settingsDocsSource.includes('kdb-sqltools.results.kdbPanel.functionDisplayStrategy'), true);
@@ -5536,7 +5655,9 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(sortColumnSource.includes('this.rowOrder = sortedRowOrder;'), true);
   assert.strictEqual(sortColumnSource.includes('sortedColumnarRowOrder(table, columnIndex, nextSort.direction, panelCellTextOptions())'), true);
   assert.strictEqual(sortColumnSource.includes('perfSpan(\'results-panel.sort\''), true);
-  assert.strictEqual(sortColumnSource.includes('SORT_CONFIRM_ROW_THRESHOLD'), true);
+  assert.strictEqual(sortColumnSource.includes('SORT_CONFIRM_ROW_THRESHOLD'), false);
+  assert.strictEqual(sortColumnSource.includes('shouldWarnForLargeSort(table.rowCount'), true);
+  assert.strictEqual(sortColumnSource.includes('this.sortWarningApproval.approve'), true);
   assert.strictEqual(sortColumnSource.includes('const sortId = ++this.activeSortId;'), true);
   assert.strictEqual(sortColumnSource.includes('this.sortIntentState'), true);
   assert.strictEqual(
@@ -5789,6 +5910,7 @@ function panelFormatElapsedMs(milliseconds, display) {
   assert.strictEqual(qValueRowsMaterialized(lazyKeyedTable), false, 'decoded keyed tables should start with lazy rows');
   const columnarKeyedTable = qValueToColumnarPanel(lazyKeyedTable);
   assert.strictEqual(qValueRowsMaterialized(lazyKeyedTable), false, 'columnar keyed-table conversion should not materialize rows');
+  assert.deepStrictEqual(columnarKeyedTable.result.keyColumnOrdinals, [0]);
   assert.deepStrictEqual(
     columnarKeyedTable.result.cellWindow({ start: 0, end: 1 }, { start: 0, end: 2 }),
     rowsToCellWindow(

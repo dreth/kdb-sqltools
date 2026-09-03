@@ -298,3 +298,109 @@ export function panChartViewportByPixels(
   }
   return panChartViewport(currentRange, fullRange, -deltaPixels / plotWidth);
 }
+
+export type ChartNavigatorPart = 'window' | 'start' | 'end';
+
+export interface ChartNavigatorWindow {
+  startFraction: number;
+  endFraction: number;
+}
+
+export interface ChartNavigatorSliderRange {
+  minimum: number;
+  maximum: number;
+  now: number;
+}
+
+export interface ChartNavigatorSliderBounds {
+  window: ChartNavigatorSliderRange;
+  start: ChartNavigatorSliderRange;
+  end: ChartNavigatorSliderRange;
+}
+
+/** Count sampled X values inside an absolute viewport. */
+export function chartVisibleSampledPointCount(
+  xValues: readonly number[] | null | undefined,
+  range: ChartZoomRange | null | undefined
+): number {
+  if (!xValues || !isValidChartRange(range)) return 0;
+  let count = 0;
+  for (const value of xValues) {
+    if (Number.isFinite(value) && value >= range.min && value <= range.max) count += 1;
+  }
+  return count;
+}
+
+/** Convert an absolute X range into a clamped navigator window. */
+export function chartNavigatorWindow(
+  range: ChartZoomRange | null | undefined,
+  fullRange: ChartZoomRange | null | undefined
+): ChartNavigatorWindow | null {
+  if (!isValidChartRange(range) || !isValidChartRange(fullRange)) return null;
+  const clamped = clampChartViewport(range, fullRange);
+  if (!clamped) return null;
+  const span = fullRange.max - fullRange.min;
+  return {
+    startFraction: Math.max(0, Math.min(1, (clamped.min - fullRange.min) / span)),
+    endFraction: Math.max(0, Math.min(1, (clamped.max - fullRange.min) / span)),
+  };
+}
+
+/** Move one navigator edge or the whole window by a fraction of the full domain. */
+export function adjustChartNavigatorRange(
+  range: ChartZoomRange | null | undefined,
+  fullRange: ChartZoomRange | null | undefined,
+  part: ChartNavigatorPart,
+  deltaFraction: number,
+  minimumSpanFraction = 0.001
+): ChartZoomRange | null {
+  if (!isValidChartRange(range) || !isValidChartRange(fullRange) || !Number.isFinite(deltaFraction)) return null;
+  if (part === 'window') {
+    const selectedFraction = (range.max - range.min) / (fullRange.max - fullRange.min);
+    return panChartViewport(range, fullRange, deltaFraction / selectedFraction);
+  }
+  const fullSpan = fullRange.max - fullRange.min;
+  const minimumSpan = Math.max(
+    Number.EPSILON * Math.max(1, Math.abs(fullRange.min), Math.abs(fullRange.max)),
+    fullSpan * Math.max(0, minimumSpanFraction)
+  );
+  if (part === 'start') {
+    return {
+      min: Math.max(fullRange.min, Math.min(range.max - minimumSpan, range.min + fullSpan * deltaFraction)),
+      max: range.max,
+    };
+  }
+  return {
+    min: range.min,
+    max: Math.min(fullRange.max, Math.max(range.min + minimumSpan, range.max + fullSpan * deltaFraction)),
+  };
+}
+
+/** Center the current window on a navigator fraction without changing its span. */
+export function recenterChartNavigatorRange(
+  range: ChartZoomRange | null | undefined,
+  fullRange: ChartZoomRange | null | undefined,
+  centerFraction: number
+): ChartZoomRange | null {
+  if (!isValidChartRange(range) || !isValidChartRange(fullRange) || !Number.isFinite(centerFraction)) return null;
+  const fullSpan = fullRange.max - fullRange.min;
+  const span = range.max - range.min;
+  const center = fullRange.min + Math.max(0, Math.min(1, centerFraction)) * fullSpan;
+  return clampChartViewport({ min: center - span / 2, max: center + span / 2 }, fullRange);
+}
+
+/** ARIA slider bounds for the navigator's window and edge controls. */
+export function chartNavigatorSliderBounds(
+  range: ChartZoomRange | null | undefined,
+  fullRange: ChartZoomRange | null | undefined
+): ChartNavigatorSliderBounds | null {
+  const window = chartNavigatorWindow(range, fullRange);
+  if (!window) return null;
+  const start = Math.round(window.startFraction * 1000);
+  const end = Math.round(window.endFraction * 1000);
+  return {
+    window: { minimum: 0, maximum: 1000, now: Math.round((start + end) / 2) },
+    start: { minimum: 0, maximum: Math.max(0, end - 1), now: start },
+    end: { minimum: Math.min(1000, start + 1), maximum: 1000, now: end },
+  };
+}

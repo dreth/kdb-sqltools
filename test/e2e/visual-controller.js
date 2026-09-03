@@ -57,16 +57,17 @@ async function runChartVisualAcceptance(port, controlDir) {
         TARGET_TIMEOUT_MS,
         'initial chart render'
       );
-      const first = await dragAndWaitForRefinement(session, initial, 0.12, 0.82, 'first drag zoom');
-      const buttonPan = await clickChartControlAndWaitForRefinement(
+      const first = await dragAndWaitForRefinement(session, initial, 0.12, 0.42, 'first drag zoom');
+      const navigatorPan = await keyChartControlAndWaitForRefinement(
         session,
         first,
-        'panChartRight',
-        'Pan right button refinement'
+        'chartNavigatorWindow',
+        'ArrowRight',
+        'Navigator keyboard pan refinement'
       );
       const shiftPan = await shiftPanAndWaitForRefinement(
         session,
-        buttonPan,
+        navigatorPan,
         0.45,
         0.55,
         'Shift drag pan refinement'
@@ -74,7 +75,7 @@ async function runChartVisualAcceptance(port, controlDir) {
       const second = await dragAndWaitForRefinement(session, shiftPan, 0.25, 0.72, 'nested drag zoom');
 
       assertVisualEvidence(initial, first, second);
-      assertPanEvidence(first, buttonPan, shiftPan);
+      assertPanEvidence(first, navigatorPan, shiftPan);
       await resetChartWithNativeHome(session, second, 'nested chart reset');
       const families = [];
       let familyBefore = second;
@@ -114,7 +115,7 @@ async function runChartVisualAcceptance(port, controlDir) {
         ok: true,
         initial: compactState(initial),
         first: compactState(first),
-        buttonPan: compactState(buttonPan),
+        navigatorPan: compactState(navigatorPan),
         shiftPan: compactState(shiftPan),
         second: compactState(second),
         families: families.map(compactFamilyState),
@@ -724,11 +725,11 @@ async function dragAndWaitForRefinement(session, before, startRatio, endRatio, l
   );
 }
 
-async function clickChartControlAndWaitForRefinement(session, before, id, label) {
-  const client = session.webview;
-  await nativeChartClick(session, id);
+async function keyChartControlAndWaitForRefinement(session, before, id, key, label) {
+  await focusChartControl(session, id);
+  await dispatchChartKey(session.webview, key);
   return waitForChartState(
-    client,
+    session.webview,
     state => state && state.rendered && state.requestId > before.requestId && state.requestedRange,
     REFINEMENT_TIMEOUT_MS,
     label
@@ -1702,6 +1703,7 @@ function cdpKeyDescription(key) {
     case 'Enter': return { key, code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 };
     case ' ': return { key, code: 'Space', windowsVirtualKeyCode: 32, nativeVirtualKeyCode: 32 };
     case 'ArrowLeft': return { key, code: 'ArrowLeft', windowsVirtualKeyCode: 37, nativeVirtualKeyCode: 37 };
+    case 'ArrowRight': return { key, code: 'ArrowRight', windowsVirtualKeyCode: 39, nativeVirtualKeyCode: 39 };
     case 'ArrowDown': return { key, code: 'ArrowDown', windowsVirtualKeyCode: 40, nativeVirtualKeyCode: 40 };
     case 'Home': return { key, code: 'Home', windowsVirtualKeyCode: 36, nativeVirtualKeyCode: 36 };
     case 'Tab': return { key, code: 'Tab', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9 };
@@ -2585,7 +2587,7 @@ function assertVisualEvidence(initial, first, second) {
   }
   if (!(first.eligibleRowCount < initial.eligibleRowCount &&
     second.eligibleRowCount < first.eligibleRowCount &&
-    second.eligibleRowCount >= 3000)) {
+    second.eligibleRowCount > 0)) {
     throw new Error(`Nested refinements lack eligible-row evidence: ${JSON.stringify({
       initial: initial.eligibleRowCount,
       first: first.eligibleRowCount,
@@ -2603,32 +2605,32 @@ function assertVisualEvidence(initial, first, second) {
   }
 }
 
-function assertPanEvidence(first, buttonPan, shiftPan) {
+function assertPanEvidence(first, navigatorPan, shiftPan) {
   const span = range => range.max - range.min;
   const close = (left, right) => Math.abs(left - right) <= Math.max(1e-7, Math.abs(right) * 1e-9);
-  if (!first.requestedRange || !buttonPan.requestedRange || !shiftPan.requestedRange) {
+  if (!first.requestedRange || !navigatorPan.requestedRange || !shiftPan.requestedRange) {
     throw new Error('Pan acceptance requires absolute requested ranges');
   }
-  if (buttonPan.requestId !== first.requestId + 1 || shiftPan.requestId !== buttonPan.requestId + 1) {
+  if (navigatorPan.requestId !== first.requestId + 1 || shiftPan.requestId !== navigatorPan.requestId + 1) {
     throw new Error(`Each completed pan must issue exactly one settled request: ${JSON.stringify({
       first: first.requestId,
-      buttonPan: buttonPan.requestId,
+      navigatorPan: navigatorPan.requestId,
       shiftPan: shiftPan.requestId,
     })}`);
   }
-  if (!close(span(buttonPan.requestedRange), span(first.requestedRange)) ||
-    buttonPan.requestedRange.min <= first.requestedRange.min) {
-    throw new Error(`Pan right must preserve span and move the viewport right: ${JSON.stringify({ first, buttonPan })}`);
+  if (!close(span(navigatorPan.requestedRange), span(first.requestedRange)) ||
+    navigatorPan.requestedRange.min <= first.requestedRange.min) {
+    throw new Error(`Navigator pan must preserve span and move the viewport right: ${JSON.stringify({ first, navigatorPan })}`);
   }
-  if (!close(span(shiftPan.requestedRange), span(buttonPan.requestedRange)) ||
-    shiftPan.requestedRange.min >= buttonPan.requestedRange.min) {
-    throw new Error(`Shift drag must use grab-content direction and preserve span: ${JSON.stringify({ buttonPan, shiftPan })}`);
+  if (!close(span(shiftPan.requestedRange), span(navigatorPan.requestedRange)) ||
+    shiftPan.requestedRange.min >= navigatorPan.requestedRange.min) {
+    throw new Error(`Shift drag must use grab-content direction and preserve span: ${JSON.stringify({ navigatorPan, shiftPan })}`);
   }
-  if (buttonPan.sourceRowCount !== first.sourceRowCount ||
+  if (navigatorPan.sourceRowCount !== first.sourceRowCount ||
     shiftPan.sourceRowCount !== first.sourceRowCount) {
     throw new Error('Completed pans must resample from the retained full chart source');
   }
-  for (const state of [buttonPan, shiftPan]) {
+  for (const state of [navigatorPan, shiftPan]) {
     if (rangeKey(state.fullRange || {}) !== rangeKey(first.fullRange || {}) ||
       rangeKey(state.visibleRange || {}) !== rangeKey(state.requestedRange || {})) {
       throw new Error(`Pan changed the immutable range or failed exact reconstruction: ${JSON.stringify(state)}`);

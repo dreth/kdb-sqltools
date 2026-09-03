@@ -14,6 +14,8 @@ Set these in VS Code User or Workspace settings JSON.
 | `kdb-sqltools.results.kdbPanel.dictionaryDisplayStrategy` | `grid` | `grid`, `qText`, `table`, `text` | Top-level dictionary display. |
 | `kdb-sqltools.results.kdbPanel.listDisplayStrategy` | `grid` | `grid`, `qText`, `table`, `text` | Top-level general/mixed/object list display. |
 | `kdb-sqltools.results.kdbPanel.objectDisplayStrategy` | `grid` | `grid`, `qText`, `table`, `text` | Top-level plain object display. |
+| `kdb-sqltools.results.qText.syntaxHighlighting` | `false` | `true`, `false` | Highlight qText with a safe, non-evaluating lexer. |
+| `kdb-sqltools.results.qText.displayFormatting` | `false` | `true`, `false` | Apply display-only formatting when lexical and structural validation succeeds. Copy/export remains unchanged. |
 | `kdb-sqltools.performance.trace` | `false` | `true`, `false` | Logs query timing and memory snapshots to the extension host console with the `[kdb-sqltools:perf]` prefix. |
 
 There is no setting that auto-starts the local data server. Start it explicitly from the kdb panel `Settings` area or the Command Palette.
@@ -43,12 +45,10 @@ True q tables and keyed tables always use the grid. Function source is shown onl
 | --- | --- | --- |
 | `kdb-sqltools.results.kdbPanel.chartMaxSourceRows` | `2000000` | Maximum source rows scanned for built-in charting before rejecting a chart request. The minimum is `1`; there is no hard upper bound. |
 | `kdb-sqltools.results.kdbPanel.chartDecimalPlaces` | `4` | Decimal places for chart numeric axis ticks, tooltips, legend/live values, box statistics, and candlestick OHLC values. Values are clamped to `0` through `12`; very large or very small nonzero numbers use scientific notation with this precision. |
-| `kdb-sqltools.results.kdbPanel.chartZoomMinSampledPoints` | `3000` | Deprecated compatibility key; ignored. Refined ranges use the fixed 3,000-through-7,000 density contract. |
-| `kdb-sqltools.results.kdbPanel.chartZoomMaxSampledPoints` | `7000` | Deprecated compatibility key; ignored. Ranges above 7,000 eligible rows use a fixed target of about 7,000 points. |
 
 Very large values can make chart rendering slow or temporarily block the extension host, especially with multiple y columns. For very large data, prefer the local data server or sliced results.
 
-Chart viewport gestures do not add settings: plain drag zooms x, `Shift`+drag and the Pan/arrow controls pan x, and `Home` resets. For the same absolute x range, completed pans use the unchanged zoom range-loading/resampling decision and settings; y remains automatic.
+Chart viewport gestures do not add settings: choose Zoom or Pan in the chart toolbar, use `Shift`+drag for pan at any time, move or resize the navigator window, and use `Home` to reset. Viewports with at least 3,000 sampled points remain local; sparser viewports automatically rebuild from the retained source. Y remains automatic.
 
 ## Panel size and density
 
@@ -86,7 +86,9 @@ There is no Header mode setting. Header click/drag intent is determined by the s
 | `kdb-sqltools.results.includeRowIndex` | `true` | Include 1-based row numbers by default when copying or exporting. |
 | `kdb-sqltools.results.hideLargeResultWarnings` | `false` | Hide large-result guardrail messages in the panel. |
 | `kdb-sqltools.results.hideLargeSortWarnings` | `false` | Skip large-result sort confirmation warnings. |
-| `kdb-sqltools.results.copyExportConfirmCellThreshold` | `1000000` | Selected-cell threshold that triggers copy/export confirmation. Minimum `1`; no hard upper bound. |
+| `kdb-sqltools.results.largeSortWarningRowThreshold` | `5000000` | Ask before the first exact sort of a displayed result when its row count exceeds this value. |
+| `kdb-sqltools.results.showColumnSummaryStatistics` | `false` | Show bounded exact or deterministic sampled statistics for visible columns. |
+| `kdb-sqltools.results.copyExportConfirmCellThreshold` | `1000000` | Selected-cell threshold that triggers copy/export confirmation. Hard safety limits remain in force. |
 | `kdb-sqltools.results.localDataServerFullExportCellLimit` | `1000000` | Visible-cell limit for local data server full-result `current.csv`, `current.json`, and `current.ndjson` exports. Minimum `1`; no hard upper bound. |
 | `kdb-sqltools.results.elapsedTimeDisplay` | `auto` | Use `auto` or `milliseconds` for elapsed time display. |
 
@@ -101,6 +103,9 @@ There is no Header mode setting. Header click/drag intent is determined by the s
   "kdb-sqltools.results.kdbPanel.dictionaryDisplayStrategy": "qText",
   "kdb-sqltools.results.kdbPanel.listDisplayStrategy": "grid",
   "kdb-sqltools.results.kdbPanel.objectDisplayStrategy": "grid",
+  "kdb-sqltools.results.qText.syntaxHighlighting": true,
+  "kdb-sqltools.results.qText.displayFormatting": false,
+  "kdb-sqltools.results.showColumnSummaryStatistics": true,
   "kdb-sqltools.results.includeHeaders": true,
   "kdb-sqltools.results.includeRowIndex": true,
   "kdb-sqltools.results.copyExportConfirmCellThreshold": 1000000,

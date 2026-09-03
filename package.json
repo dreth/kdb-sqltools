@@ -2,7 +2,7 @@
   "name": "kdb-sqltools",
   "displayName": "SQLTools kdb Driver",
   "description": "SQLTools driver for kdb+/q using q IPC over TCP",
-  "version": "0.3.21",
+  "version": "0.3.22",
   "engines": {
     "vscode": "^1.42.0"
   },
@@ -19,8 +19,12 @@
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
-    "package": "npm run compile && npx @vscode/vsce package --out kdb-sqltools-0.3.21.vsix",
-    "package:vsix": "npm run compile && npx @vscode/vsce package --out kdb-sqltools-0.3.21.vsix",
+    "package": "npm run package:vsix",
+    "package:vsix": "npm run compile && npm run audit:confidentiality && npx @vscode/vsce package --out kdb-sqltools-0.3.22.vsix && node scripts/audit-vsix-confidentiality.js kdb-sqltools-0.3.22.vsix",
+    "audit:confidentiality": "node scripts/audit-repository-confidentiality.js",
+    "audit:confidentiality:staged": "node scripts/audit-repository-confidentiality.js --staged",
+    "audit:confidentiality:history": "node scripts/audit-repository-confidentiality.js --history --metadata",
+    "audit:confidentiality:compiled": "node scripts/audit-vsix-confidentiality.js --compiled out/extension.js out/results-panel.js out/kdb-results.js out/charting.js out/q-text.js out/result-column-summary.js out/result-sort-warning.js out/ls/q-ipc.js",
     "test:unit": "npm run compile && node test/run.js",
     "test:e2e": "npm run compile && npm run prepare:e2e-linux-libs && node test/e2e/run.js",
     "test": "npm run compile && node test/run.js && npm run prepare:e2e-linux-libs && node test/e2e/run.js",
@@ -767,6 +771,28 @@
           "default": false,
           "description": "Skip large-result sort confirmation warnings in the kdb results panel."
         },
+        "kdb-sqltools.results.largeSortWarningRowThreshold": {
+          "type": "integer",
+          "default": 5000000,
+          "minimum": 1,
+          "maximum": 2147483647,
+          "description": "Warn before sorting a displayed result when its row count exceeds this threshold. One approval covers subsequent sorts of the same displayed result."
+        },
+        "kdb-sqltools.results.showColumnSummaryStatistics": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show bounded per-column summary statistics in the kdb results panel. Large results use a deterministic sample."
+        },
+        "kdb-sqltools.results.qText.syntaxHighlighting": {
+          "type": "boolean",
+          "default": false,
+          "description": "Apply non-evaluating q syntax highlighting to qText results."
+        },
+        "kdb-sqltools.results.qText.displayFormatting": {
+          "type": "boolean",
+          "default": false,
+          "description": "Apply safe display-only formatting to qText results without changing copied or exported text."
+        },
         "kdb-sqltools.results.elapsedTimeDisplay": {
           "type": "string",
           "default": "auto",
@@ -784,7 +810,7 @@
           "type": "integer",
           "default": 1000000,
           "minimum": 1,
-          "description": "Selected-cell threshold that triggers copy/export confirmation in the kdb results panel. There is no hard upper bound; higher values can make very large copy/export actions run without prompting and may temporarily block the extension host."
+          "description": "Selected-cell threshold that triggers copy/export confirmation in the kdb results panel. Hard safety limits still apply."
         },
         "kdb-sqltools.results.localDataServerFullExportCellLimit": {
           "type": "integer",
@@ -808,6 +834,7 @@
     "@types/vscode": "^1.42.0",
     "@vscode/test-electron": "^3.0.0",
     "mocha": "^11.7.6",
-    "typescript": "^3.7.3"
+    "typescript": "^3.7.3",
+    "vscode-languageclient": "6.1.3"
   }
 }

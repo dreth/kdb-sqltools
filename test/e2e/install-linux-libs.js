@@ -13,6 +13,9 @@ const packageGroups = [
   ['libepoxy0'],
   ['libxinerama1'],
   ['libcloudproviders0'],
+  ['libnspr4'],
+  ['libnss3'],
+  ['libasound2t64', 'libasound2'],
 ];
 
 function main() {
@@ -51,6 +54,10 @@ function groupAlreadyExtracted(group) {
     libepoxy0: 'libepoxy.so.0',
     libxinerama1: 'libXinerama.so.1',
     libcloudproviders0: 'libcloudproviders.so.0',
+    libnspr4: 'libnspr4.so',
+    libnss3: 'libnss3.so',
+    libasound2t64: 'libasound.so.2',
+    libasound2: 'libasound.so.2',
   };
 
   return group.some(pkg => fs.existsSync(path.join(libDir, probes[pkg] || `${pkg}.so`)));

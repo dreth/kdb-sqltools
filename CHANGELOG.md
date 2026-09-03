@@ -1,5 +1,12 @@
 # Change Log
 
+## 0.3.22 - 2026-09-03
+
+- Added safe optional qText syntax highlighting and display-only formatting, theme-aware keyed-table columns, and bounded exact or sampled column summaries.
+- Added a persistent full-range chart navigator with Zoom/Pan modes and automatic source refinement for sparse viewports. Ordinary line, scatter, and step charts now use a stable 7,000-point sampling target.
+- Hardened large-result handling with bounded display/search text, result-scoped exact-sort approval, collision-safe JSON and NDJSON fields, and non-bypassable copy/export size limits.
+- Preserved keyed-table metadata through filtering and ordering, and expanded Results-panel regression coverage and user documentation.
+
 ## 0.3.21 - 2026-08-11
 
 - Unified chart viewport handling across plain-drag x zoom, `Shift`+drag x pan, 20% Pan left/right controls, `ArrowLeft`/`ArrowRight`, and `Home`. For the same absolute range, pan completion uses the exact unchanged zoom range-loading/resampling decision, with automatic y scaling, stale-response rejection, and reset invalidation.

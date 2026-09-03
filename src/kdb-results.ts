@@ -29,6 +29,8 @@ export type RowValue = { [key: string]: unknown };
 export type ArrayDisplayFormat = 'commaSpace' | 'space' | 'raw';
 export interface CellTextOptions {
   arrayDisplayFormat?: ArrayDisplayFormat;
+  maxChars?: number;
+  truncationMarker?: string;
 }
 export interface ExportOptions extends CellTextOptions {
   includeHeaders?: boolean;
@@ -47,6 +49,8 @@ export interface ExportShape {
 export interface ColumnarPanelResult {
   columns: string[];
   rowCount: number;
+  columnTypes?: string[];
+  keyColumnOrdinals?: number[];
   cellValue(rowIndex: number, columnIndex: number): unknown;
   cellText(rowIndex: number, columnIndex: number, options?: CellTextOptions): string;
   cellWindow(rowRange: VisibleIndexRange, columnRange: VisibleIndexRange, options?: CellTextOptions): CellWindow;
@@ -354,13 +358,16 @@ export function rowsToTextFormat(
 export function createColumnarPanelResult(
   columns: string[],
   rowCount: number,
-  cellValue: (rowIndex: number, columnIndex: number) => unknown
+  cellValue: (rowIndex: number, columnIndex: number) => unknown,
+  metadata: { columnTypes?: string[]; keyColumnOrdinals?: number[] } = {}
 ): ColumnarPanelResult {
   const normalizedColumns = columns.map(column => String(column));
   const normalizedRowCount = nonNegativeCount(rowCount);
   const result: ColumnarPanelResult = {
     columns: normalizedColumns,
     rowCount: normalizedRowCount,
+    columnTypes: metadata.columnTypes && metadata.columnTypes.slice(),
+    keyColumnOrdinals: metadata.keyColumnOrdinals && metadata.keyColumnOrdinals.slice(),
     cellValue(rowIndex: number, columnIndex: number): unknown {
       if (rowIndex < 0 || rowIndex >= normalizedRowCount || columnIndex < 0 || columnIndex >= normalizedColumns.length) {
         return undefined;
@@ -410,6 +417,9 @@ export function filterColumnarPanelResult(result: ColumnarPanelResult, visibleCo
 
   return createColumnarPanelResult(filteredColumns, result.rowCount, (rowIndex, columnIndex) => {
     return result.cellValue(rowIndex, sourceColumnIndexes[columnIndex]);
+  }, {
+    columnTypes: result.columnTypes && sourceColumnIndexes.map(index => result.columnTypes![index]),
+    keyColumnOrdinals: projectedKeyOrdinals(result.keyColumnOrdinals, sourceColumnIndexes),
   });
 }
 
@@ -421,9 +431,24 @@ export function filterColumnarPanelResultBySourceOrdinals(
     .map(ordinal => Math.floor(Number(ordinal)))
     .filter(ordinal => Number.isSafeInteger(ordinal) && ordinal >= 0 && ordinal < result.columns.length);
   const filteredColumns = sourceColumnIndexes.map(ordinal => result.columns[ordinal]);
-  return createColumnarPanelResult(filteredColumns, result.rowCount, (rowIndex, columnIndex) =>
-    result.cellValue(rowIndex, sourceColumnIndexes[columnIndex])
+  return createColumnarPanelResult(
+    filteredColumns,
+    result.rowCount,
+    (rowIndex, columnIndex) => result.cellValue(rowIndex, sourceColumnIndexes[columnIndex]),
+    {
+      columnTypes: result.columnTypes && sourceColumnIndexes.map(index => result.columnTypes![index]),
+      keyColumnOrdinals: projectedKeyOrdinals(result.keyColumnOrdinals, sourceColumnIndexes),
+    }
   );
+}
+
+function projectedKeyOrdinals(keyOrdinals: number[] | undefined, sourceColumnIndexes: number[]): number[] | undefined {
+  if (!keyOrdinals) return undefined;
+  const keys = new Set(keyOrdinals);
+  return sourceColumnIndexes.reduce<number[]>((projected, sourceIndex, projectedIndex) => {
+    if (keys.has(sourceIndex)) projected.push(projectedIndex);
+    return projected;
+  }, []);
 }
 
 export function applyColumnarRowOrder(result: ColumnarPanelResult, rowOrder: number[] | undefined): ColumnarPanelResult {
@@ -436,6 +461,9 @@ export function applyColumnarRowOrder(result: ColumnarPanelResult, rowOrder: num
     .filter(rowIndex => Number.isFinite(rowIndex) && rowIndex >= 0 && rowIndex < result.rowCount);
   return createColumnarPanelResult(result.columns, sourceRowIndexes.length, (rowIndex, columnIndex) => {
     return result.cellValue(sourceRowIndexes[rowIndex], columnIndex);
+  }, {
+    columnTypes: result.columnTypes,
+    keyColumnOrdinals: result.keyColumnOrdinals,
   });
 }
 
@@ -722,7 +750,14 @@ export function rowsToCellWindow(
 }
 
 export function cellValueToText(value: unknown, options?: CellTextOptions): string {
-  return sanitizeTsvCell(cellValueToReadableText(value, options));
+  const text = sanitizeTsvCell(cellValueToReadableText(value, options));
+  const maxChars = options && Number.isSafeInteger(options.maxChars) && options.maxChars! >= 0
+    ? options.maxChars!
+    : undefined;
+  if (maxChars === undefined || text.length <= maxChars) return text;
+  const marker = String(options?.truncationMarker || '[truncated]');
+  if (maxChars <= marker.length) return marker.slice(0, maxChars);
+  return text.slice(0, maxChars - marker.length) + marker;
 }
 
 export function visibleIndexRange(
@@ -816,15 +851,16 @@ export function rowIndexColumnName(columns: string[], range: CellRange): string 
 function selectedRows(rows: RowValue[], columns: string[], range: CellRange, includeRowIndex = false): RowValue[] {
   const selected: RowValue[] = [];
   const indexColumn = includeRowIndex ? rowIndexColumnName(columns, range) : '';
+  const exportColumns = analystExportColumnNames(columns, range, includeRowIndex ? [indexColumn] : []);
   for (let rowIndex = range.startRow; rowIndex <= range.endRow; rowIndex++) {
     const row = rows[rowIndex] || {};
-    const value: RowValue = {};
+    const value: RowValue = Object.create(null);
     if (includeRowIndex) {
       value[indexColumn] = rowIndex + 1;
     }
     for (let columnIndex = range.startColumn; columnIndex <= range.endColumn; columnIndex++) {
       const column = columns[columnIndex];
-      value[column] = row[column];
+      value[exportColumns[columnIndex - range.startColumn]] = row[column];
     }
     selected.push(value);
   }
@@ -834,17 +870,40 @@ function selectedRows(rows: RowValue[], columns: string[], range: CellRange, inc
 function selectedColumnarRows(result: ColumnarPanelResult, range: CellRange, includeRowIndex = false): RowValue[] {
   const selected: RowValue[] = [];
   const indexColumn = includeRowIndex ? rowIndexColumnName(result.columns, range) : '';
+  const exportColumns = analystExportColumnNames(result.columns, range, includeRowIndex ? [indexColumn] : []);
   for (let rowIndex = range.startRow; rowIndex <= range.endRow; rowIndex++) {
-    const value: RowValue = {};
+    const value: RowValue = Object.create(null);
     if (includeRowIndex) {
       value[indexColumn] = rowIndex + 1;
     }
     for (let columnIndex = range.startColumn; columnIndex <= range.endColumn; columnIndex++) {
-      value[result.columns[columnIndex]] = result.cellValue(rowIndex, columnIndex);
+      value[exportColumns[columnIndex - range.startColumn]] = result.cellValue(rowIndex, columnIndex);
     }
     selected.push(value);
   }
   return selected;
+}
+
+/** Collision-safe object keys for JSON and NDJSON exports. */
+export function analystExportColumnNames(
+  columns: readonly string[],
+  range: CellRange,
+  reserved: readonly string[] = []
+): string[] {
+  const used = new Set<string>(reserved);
+  const names: string[] = [];
+  for (let columnIndex = range.startColumn; columnIndex <= range.endColumn; columnIndex += 1) {
+    const base = String(columns[columnIndex] || 'column');
+    let name = base;
+    let suffix = 2;
+    while (used.has(name)) {
+      name = `${base}_${suffix}`;
+      suffix += 1;
+    }
+    used.add(name);
+    names.push(name);
+  }
+  return names;
 }
 
 function rangeContainsColumn(columns: string[], range: CellRange, name: string): boolean {

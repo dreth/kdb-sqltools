@@ -26,8 +26,12 @@ import {
   updatePositionalColumnWidth,
 } from './grid-column-widths';
 import {
+  adjustChartNavigatorRange,
   chartZoomAutoRefineQueueAction,
   clampChartViewport,
+  chartNavigatorSliderBounds,
+  chartNavigatorWindow,
+  chartVisibleSampledPointCount,
   chartZoomRangeMatchesRequest,
   chartZoomRangeKey,
   chartZoomRequestedRenderRange,
@@ -36,6 +40,7 @@ import {
   isValidChartRange,
   panChartViewport,
   panChartViewportByPixels,
+  recenterChartNavigatorRange,
   reduceChartZoomLifecycle,
   runCurrentChartBuild,
 } from './chart-zoom-state';
@@ -79,6 +84,16 @@ import {
   localDataServerFullExportCellLimitValue,
 } from './local-data-server';
 import { endPerfSpan, isPerfTraceEnabled, perfSpan } from './perf';
+import { QTextRenderModel, qTextRenderModel } from './q-text';
+import { KdbColumnSummaryBatch, computeResultColumnSummaries } from './result-column-summary';
+import {
+  DEFAULT_LARGE_SORT_WARNING_ROW_THRESHOLD,
+  ExactResultSortWarningApproval,
+  MAX_LARGE_SORT_WARNING_ROW_THRESHOLD,
+  MIN_LARGE_SORT_WARNING_ROW_THRESHOLD,
+  normalizeLargeSortWarningRowThreshold,
+  shouldWarnForLargeSort,
+} from './result-sort-warning';
 
 type KdbPanelResultMode = 'table' | 'text';
 
@@ -112,12 +127,14 @@ interface KdbPanelMetadata {
   mode: KdbPanelResultMode;
   columns: string[];
   columnPositions: number[];
+  keyColumnPositions: number[];
   allColumns: string[];
   hiddenColumnCount: number;
   hiddenColumnNames: string[];
   hiddenSourceOrdinals: number[];
   rowCount: number;
   text?: string;
+  qTextRender?: QTextRenderModel;
   query: string;
   connectionName: string;
   elapsedMs: number;
@@ -156,10 +173,14 @@ interface KdbPanelSettings {
   includeRowIndex: boolean;
   hideLargeResultWarnings: boolean;
   hideLargeSortWarnings: boolean;
+  largeSortWarningRowThreshold: number;
+  showColumnSummaryStatistics: boolean;
   copyExportConfirmCellThreshold: number;
   localDataServerFullExportCellLimit: number;
   elapsedTimeDisplay: KdbPanelElapsedTimeDisplay;
   chartDecimalPlaces: number;
+  qTextSyntaxHighlighting: boolean;
+  qTextDisplayFormatting: boolean;
   arrayDisplayFormat: ArrayDisplayFormat;
   functionDisplayStrategy: KdbPanelQResultDisplayStrategy;
   dictionaryDisplayStrategy: KdbPanelQResultDisplayStrategy;
@@ -197,7 +218,17 @@ interface CopyExportEstimate {
   estimatedBytes: number;
 }
 
-const COPY_WARNING_BYTES = 15 * 1024 * 1024;
+const COPY_MAX_BYTES = 15 * 1024 * 1024;
+const TEXT_EXPORT_MAX_CELLS = 5_000_000;
+const TEXT_EXPORT_MAX_COLUMNS = 100_000;
+const TEXT_EXPORT_MAX_BYTES = 128 * 1024 * 1024;
+const TEXT_EXPORT_MAX_CELL_CHARS = 8_388_608;
+const XLSX_EXPORT_MAX_CELLS = 1_000_000;
+const XLSX_EXPORT_MAX_XML_BYTES = 64 * 1024 * 1024;
+const XLSX_EXPORT_MAX_CELL_CHARS = 32_767;
+const PANEL_SLICE_CELL_TEXT_CHARS = 64 * 1024;
+const PANEL_SEARCH_CELL_TEXT_CHARS = 4_096;
+const PANEL_SLICE_TRUNCATION_MARKER = '… [cell truncated; copy/export uses full value]';
 const LARGE_RESULT_WARNING_CELL_THRESHOLD = 5 * 1000 * 1000;
 const LARGE_RESULT_WARNING_ROW_THRESHOLD = 1000000;
 const LARGE_RESULT_WARNING_COLUMN_THRESHOLD = 500;
@@ -205,7 +236,6 @@ const COPY_EXPORT_CONFIRM_CELL_THRESHOLD = 1000000;
 const COPY_EXPORT_CONFIRM_BYTES = 50 * 1024 * 1024;
 const COPY_EXPORT_SAMPLE_ROWS = 32;
 const COPY_EXPORT_SAMPLE_COLUMNS = 12;
-const SORT_CONFIRM_ROW_THRESHOLD = 250000;
 const SEARCH_MATCH_CAP = 1000;
 const SEARCH_YIELD_CELL_INTERVAL = 10000;
 const SEARCH_SCAN_CELL_LIMIT = 2000000;
@@ -230,10 +260,14 @@ const DEFAULT_PANEL_SETTINGS: KdbPanelSettings = {
   includeRowIndex: true,
   hideLargeResultWarnings: false,
   hideLargeSortWarnings: false,
+  largeSortWarningRowThreshold: DEFAULT_LARGE_SORT_WARNING_ROW_THRESHOLD,
+  showColumnSummaryStatistics: false,
   copyExportConfirmCellThreshold: COPY_EXPORT_CONFIRM_CELL_THRESHOLD,
   localDataServerFullExportCellLimit: LOCAL_DATA_SERVER_FULL_EXPORT_CELL_LIMIT,
   elapsedTimeDisplay: 'auto',
   chartDecimalPlaces: CHART_DECIMAL_PLACES_DEFAULT,
+  qTextSyntaxHighlighting: false,
+  qTextDisplayFormatting: false,
   arrayDisplayFormat: 'commaSpace',
   functionDisplayStrategy: 'qText',
   dictionaryDisplayStrategy: 'grid',
@@ -287,6 +321,10 @@ export class KdbResultsPanel {
   private sortState: KdbPanelSortState | undefined;
   private sortIntentState: KdbPanelSortState | undefined;
   private activeSortId = 0;
+  private readonly sortWarningApproval = new ExactResultSortWarningApproval<KdbPanelResult>();
+  private columnSummaryResultIdentity = 0;
+  private columnSummaryRequestId = 0;
+  private columnSummaryCache: { resultIdentity: number; table: ColumnarPanelResult; summary: KdbColumnSummaryBatch } | undefined;
   private hiddenColumnSchema: string[] | undefined;
   private columnOrderSchema: string[] | undefined;
   private baseVisibleTableCache: { version: number; source: ColumnarPanelResult; table: ColumnarPanelResult } | undefined;
@@ -319,6 +357,10 @@ export class KdbResultsPanel {
     panel.sortState = undefined;
     panel.sortIntentState = undefined;
     panel.activeSortId += 1;
+    panel.sortWarningApproval.clear();
+    panel.columnSummaryResultIdentity += 1;
+    panel.columnSummaryRequestId += 1;
+    panel.columnSummaryCache = undefined;
     panel.hideLargeResultWarningOnce = false;
     panel.baseVisibleTableCache = undefined;
     panel.visibleTableCache = undefined;
@@ -358,6 +400,9 @@ export class KdbResultsPanel {
     this.sortState = undefined;
     this.sortIntentState = undefined;
     this.activeSortId += 1;
+    this.columnSummaryResultIdentity += 1;
+    this.columnSummaryRequestId += 1;
+    this.columnSummaryCache = undefined;
     this.hideLargeResultWarningOnce = false;
     this.baseVisibleTableCache = undefined;
     this.visibleTableCache = undefined;
@@ -378,6 +423,7 @@ export class KdbResultsPanel {
       this.columnOrderSchema = result.table.columns.slice();
     }
     this.result = result;
+    this.sortWarningApproval.replace(result);
     this.revealExisting();
     this.postResultMetadata();
     return this;
@@ -481,14 +527,9 @@ export class KdbResultsPanel {
 
   private static postSettingsToOpenPanels(): void {
     const settings = panelSettings();
-    const columnWidths = persistedColumnWidths();
     KdbResultsPanel.panels.forEach(panel => {
       panel.activeAutoFitRequestId += 1;
-      panel.post({
-        type: 'settings',
-        settings,
-        columnWidths,
-      });
+      panel.postSettings(settings);
     });
   }
 
@@ -539,6 +580,10 @@ export class KdbResultsPanel {
     this.sortState = undefined;
     this.sortIntentState = undefined;
     this.activeSortId += 1;
+    this.sortWarningApproval.clear();
+    this.columnSummaryResultIdentity += 1;
+    this.columnSummaryRequestId += 1;
+    this.columnSummaryCache = undefined;
     this.hiddenColumnOrdinals = [];
     this.hiddenColumnSchema = undefined;
     this.columnOrder = undefined;
@@ -743,13 +788,104 @@ export class KdbResultsPanel {
         ready: this.ready,
       }) : null;
     try {
-      this.post({ type: 'resultMeta', result: this.metadataForResult(this.result) });
+      const metadata = this.metadataForResult(this.result);
+      this.post({ type: 'resultMeta', result: metadata });
+      this.scheduleColumnSummaries(metadata.settings);
       this.postLocalDataServerStatus();
     } finally {
       if (tracePerf) {
         endPerfSpan(span, { posted: this.ready });
       }
     }
+  }
+
+  private postSettings(settings: KdbPanelSettings = panelSettings()): void {
+    this.post({
+      type: 'settings',
+      settings,
+      columnWidths: persistedColumnWidths(),
+      version: this.version,
+      qTextRender: this.result && isTextPanelResult(this.result)
+        ? qTextRenderModel(this.result.text, qTextRenderOptions(settings))
+        : undefined,
+    });
+    if (settings.showColumnSummaryStatistics) {
+      this.scheduleColumnSummaries(settings);
+    } else {
+      this.columnSummaryRequestId += 1;
+      this.post({
+        type: 'columnSummaries',
+        version: this.version,
+        resultIdentity: this.columnSummaryResultIdentity,
+        summary: null,
+      });
+    }
+  }
+
+  private scheduleColumnSummaries(settings: KdbPanelSettings): void {
+    if (!settings.showColumnSummaryStatistics || !this.result ||
+      isTextPanelResult(this.result) || this.disposed) {
+      return;
+    }
+    const result = this.result;
+    const table = result.table;
+    const resultIdentity = this.columnSummaryResultIdentity;
+    const cached = this.columnSummaryCache;
+    if (cached && cached.resultIdentity === resultIdentity && cached.table === table) {
+      this.postColumnSummaries(cached.summary, result, resultIdentity);
+      return;
+    }
+
+    const requestId = ++this.columnSummaryRequestId;
+    this.post({ type: 'columnSummaryPending', version: this.version, resultIdentity });
+    void computeResultColumnSummaries(table, {
+      shouldCancel: () => this.disposed ||
+        requestId !== this.columnSummaryRequestId ||
+        this.columnSummaryResultIdentity !== resultIdentity ||
+        this.result !== result ||
+        !panelSettings().showColumnSummaryStatistics,
+    }).then(summary => {
+      if (!summary || this.disposed || requestId !== this.columnSummaryRequestId ||
+        this.columnSummaryResultIdentity !== resultIdentity || this.result !== result ||
+        !panelSettings().showColumnSummaryStatistics) {
+        return;
+      }
+      this.columnSummaryCache = { resultIdentity, table, summary };
+      this.postColumnSummaries(summary, result, resultIdentity);
+    }).catch(error => {
+      if (requestId === this.columnSummaryRequestId &&
+        this.columnSummaryResultIdentity === resultIdentity && this.result === result) {
+        this.post({
+          type: 'columnSummaryError',
+          version: this.version,
+          resultIdentity,
+          message: `Column summary failed: ${toError(error).message}`,
+        });
+      }
+    });
+  }
+
+  private postColumnSummaries(
+    summary: KdbColumnSummaryBatch,
+    result: KdbPanelTableResult,
+    resultIdentity: number
+  ): void {
+    if (this.result !== result || this.columnSummaryResultIdentity !== resultIdentity ||
+      !panelSettings().showColumnSummaryStatistics) {
+      return;
+    }
+    const ordinals = this.visibleColumnOrdinals(result);
+    this.post({
+      type: 'columnSummaries',
+      version: this.version,
+      resultIdentity,
+      summary: {
+        ...summary,
+        columns: ordinals
+          .map(ordinal => summary.columns[ordinal])
+          .filter(column => column !== undefined),
+      },
+    });
   }
 
   private metadataForResult(result: KdbPanelResult): KdbPanelMetadata {
@@ -759,12 +895,14 @@ export class KdbResultsPanel {
         mode: 'text',
         columns: [],
         columnPositions: [],
+        keyColumnPositions: [],
         allColumns: [],
         hiddenColumnCount: 0,
         hiddenColumnNames: [],
         hiddenSourceOrdinals: [],
         rowCount: 0,
         text: result.text,
+        qTextRender: qTextRenderModel(result.text, qTextRenderOptions(settings)),
         query: result.query,
         connectionName: result.connectionName,
         elapsedMs: result.elapsedMs,
@@ -787,6 +925,7 @@ export class KdbResultsPanel {
       mode: 'table',
       columns,
       columnPositions: sourceOrdinals,
+      keyColumnPositions: result.table.keyColumnOrdinals?.slice() || [],
       allColumns: result.table.columns.slice(),
       hiddenColumnCount: result.table.columns.length - columns.length,
       hiddenColumnNames,
@@ -1245,7 +1384,11 @@ export class KdbResultsPanel {
         totalColumns: table.columns.length,
       }) : null;
     try {
-      const cellTextOptions = panelCellTextOptions();
+      const cellTextOptions: CellTextOptions = {
+        ...panelCellTextOptions(),
+        maxChars: PANEL_SLICE_CELL_TEXT_CHARS,
+        truncationMarker: PANEL_SLICE_TRUNCATION_MARKER,
+      };
       const slice = table.cellWindow(rowRange, columnRange, cellTextOptions);
       const sliceDetails = tracePerf ? {
         rows: slice.endRow >= slice.startRow ? slice.endRow - slice.startRow + 1 : 0,
@@ -1295,7 +1438,11 @@ export class KdbResultsPanel {
 
     this.activeAutoFitRequestId = requestId;
     const textLengths = table.columns.map(column => String(column || '').length);
-    const cellTextOptions = panelCellTextOptions();
+    const cellTextOptions: CellTextOptions = {
+      ...panelCellTextOptions(),
+      maxChars: PANEL_SLICE_CELL_TEXT_CHARS,
+      truncationMarker: PANEL_SLICE_TRUNCATION_MARKER,
+    };
     let scannedCells = 0;
     for (let rowIndex = 0; rowIndex < table.rowCount; rowIndex++) {
       for (let columnIndex = 0; columnIndex < table.columns.length; columnIndex++) {
@@ -1361,7 +1508,11 @@ export class KdbResultsPanel {
     let capped = false;
     let partial = false;
     let cancelled = false;
-    const cellTextOptions = panelCellTextOptions();
+    const cellTextOptions: CellTextOptions = {
+      ...panelCellTextOptions(),
+      maxChars: PANEL_SEARCH_CELL_TEXT_CHARS,
+      truncationMarker: PANEL_SLICE_TRUNCATION_MARKER,
+    };
 
     try {
       const needle = query.toLowerCase();
@@ -1472,12 +1623,19 @@ export class KdbResultsPanel {
       direction: nextSortPlan.direction,
     };
     this.sortIntentState = nextSort;
+    const warningIdentity = this.sortWarningApproval.current();
     const isCurrentSort = (): boolean =>
-      this.activeSortId === sortId && this.isCurrentVersion(requestVersion);
+      this.activeSortId === sortId && this.isCurrentVersion(requestVersion) &&
+      warningIdentity !== undefined && this.sortWarningApproval.isCurrent(warningIdentity);
 
-    if (table.rowCount >= SORT_CONFIRM_ROW_THRESHOLD && !panelSettings().hideLargeSortWarnings) {
+    const settings = panelSettings();
+    if (shouldWarnForLargeSort(table.rowCount, {
+      rowThreshold: settings.largeSortWarningRowThreshold,
+      hideWarnings: settings.hideLargeSortWarnings,
+      approved: this.sortWarningApproval.isApproved(warningIdentity),
+    })) {
       const choice = await vscode.window.showWarningMessage(
-        `Sort ${formatCount(table.rowCount)} rows by ${columnName}? This may take a moment.`,
+        `Sort ${formatCount(table.rowCount)} rows in this displayed result? This may take a moment.`,
         'Sort',
         "Sort and Don't Warn Again",
         'Cancel'
@@ -1491,7 +1649,7 @@ export class KdbResultsPanel {
           true,
           vscode.ConfigurationTarget.Global
         );
-        this.post({ type: 'settings', settings: panelSettings() });
+        KdbResultsPanel.postSettingsToOpenPanels();
         if (!isCurrentSort()) {
           return;
         }
@@ -1503,6 +1661,7 @@ export class KdbResultsPanel {
         this.post({ type: 'sortSkipped', version: requestVersion });
         return;
       }
+      this.sortWarningApproval.approve(warningIdentity!);
     }
 
     const tracePerf = isPerfTraceEnabled();
@@ -1581,16 +1740,41 @@ export class KdbResultsPanel {
       return;
     }
 
-    const text = table.toText(format, clamped, {
+    const limitError = validatePanelTextExportLimits(
+      table,
+      clamped,
       includeHeaders,
       includeRowIndex,
-      arrayDisplayFormat: cellTextOptions.arrayDisplayFormat,
-    });
-    if (Buffer.byteLength(text, 'utf8') > COPY_WARNING_BYTES) {
+      cellTextOptions
+    );
+    if (limitError) {
+      await vscode.window.showErrorMessage(limitError);
+      if (this.isCurrentVersion(requestVersion)) {
+        this.post({ type: 'copySkipped', version: requestVersion, format });
+      }
+      return;
+    }
+
+    let text: string;
+    try {
+      text = table.toText(format, clamped, {
+        includeHeaders,
+        includeRowIndex,
+        arrayDisplayFormat: cellTextOptions.arrayDisplayFormat,
+      });
+    } catch (error) {
+      await vscode.window.showErrorMessage(`Copy failed: ${toError(error).message}`);
+      if (this.isCurrentVersion(requestVersion)) {
+        this.post({ type: 'copySkipped', version: requestVersion, format });
+      }
+      return;
+    }
+    const textBytes = Buffer.byteLength(text, 'utf8');
+    if (textBytes > COPY_MAX_BYTES) {
       const choice = await vscode.window.showWarningMessage(
-        `Copy output is ${formatBytes(Buffer.byteLength(text, 'utf8'))}. Export instead?`,
+        `Copy output is ${formatBytes(textBytes)}, above the ${formatBytes(COPY_MAX_BYTES)} clipboard limit. Export instead?`,
         'Export',
-        'Copy Anyway'
+        'Cancel'
       );
       if (!this.isCurrentVersion(requestVersion)) {
         return;
@@ -1599,10 +1783,8 @@ export class KdbResultsPanel {
         await this.exportRange(requestVersion, clamped, format, includeHeaders, includeRowIndex);
         return;
       }
-      if (choice !== 'Copy Anyway') {
-        this.post({ type: 'copySkipped', version: requestVersion, format });
-        return;
-      }
+      this.post({ type: 'copySkipped', version: requestVersion, format });
+      return;
     }
 
     await vscode.env.clipboard.writeText(text);
@@ -1637,7 +1819,7 @@ export class KdbResultsPanel {
     }
 
     if (format === 'xlsx') {
-      const limitError = validateXlsxSheetLimits(clamped, { includeHeaders, includeRowIndex });
+      const limitError = validatePanelXlsxLimits(table, clamped, includeHeaders, includeRowIndex, panelCellTextOptions());
       if (limitError) {
         await vscode.window.showErrorMessage(limitError);
         if (this.isCurrentVersion(requestVersion)) {
@@ -1672,13 +1854,42 @@ export class KdbResultsPanel {
       return;
     }
 
-    const content = format === 'xlsx'
-      ? await columnarToXlsx(table, clamped, includeHeaders, includeRowIndex, cellTextOptions)
-      : Buffer.from(table.toText(format, clamped, {
+    if (format !== 'xlsx') {
+      const limitError = validatePanelTextExportLimits(
+        table,
+        clamped,
         includeHeaders,
         includeRowIndex,
-        arrayDisplayFormat: cellTextOptions.arrayDisplayFormat,
-      }), 'utf8');
+        cellTextOptions
+      );
+      if (limitError) {
+        await vscode.window.showErrorMessage(limitError);
+        if (this.isCurrentVersion(requestVersion)) {
+          this.post({ type: 'exportSkipped', version: requestVersion, format });
+        }
+        return;
+      }
+    }
+
+    let content: Uint8Array;
+    try {
+      content = format === 'xlsx'
+        ? await columnarToXlsx(table, clamped, includeHeaders, includeRowIndex, cellTextOptions)
+        : Buffer.from(table.toText(format, clamped, {
+          includeHeaders,
+          includeRowIndex,
+          arrayDisplayFormat: cellTextOptions.arrayDisplayFormat,
+        }), 'utf8');
+      if (format !== 'xlsx' && content.byteLength > TEXT_EXPORT_MAX_BYTES) {
+        throw new Error(`Export is ${formatBytes(content.byteLength)}, above the ${formatBytes(TEXT_EXPORT_MAX_BYTES)} text export limit.`);
+      }
+    } catch (error) {
+      await vscode.window.showErrorMessage(`Export failed: ${toError(error).message}`);
+      if (this.isCurrentVersion(requestVersion)) {
+        this.post({ type: 'exportSkipped', version: requestVersion, format });
+      }
+      return;
+    }
     if (!this.isCurrentVersion(requestVersion)) {
       return;
     }
@@ -1697,6 +1908,14 @@ export class KdbResultsPanel {
       return;
     }
 
+    const bytes = Buffer.byteLength(this.result.text, 'utf8');
+    if (bytes > COPY_MAX_BYTES) {
+      await vscode.window.showErrorMessage(
+        `qText output is ${formatBytes(bytes)}, above the ${formatBytes(COPY_MAX_BYTES)} clipboard limit. Export it instead.`
+      );
+      this.post({ type: 'copySkipped', version: requestVersion, format: 'txt' });
+      return;
+    }
     await vscode.env.clipboard.writeText(this.result.text);
     if (!this.isCurrentVersion(requestVersion)) {
       return;
@@ -1711,6 +1930,14 @@ export class KdbResultsPanel {
     }
 
     const text = this.result.text;
+    const textBytes = Buffer.byteLength(text, 'utf8');
+    if (textBytes > TEXT_EXPORT_MAX_BYTES) {
+      await vscode.window.showErrorMessage(
+        `qText export is ${formatBytes(textBytes)}, above the ${formatBytes(TEXT_EXPORT_MAX_BYTES)} text export limit.`
+      );
+      this.post({ type: 'exportSkipped', version: requestVersion, format: 'txt' });
+      return;
+    }
     const uri = await vscode.window.showSaveDialog({
       defaultUri: defaultTextExportUri(),
       filters: { Text: ['txt'] },
@@ -2544,6 +2771,30 @@ export class KdbResultsPanel {
     .chart-legend .u-series th {
       color: var(--vscode-editor-foreground);
     }
+    .chart-navigator {
+      position: relative;
+      height: 42px;
+      border: 1px solid var(--vscode-panel-border);
+      background: var(--vscode-editor-background);
+      overflow: hidden;
+      box-sizing: border-box;
+    }
+    .chart-navigator[hidden] { display: none; }
+    .chart-navigator svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+    .chart-navigator-window {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      border: 1px solid var(--vscode-focusBorder);
+      background: var(--vscode-editor-selectionBackground, rgba(0, 122, 204, 0.18));
+      box-sizing: border-box;
+      cursor: grab;
+      touch-action: none;
+    }
+    .chart-navigator-window:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -2px; }
+    .chart-navigator-handle { position: absolute; top: 0; bottom: 0; width: 8px; background: var(--vscode-focusBorder); cursor: ew-resize; }
+    .chart-navigator-handle.start { left: -4px; }
+    .chart-navigator-handle.end { right: -4px; }
     .chart-legend-item {
       display: inline-flex;
       align-items: center;
@@ -2586,6 +2837,26 @@ export class KdbResultsPanel {
       overflow-wrap: anywhere;
       user-select: text;
     }
+    .q-token-comment { color: var(--vscode-editorLineNumber-foreground); font-style: italic; }
+    .q-token-string, .q-token-symbol { color: var(--vscode-debugTokenExpression-string); }
+    .q-token-number, .q-token-temporal { color: var(--vscode-debugTokenExpression-number); }
+    .q-token-keyword { color: var(--vscode-debugTokenExpression-name); font-weight: 600; }
+    .q-token-builtin { color: var(--vscode-symbolIcon-functionForeground); }
+    .q-token-identifier { color: var(--vscode-editor-foreground); }
+    .column-summaries {
+      flex: 0 0 auto;
+      max-height: 210px;
+      overflow: auto;
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--vscode-panel-border);
+      background: var(--vscode-editor-background);
+    }
+    .column-summaries[hidden] { display: none; }
+    .column-summary-status { color: var(--vscode-descriptionForeground); margin-bottom: 6px; }
+    .column-summary-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 6px; }
+    .column-summary-card { border: 1px solid var(--vscode-panel-border); padding: 6px 8px; min-width: 0; }
+    .column-summary-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .column-summary-detail { color: var(--vscode-descriptionForeground); overflow-wrap: anywhere; }
     #canvas {
       position: relative;
       min-width: 100%;
@@ -2683,6 +2954,10 @@ export class KdbResultsPanel {
     .cell.loading {
       background: var(--vscode-editor-background);
     }
+    .header .cell.key-column:not(.selected):not(.search-match),
+    .row .cell.key-column:not(.selected):not(.search-match):not(.loading) {
+      background: var(--vscode-diffEditor-insertedTextBackground, rgba(64, 160, 96, 0.08));
+    }
     .selected {
       background: var(--vscode-list-activeSelectionBackground);
       color: var(--vscode-list-activeSelectionForeground);
@@ -2770,6 +3045,10 @@ export class KdbResultsPanel {
           <label class="checkbox"><input id="settingsIncludeRowIndex" type="checkbox">Include row #</label>
           <label class="checkbox"><input id="settingsHideLargeResultWarnings" type="checkbox">Hide large-result warnings</label>
           <label class="checkbox"><input id="settingsHideLargeSortWarnings" type="checkbox">Hide large-sort warnings</label>
+          <label class="settings-row"><span>Large-sort warning rows</span><input id="settingsLargeSortWarningRowThreshold" type="number" min="1" max="2147483647" step="1"></label>
+          <label class="checkbox"><input id="settingsShowColumnSummaryStatistics" type="checkbox">Show column summaries</label>
+          <label class="checkbox"><input id="settingsQTextSyntaxHighlighting" type="checkbox">Highlight qText output</label>
+          <label class="checkbox"><input id="settingsQTextDisplayFormatting" type="checkbox">Format qText output</label>
           <label class="settings-row"><span>Copy/export confirm cells</span><input id="settingsCopyExportConfirmCellThreshold" type="number" min="1" step="1"></label>
           <label class="settings-row"><span>Local server current.* cell limit</span><input id="settingsLocalDataServerFullExportCellLimit" type="number" min="1" step="1"></label>
           <label class="settings-row"><span>Chart decimals</span><input id="settingsChartDecimalPlaces" type="number" min="0" max="12" step="1" title="Decimal places for chart numeric labels, 0-12"></label>
@@ -2836,6 +3115,10 @@ export class KdbResultsPanel {
     <span id="selection" class="selection"></span>
   </div>
   <div id="message" class="message" hidden></div>
+  <section id="columnSummaries" class="column-summaries" aria-label="Column summaries" hidden>
+    <div id="columnSummaryStatus" class="column-summary-status"></div>
+    <div id="columnSummaryGrid" class="column-summary-grid"></div>
+  </section>
   <div id="chartPanel" class="chart-panel" hidden>
     <div class="chart-toolbar">
       <label class="chart-field"><span>Chart type</span><select id="chartType" aria-label="Chart type">
@@ -2859,16 +3142,21 @@ export class KdbResultsPanel {
       </div>
       <button id="renderChart" disabled>Render</button>
       <button id="exportChart" hidden disabled>Export PNG</button>
-      <button id="panChartLeft" disabled aria-label="Pan chart left by 20 percent">Pan left</button>
-      <button id="panChartRight" disabled aria-label="Pan chart right by 20 percent">Pan right</button>
+      <label class="chart-field"><span>Drag</span><select id="chartDragMode" aria-label="Chart drag mode"><option value="zoom">Zoom</option><option value="pan">Pan</option></select></label>
       <button id="resetChartZoom" disabled>Reset zoom</button>
-      <button id="refineChartZoom" disabled>Refine view</button>
       <button id="closeChart">Close</button>
       <span id="chartStatus" class="status"></span>
     </div>
     <div id="chartCanvasWrap" class="chart-canvas-wrap" tabindex="0" role="region" aria-label="Chart plot. Drag to zoom x. Shift drag to pan x. Arrow keys pan. Home resets zoom.">
       <div id="chartPlot" class="chart-plot"></div>
       <div id="chartTooltip" class="chart-tooltip" hidden></div>
+    </div>
+    <div id="chartNavigator" class="chart-navigator" hidden aria-label="Chart range navigator">
+      <svg id="chartNavigatorOverview" aria-hidden="true"></svg>
+      <div id="chartNavigatorWindow" class="chart-navigator-window" role="slider" tabindex="0" aria-label="Visible chart range">
+        <span id="chartNavigatorStart" class="chart-navigator-handle start" aria-hidden="true"></span>
+        <span id="chartNavigatorEnd" class="chart-navigator-handle end" aria-hidden="true"></span>
+      </div>
     </div>
     <div id="chartLegend" class="chart-legend"></div>
   </div>
@@ -2907,10 +3195,14 @@ export class KdbResultsPanel {
         includeRowIndex: true,
         hideLargeResultWarnings: false,
         hideLargeSortWarnings: false,
+        largeSortWarningRowThreshold: ${DEFAULT_LARGE_SORT_WARNING_ROW_THRESHOLD},
+        showColumnSummaryStatistics: false,
         copyExportConfirmCellThreshold: 1000000,
         localDataServerFullExportCellLimit: 1000000,
         elapsedTimeDisplay: 'auto',
         chartDecimalPlaces: 4,
+        qTextSyntaxHighlighting: false,
+        qTextDisplayFormatting: false,
         arrayDisplayFormat: 'commaSpace',
         functionDisplayStrategy: 'qText',
         dictionaryDisplayStrategy: 'grid',
@@ -2945,6 +3237,10 @@ export class KdbResultsPanel {
       const settingsIncludeRowIndex = document.getElementById('settingsIncludeRowIndex');
       const settingsHideLargeResultWarnings = document.getElementById('settingsHideLargeResultWarnings');
       const settingsHideLargeSortWarnings = document.getElementById('settingsHideLargeSortWarnings');
+      const settingsLargeSortWarningRowThreshold = document.getElementById('settingsLargeSortWarningRowThreshold');
+      const settingsShowColumnSummaryStatistics = document.getElementById('settingsShowColumnSummaryStatistics');
+      const settingsQTextSyntaxHighlighting = document.getElementById('settingsQTextSyntaxHighlighting');
+      const settingsQTextDisplayFormatting = document.getElementById('settingsQTextDisplayFormatting');
       const settingsCopyExportConfirmCellThreshold = document.getElementById('settingsCopyExportConfirmCellThreshold');
       const settingsLocalDataServerFullExportCellLimit = document.getElementById('settingsLocalDataServerFullExportCellLimit');
       const settingsChartDecimalPlaces = document.getElementById('settingsChartDecimalPlaces');
@@ -2983,6 +3279,9 @@ export class KdbResultsPanel {
       const status = document.getElementById('status');
       const selectionLabel = document.getElementById('selection');
       const message = document.getElementById('message');
+      const columnSummaries = document.getElementById('columnSummaries');
+      const columnSummaryStatus = document.getElementById('columnSummaryStatus');
+      const columnSummaryGrid = document.getElementById('columnSummaryGrid');
       const chartPanel = document.getElementById('chartPanel');
       const chartType = document.getElementById('chartType');
       const chartXColumn = document.getElementById('chartXColumn');
@@ -2996,16 +3295,19 @@ export class KdbResultsPanel {
       const chartCloseColumn = document.getElementById('chartCloseColumn');
       const renderChart = document.getElementById('renderChart');
       const exportChart = document.getElementById('exportChart');
-      const panChartLeftButton = document.getElementById('panChartLeft');
-      const panChartRightButton = document.getElementById('panChartRight');
+      const chartDragMode = document.getElementById('chartDragMode');
       const resetChartZoomButton = document.getElementById('resetChartZoom');
-      const refineChartZoomButton = document.getElementById('refineChartZoom');
       const closeChart = document.getElementById('closeChart');
       const chartStatus = document.getElementById('chartStatus');
       const chartCanvasWrap = document.getElementById('chartCanvasWrap');
       const chartPlot = document.getElementById('chartPlot');
       const chartTooltip = document.getElementById('chartTooltip');
       const chartLegend = document.getElementById('chartLegend');
+      const chartNavigator = document.getElementById('chartNavigator');
+      const chartNavigatorOverview = document.getElementById('chartNavigatorOverview');
+      const chartNavigatorWindowElement = document.getElementById('chartNavigatorWindow');
+      const chartNavigatorStart = document.getElementById('chartNavigatorStart');
+      const chartNavigatorEnd = document.getElementById('chartNavigatorEnd');
       const chartSplitter = document.getElementById('chartSplitter');
       const empty = document.getElementById('empty');
       let data = emptyData();
@@ -3050,6 +3352,8 @@ export class KdbResultsPanel {
       let chartAutoRefineScheduledRange = null;
       let chartLastAutoRefineKey = '';
       let chartPanState = null;
+      let chartNavigatorDragState = null;
+      let columnSummaryState = null;
       const CHART_PNG_DATA_URL_PREFIX = 'data:image/png;base64,';
       const CHART_MIN_HEIGHT = 180;
       const CHART_MAX_HEIGHT = 720;
@@ -3067,6 +3371,11 @@ export class KdbResultsPanel {
       ${clampChartViewport.toString()}
       ${panChartViewport.toString()}
       ${panChartViewportByPixels.toString()}
+      ${chartNavigatorWindow.toString()}
+      ${adjustChartNavigatorRange.toString()}
+      ${recenterChartNavigatorRange.toString()}
+      ${chartNavigatorSliderBounds.toString()}
+      ${chartVisibleSampledPointCount.toString()}
       ${reduceChartZoomLifecycle.toString()}
       ${absoluteDisplayRowClass.toString()}
       ${beginHeaderPointer.toString()}
@@ -3092,6 +3401,9 @@ export class KdbResultsPanel {
           setSearchResults(msg);
         } else if (msg.type === 'settings') {
           applySettings(msg.settings);
+          if (msg.qTextRender) {
+            data.qTextRender = normalizeQTextRender(msg.qTextRender, data.text);
+          }
           if (msg.columnWidths && typeof msg.columnWidths === 'object') {
             applyPersistedColumnWidths(msg.columnWidths);
           }
@@ -3099,8 +3411,17 @@ export class KdbResultsPanel {
           updateLargeResultWarning();
           updateActionState();
           updateSelectionLabel();
+          if (isTextResult()) {
+            renderTextResult();
+          }
           renderNow();
           refreshAutoFitWidths();
+        } else if (msg.type === 'columnSummaryPending' && isCurrentVersionMessage(msg)) {
+          setColumnSummaryPending();
+        } else if (msg.type === 'columnSummaries' && isCurrentVersionMessage(msg)) {
+          setColumnSummaries(msg.summary || null);
+        } else if (msg.type === 'columnSummaryError' && isCurrentVersionMessage(msg)) {
+          setColumnSummaryError(String(msg.message || 'Column summary failed.'));
         } else if (msg.type === 'columnWidths') {
           applyPersistedColumnWidths(msg.columnWidths);
           if (settings.autoFitMode === 'visibleRows') {
@@ -3180,6 +3501,10 @@ export class KdbResultsPanel {
       settingsIncludeRowIndex.addEventListener('change', () => updateSetting('includeRowIndex', !!settingsIncludeRowIndex.checked));
       settingsHideLargeResultWarnings.addEventListener('change', () => updateSetting('hideLargeResultWarnings', !!settingsHideLargeResultWarnings.checked));
       settingsHideLargeSortWarnings.addEventListener('change', () => updateSetting('hideLargeSortWarnings', !!settingsHideLargeSortWarnings.checked));
+      settingsLargeSortWarningRowThreshold.addEventListener('change', () => updateNumberSetting('largeSortWarningRowThreshold', settingsLargeSortWarningRowThreshold, 1, 2147483647));
+      settingsShowColumnSummaryStatistics.addEventListener('change', () => updateSetting('showColumnSummaryStatistics', !!settingsShowColumnSummaryStatistics.checked));
+      settingsQTextSyntaxHighlighting.addEventListener('change', () => updateSetting('qTextSyntaxHighlighting', !!settingsQTextSyntaxHighlighting.checked));
+      settingsQTextDisplayFormatting.addEventListener('change', () => updateSetting('qTextDisplayFormatting', !!settingsQTextDisplayFormatting.checked));
       settingsCopyExportConfirmCellThreshold.addEventListener('change', () => updatePositiveIntegerSetting('copyExportConfirmCellThreshold', settingsCopyExportConfirmCellThreshold));
       settingsLocalDataServerFullExportCellLimit.addEventListener('change', () => updatePositiveIntegerSetting('localDataServerFullExportCellLimit', settingsLocalDataServerFullExportCellLimit));
       settingsChartDecimalPlaces.addEventListener('change', () => updateNumberSetting('chartDecimalPlaces', settingsChartDecimalPlaces, 0, 12));
@@ -3236,10 +3561,8 @@ export class KdbResultsPanel {
       chartCloseColumn.addEventListener('change', onChartControlChanged);
       renderChart.addEventListener('click', requestChartData);
       exportChart.addEventListener('click', exportChartPng);
-      panChartLeftButton.addEventListener('click', () => panChartByFraction(-0.2, 'button'));
-      panChartRightButton.addEventListener('click', () => panChartByFraction(0.2, 'button'));
+      chartDragMode.addEventListener('change', updateChartDragMode);
       resetChartZoomButton.addEventListener('click', resetChartZoom);
-      refineChartZoomButton.addEventListener('click', refineChartZoom);
       closeChart.addEventListener('click', closeChartPanel);
       chartCanvasWrap.addEventListener('mouseleave', hideChartTooltip);
       chartCanvasWrap.addEventListener('keydown', event => {
@@ -3251,7 +3574,9 @@ export class KdbResultsPanel {
           event.preventDefault();
         }
       });
-      chartCanvasWrap.addEventListener('mousedown', startChartPan, true);
+      chartCanvasWrap.addEventListener('mousedown', startChartPointerInteraction, true);
+      chartNavigator.addEventListener('mousedown', startChartNavigatorDrag);
+      chartNavigatorWindowElement.addEventListener('keydown', onChartNavigatorKeyDown);
       chartCanvasWrap.addEventListener('dblclick', event => {
         if (chartCanResetZoom()) {
           event.preventDefault();
@@ -3288,6 +3613,11 @@ export class KdbResultsPanel {
         }
       });
       window.addEventListener('mousemove', event => {
+        if (chartNavigatorDragState) {
+          updateChartNavigatorDrag(event);
+          event.preventDefault();
+          return;
+        }
         if (chartPanState) {
           updateChartPan(event);
           event.preventDefault();
@@ -3311,6 +3641,10 @@ export class KdbResultsPanel {
         event.preventDefault();
       });
       window.addEventListener('mouseup', event => {
+        if (chartNavigatorDragState) {
+          finishChartNavigatorDrag(event);
+          return;
+        }
         if (chartPanState) {
           finishChartPan(event);
           return;
@@ -3382,6 +3716,8 @@ export class KdbResultsPanel {
         data.connectionName = state.connectionName || '';
         data.sort = null;
         data.hasResult = false;
+        columnSummaryState = null;
+        renderColumnSummaries();
         focusedHeaderSourceOrdinal = -1;
         resetWindowState();
         summary.textContent = 'Running on ' + (state.connectionName || 'kdb');
@@ -3416,6 +3752,9 @@ export class KdbResultsPanel {
           mode,
           columns: nextColumns,
           columnPositions: normalizeColumnPositions(result.columnPositions, nextColumns.length),
+          keyColumnPositions: Array.isArray(result.keyColumnPositions)
+            ? result.keyColumnPositions.map(value => toInteger(value, -1)).filter(value => value >= 0)
+            : [],
           allColumns: Array.isArray(result.allColumns) ? result.allColumns.map(String) : [],
           hiddenColumnNames: Array.isArray(result.hiddenColumnNames) ? result.hiddenColumnNames.map(String) : [],
           hiddenSourceOrdinals: Array.isArray(result.hiddenSourceOrdinals)
@@ -3424,6 +3763,7 @@ export class KdbResultsPanel {
           hiddenColumnCount: toNonNegativeInteger(result.hiddenColumnCount, 0),
           rowCount: toNonNegativeInteger(result.rowCount, 0),
           text: mode === 'text' ? String(result.text || '') : '',
+          qTextRender: normalizeQTextRender(result.qTextRender, mode === 'text' ? String(result.text || '') : ''),
           messages: Array.isArray(result.messages) ? result.messages.map(String) : [],
           guardrailMessage: result.guardrailMessage ? String(result.guardrailMessage) : '',
           query: result.query || '',
@@ -3438,6 +3778,8 @@ export class KdbResultsPanel {
           data.allColumns = data.columns.slice();
         }
         applySettings(settings);
+        columnSummaryState = null;
+        renderColumnSummaries();
         resetWindowState();
         updateSummary();
         status.textContent = '';
@@ -3785,13 +4127,12 @@ export class KdbResultsPanel {
         const canExport = chartCanExport();
         exportChart.hidden = !canExport;
         exportChart.disabled = !canExport;
-        panChartLeftButton.disabled = !canExport || !chartZoomLifecycle.fullRange || chartControlsDirty;
-        panChartRightButton.disabled = !canExport || !chartZoomLifecycle.fullRange || chartControlsDirty;
         resetChartZoomButton.disabled = !chartCanResetZoom();
-        refineChartZoomButton.disabled = !chartCanRefineZoom();
+        chartDragMode.disabled = !canExport || chartControlsDirty;
         openChart.textContent = chartPanel.hidden ? 'Chart' : (chartControlsDirty ? 'Chart*' : 'Chart');
         openChart.title = chartPanel.hidden ? 'Open chart' : (chartControlsDirty ? 'Chart settings changed — Render to update' : 'Chart open');
         chartSplitter.hidden = chartPanel.hidden;
+        updateChartNavigator();
       }
 
       function openChartPanel() {
@@ -4108,10 +4449,6 @@ export class KdbResultsPanel {
           !!renderedChartCanvas();
       }
 
-      function chartCanRefineZoom() {
-        return chartCanExport() && chartZoomed && !chartControlsDirty && !!currentChartZoomRange();
-      }
-
       function chartCanResetZoom() {
         return !chartPanel.hidden &&
           !!chartUPlot &&
@@ -4256,21 +4593,6 @@ export class KdbResultsPanel {
 
       function requestChartData() {
         requestChartDataForRange(null, 'Sampling chart data...');
-      }
-
-      function refineChartZoom() {
-        if (chartControlsDirty) {
-          chartStatus.textContent = 'Render changed chart settings before refining the current view.';
-          updateChartControls();
-          return;
-        }
-        const range = currentChartZoomRange();
-        if (!range) {
-          chartStatus.textContent = 'Set a chart viewport before refining.';
-          updateChartControls();
-          return;
-        }
-        requestChartDataForRange(range, 'Refining the current chart view...');
       }
 
       function requestChartDataForRange(xRange, messageText) {
@@ -5456,6 +5778,7 @@ export class KdbResultsPanel {
           chartStatus.dataset.fullRangeMax = String(fullRange.max);
         }
         if (chartZoomStateSuspended) {
+          updateChartNavigator();
           return;
         }
         chartZoomed = chartRangeIsZoomed(chartZoomLifecycle.fullRange, visibleRange);
@@ -5464,6 +5787,7 @@ export class KdbResultsPanel {
         } else {
           clearChartAutoRefineTimer();
         }
+        updateChartNavigator();
         updateChartControls();
       }
 
@@ -5514,6 +5838,139 @@ export class KdbResultsPanel {
         updateChartControls();
       }
 
+      function updateChartDragMode() {
+        chartCanvasWrap.setAttribute(
+          'aria-label',
+          chartDragMode.value === 'pan'
+            ? 'Chart plot. Drag to pan x. Arrow keys pan. Home resets zoom.'
+            : 'Chart plot. Drag to zoom x. Shift drag to pan x. Arrow keys pan. Home resets zoom.'
+        );
+      }
+
+      function startChartPointerInteraction(event) {
+        startChartPan(event);
+      }
+
+      function updateChartNavigator() {
+        const fullRange = chartZoomLifecycle.fullRange;
+        const fullData = chartZoomLifecycle.fullData;
+        const current = currentChartViewportRange() || fullRange;
+        const windowRange = chartNavigatorWindow(current, fullRange);
+        const visible = !chartPanel.hidden && !!fullData && !!windowRange;
+        chartNavigator.hidden = !visible;
+        if (!visible) {
+          chartNavigatorOverview.textContent = '';
+          return;
+        }
+        chartNavigatorWindowElement.style.left = (windowRange.startFraction * 100) + '%';
+        chartNavigatorWindowElement.style.width = Math.max(0.5, (windowRange.endFraction - windowRange.startFraction) * 100) + '%';
+        const bounds = chartNavigatorSliderBounds(current, fullRange);
+        if (bounds) {
+          chartNavigatorWindowElement.setAttribute('aria-valuemin', String(bounds.window.minimum));
+          chartNavigatorWindowElement.setAttribute('aria-valuemax', String(bounds.window.maximum));
+          chartNavigatorWindowElement.setAttribute('aria-valuenow', String(bounds.window.now));
+          chartNavigatorWindowElement.setAttribute('aria-valuetext', Math.round(windowRange.startFraction * 100) + '% to ' + Math.round(windowRange.endFraction * 100) + '%');
+          chartNavigatorStart.title = 'Start ' + Math.round(windowRange.startFraction * 100) + '%';
+          chartNavigatorEnd.title = 'End ' + Math.round(windowRange.endFraction * 100) + '%';
+        }
+        drawChartNavigatorOverview(fullData);
+      }
+
+      function drawChartNavigatorOverview(fullData) {
+        chartNavigatorOverview.textContent = '';
+        const x = fullData && Array.isArray(fullData.x) ? fullData.x : [];
+        if (x.length === 0) return;
+        const firstSeries = fullData.series && fullData.series[0];
+        const y = firstSeries && Array.isArray(firstSeries.values)
+          ? firstSeries.values
+          : fullData.candlesticks && fullData.candlesticks.length
+            ? fullData.candlesticks.map(item => item.close)
+            : x.map((_value, index) => index);
+        const finiteY = y.filter(Number.isFinite);
+        if (finiteY.length === 0) return;
+        const yMin = Math.min.apply(null, finiteY);
+        const yMax = Math.max.apply(null, finiteY);
+        const ySpan = yMax > yMin ? yMax - yMin : 1;
+        const pointCount = Math.min(1000, x.length, y.length);
+        const points = [];
+        for (let index = 0; index < pointCount; index += 1) {
+          const sourceIndex = pointCount === 1 ? 0 : Math.round(index * (Math.min(x.length, y.length) - 1) / (pointCount - 1));
+          const value = Number(y[sourceIndex]);
+          if (!Number.isFinite(value)) continue;
+          points.push((index / Math.max(1, pointCount - 1) * 1000) + ',' + ((1 - (value - yMin) / ySpan) * 40));
+        }
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+        line.setAttribute('points', points.join(' '));
+        line.setAttribute('fill', 'none');
+        line.setAttribute('stroke', 'currentColor');
+        line.setAttribute('stroke-width', '1.5');
+        chartNavigatorOverview.setAttribute('viewBox', '0 0 1000 40');
+        chartNavigatorOverview.appendChild(line);
+      }
+
+      function startChartNavigatorDrag(event) {
+        if (event.button !== 0 || chartControlsDirty || !chartZoomLifecycle.fullRange) return;
+        const rect = chartNavigator.getBoundingClientRect();
+        const current = currentChartViewportRange() || chartZoomLifecycle.fullRange;
+        if (event.target === chartNavigatorOverview || event.target === chartNavigator) {
+          const range = recenterChartNavigatorRange(current, chartZoomLifecycle.fullRange, (event.clientX - rect.left) / Math.max(1, rect.width));
+          if (range) {
+            setChartViewportLocally(range);
+            chartZoomed = chartRangeIsZoomed(chartZoomLifecycle.fullRange, range);
+            completeChartViewport(range, 'navigator');
+            updateChartControls();
+          }
+          event.preventDefault();
+          return;
+        }
+        const part = event.target === chartNavigatorStart ? 'start' : event.target === chartNavigatorEnd ? 'end' : 'window';
+        chartNavigatorDragState = { part, startX: event.clientX, width: Math.max(1, rect.width), range: current };
+        event.preventDefault();
+      }
+
+      function updateChartNavigatorDrag(event) {
+        if (!chartNavigatorDragState) return;
+        const deltaFraction = (event.clientX - chartNavigatorDragState.startX) / chartNavigatorDragState.width;
+        const range = adjustChartNavigatorRange(
+          chartNavigatorDragState.range,
+          chartZoomLifecycle.fullRange,
+          chartNavigatorDragState.part,
+          deltaFraction
+        );
+        if (range) setChartViewportLocally(range);
+        updateChartNavigator();
+      }
+
+      function finishChartNavigatorDrag(event) {
+        updateChartNavigatorDrag(event);
+        const range = currentChartViewportRange();
+        chartNavigatorDragState = null;
+        if (range) {
+          chartZoomed = chartRangeIsZoomed(chartZoomLifecycle.fullRange, range);
+          completeChartViewport(range, 'navigator');
+          updateChartControls();
+        }
+      }
+
+      function onChartNavigatorKeyDown(event) {
+        if (event.key === 'Home') {
+          resetChartZoom();
+          event.preventDefault();
+          return;
+        }
+        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+        const range = currentChartViewportRange();
+        const delta = (event.key === 'ArrowLeft' ? -1 : 1) * (event.shiftKey ? 0.1 : 0.01);
+        const next = adjustChartNavigatorRange(range, chartZoomLifecycle.fullRange, 'window', delta);
+        if (next) {
+          setChartViewportLocally(next);
+          chartZoomed = chartRangeIsZoomed(chartZoomLifecycle.fullRange, next);
+          completeChartViewport(next, 'keyboard');
+          updateChartControls();
+        }
+        event.preventDefault();
+      }
+
       function startChartPan(event) {
         if (event.button === 0) {
           chartCanvasWrap.focus({ preventScroll: true });
@@ -5525,7 +5982,7 @@ export class KdbResultsPanel {
           event.stopPropagation();
           return;
         }
-        if (!event.shiftKey || event.button !== 0 || !chartUPlot || chartControlsDirty) {
+        if ((!event.shiftKey && chartDragMode.value !== 'pan') || event.button !== 0 || !chartUPlot || chartControlsDirty) {
           return;
         }
         const range = currentChartViewportRange();
@@ -5587,6 +6044,12 @@ export class KdbResultsPanel {
       function completeChartViewport(range, reason) {
         const clamped = clampChartViewport(range, chartZoomLifecycle.fullRange);
         if (!clamped || !chartRangeIsZoomed(chartZoomLifecycle.fullRange, clamped)) {
+          return;
+        }
+        const fullData = chartZoomLifecycle.fullData;
+        const sampledX = fullData && Array.isArray(fullData.x) ? fullData.x : [];
+        if (chartVisibleSampledPointCount(sampledX, clamped) >= 3000) {
+          clearChartAutoRefineTimer();
           return;
         }
         const key = chartZoomRangeKey(clamped);
@@ -5954,6 +6417,7 @@ export class KdbResultsPanel {
         if (settings.chartDecimalPlaces !== previousChartDecimalPlaces) {
           refreshChartFormatting();
         }
+        renderColumnSummaries();
       }
 
       function layoutFromSettings(settings) {
@@ -5984,10 +6448,14 @@ export class KdbResultsPanel {
           includeRowIndex: typeof value.includeRowIndex === 'boolean' ? value.includeRowIndex : DEFAULT_SETTINGS.includeRowIndex,
           hideLargeResultWarnings: typeof value.hideLargeResultWarnings === 'boolean' ? value.hideLargeResultWarnings : DEFAULT_SETTINGS.hideLargeResultWarnings,
           hideLargeSortWarnings: typeof value.hideLargeSortWarnings === 'boolean' ? value.hideLargeSortWarnings : DEFAULT_SETTINGS.hideLargeSortWarnings,
+          largeSortWarningRowThreshold: boundedSetting(value.largeSortWarningRowThreshold, DEFAULT_SETTINGS.largeSortWarningRowThreshold, 1, 2147483647),
+          showColumnSummaryStatistics: typeof value.showColumnSummaryStatistics === 'boolean' ? value.showColumnSummaryStatistics : DEFAULT_SETTINGS.showColumnSummaryStatistics,
           copyExportConfirmCellThreshold: positiveIntegerSetting(value.copyExportConfirmCellThreshold, DEFAULT_SETTINGS.copyExportConfirmCellThreshold),
           localDataServerFullExportCellLimit: positiveIntegerSetting(value.localDataServerFullExportCellLimit, DEFAULT_SETTINGS.localDataServerFullExportCellLimit),
           elapsedTimeDisplay: normalizeElapsedTimeDisplay(value.elapsedTimeDisplay),
           chartDecimalPlaces: boundedSetting(value.chartDecimalPlaces, DEFAULT_SETTINGS.chartDecimalPlaces, 0, 12),
+          qTextSyntaxHighlighting: typeof value.qTextSyntaxHighlighting === 'boolean' ? value.qTextSyntaxHighlighting : DEFAULT_SETTINGS.qTextSyntaxHighlighting,
+          qTextDisplayFormatting: typeof value.qTextDisplayFormatting === 'boolean' ? value.qTextDisplayFormatting : DEFAULT_SETTINGS.qTextDisplayFormatting,
           arrayDisplayFormat: normalizeArrayDisplayFormat(value.arrayDisplayFormat),
           functionDisplayStrategy: normalizeQResultDisplayStrategy(value.functionDisplayStrategy, DEFAULT_SETTINGS.functionDisplayStrategy),
           dictionaryDisplayStrategy: normalizeQResultDisplayStrategy(value.dictionaryDisplayStrategy, DEFAULT_SETTINGS.dictionaryDisplayStrategy),
@@ -6007,6 +6475,10 @@ export class KdbResultsPanel {
         settingsIncludeRowIndex.checked = settings.includeRowIndex;
         settingsHideLargeResultWarnings.checked = settings.hideLargeResultWarnings;
         settingsHideLargeSortWarnings.checked = settings.hideLargeSortWarnings;
+        settingsLargeSortWarningRowThreshold.value = String(settings.largeSortWarningRowThreshold);
+        settingsShowColumnSummaryStatistics.checked = settings.showColumnSummaryStatistics;
+        settingsQTextSyntaxHighlighting.checked = settings.qTextSyntaxHighlighting;
+        settingsQTextDisplayFormatting.checked = settings.qTextDisplayFormatting;
         settingsCopyExportConfirmCellThreshold.value = String(settings.copyExportConfirmCellThreshold);
         settingsLocalDataServerFullExportCellLimit.value = String(settings.localDataServerFullExportCellLimit);
         settingsChartDecimalPlaces.value = String(settings.chartDecimalPlaces);
@@ -6035,10 +6507,14 @@ export class KdbResultsPanel {
           includeRowIndex: settings.includeRowIndex,
           hideLargeResultWarnings: settings.hideLargeResultWarnings,
           hideLargeSortWarnings: settings.hideLargeSortWarnings,
+          largeSortWarningRowThreshold: settings.largeSortWarningRowThreshold,
+          showColumnSummaryStatistics: settings.showColumnSummaryStatistics,
           copyExportConfirmCellThreshold: settings.copyExportConfirmCellThreshold,
           localDataServerFullExportCellLimit: settings.localDataServerFullExportCellLimit,
           elapsedTimeDisplay: settings.elapsedTimeDisplay,
           chartDecimalPlaces: settings.chartDecimalPlaces,
+          qTextSyntaxHighlighting: settings.qTextSyntaxHighlighting,
+          qTextDisplayFormatting: settings.qTextDisplayFormatting,
           arrayDisplayFormat: settings.arrayDisplayFormat,
           functionDisplayStrategy: settings.functionDisplayStrategy,
           dictionaryDisplayStrategy: settings.dictionaryDisplayStrategy,
@@ -6066,6 +6542,9 @@ export class KdbResultsPanel {
           if (String(searchInput.value || '').length > 0) {
             queueSearchRows();
           }
+        }
+        if ((key === 'qTextSyntaxHighlighting' || key === 'qTextDisplayFormatting') && isTextResult()) {
+          renderTextResult();
         }
         updateSummary();
         updateLargeResultWarning();
@@ -6422,6 +6901,71 @@ export class KdbResultsPanel {
         message.appendChild(textElement);
       }
 
+      function setColumnSummaryPending() {
+        columnSummaryState = { type: 'pending' };
+        renderColumnSummaries();
+      }
+
+      function setColumnSummaryError(detail) {
+        columnSummaryState = { type: 'error', message: detail };
+        renderColumnSummaries();
+      }
+
+      function setColumnSummaries(value) {
+        columnSummaryState = value ? { type: 'result', value } : null;
+        renderColumnSummaries();
+      }
+
+      function renderColumnSummaries() {
+        columnSummaryGrid.textContent = '';
+        if (!settings.showColumnSummaryStatistics || isTextResult() || !data.hasResult || !columnSummaryState) {
+          columnSummaries.hidden = true;
+          columnSummaryStatus.textContent = '';
+          return;
+        }
+        columnSummaries.hidden = false;
+        if (columnSummaryState.type === 'pending') {
+          columnSummaryStatus.textContent = 'Computing bounded statistics…';
+          return;
+        }
+        if (columnSummaryState.type === 'error') {
+          columnSummaryStatus.textContent = columnSummaryState.message;
+          return;
+        }
+        const value = columnSummaryState.value || {};
+        const columns = Array.isArray(value.columns) ? value.columns : [];
+        const exact = value.mode === 'exact';
+        columnSummaryStatus.textContent = exact
+          ? 'Exact • all ' + formatUiCount(value.evaluatedRowCount) + ' rows • ' + formatUiCount(value.evaluatedCellCount) + ' cells evaluated'
+          : 'Sampled / partial • ' + formatUiCount(value.evaluatedRowCount) + ' evenly spaced of ' + formatUiCount(value.totalRowCount) + ' rows';
+        const fragment = document.createDocumentFragment();
+        columns.forEach(column => {
+          const card = document.createElement('article');
+          card.className = 'column-summary-card';
+          const title = document.createElement('div');
+          title.className = 'column-summary-title';
+          title.textContent = String(column.columnName || '') + ' • ' + String(column.kind || 'other');
+          const details = document.createElement('div');
+          details.className = 'column-summary-detail';
+          const values = [
+            'valid ' + formatUiCount(column.validCount),
+            'null ' + formatUiCount(column.nullCount),
+            (column.distinctComplete === true ? 'distinct ' : 'distinct observed ') + formatUiCount(column.distinctCount)
+          ];
+          ['min', 'max', 'mean', 'median'].forEach(key => {
+            if (column[key] && typeof column[key].text === 'string') values.push(key + ' ' + column[key].text);
+          });
+          if (Array.isArray(column.frequentValues) && column.frequentValues.length > 0) {
+            values.push('frequent ' + column.frequentValues.map(item => String(item.text || '') + ' ×' + formatUiCount(item.count)).join(', '));
+          }
+          details.textContent = values.join(' • ');
+          card.append(title, details);
+          fragment.appendChild(card);
+        });
+        if (columns.length === 0) fragment.appendChild(document.createTextNode('No visible data columns.'));
+        columnSummaryGrid.appendChild(fragment);
+      }
+
       function resultMessageText(value) {
         return value.error || value.canceled ? value.messages.slice().join('\\n') : '';
       }
@@ -6498,11 +7042,49 @@ export class KdbResultsPanel {
         empty.hidden = true;
         canvas.style.width = '';
         canvas.style.height = '';
-        const text = data.text || '';
-        if (textViewer.textContent !== text) {
-          textViewer.textContent = text;
+        const rawText = data.text || '';
+        const model = normalizeQTextRender(data.qTextRender, rawText);
+        textViewer.textContent = '';
+        if (!settings.qTextSyntaxHighlighting || !model.highlighted) {
+          textViewer.textContent = settings.qTextDisplayFormatting ? model.text : rawText;
+        } else {
+          const fragment = document.createDocumentFragment();
+          model.segments.forEach(segment => {
+            if (segment.kind === 'plain') {
+              fragment.appendChild(document.createTextNode(segment.text));
+              return;
+            }
+            const span = document.createElement('span');
+            span.className = 'q-token-' + segment.kind;
+            span.textContent = segment.text;
+            fragment.appendChild(span);
+          });
+          textViewer.appendChild(fragment);
         }
         updateAutoFitControlState();
+      }
+
+      function normalizeQTextRender(value, fallbackText) {
+        const fallback = String(fallbackText || '');
+        if (!value || typeof value !== 'object' || typeof value.text !== 'string') {
+          return { text: fallback, formatted: false, highlighted: false, segments: [{ kind: 'plain', text: fallback }] };
+        }
+        const text = value.text;
+        if (value.highlighted !== true || !Array.isArray(value.segments)) {
+          return { text, formatted: value.formatted === true, highlighted: false, segments: [{ kind: 'plain', text }] };
+        }
+        const allowed = { plain: true, comment: true, command: true, system: true, namespace: true, string: true, symbol: true, temporal: true, number: true, keyword: true, builtin: true, operator: true, identifier: true };
+        const segments = [];
+        for (const segment of value.segments) {
+          if (!segment || typeof segment.text !== 'string' || !allowed[segment.kind]) {
+            return { text, formatted: value.formatted === true, highlighted: false, segments: [{ kind: 'plain', text }] };
+          }
+          segments.push({ kind: segment.kind, text: segment.text });
+        }
+        if (segments.map(segment => segment.text).join('') !== text) {
+          return { text, formatted: value.formatted === true, highlighted: false, segments: [{ kind: 'plain', text }] };
+        }
+        return { text, formatted: value.formatted === true, highlighted: true, segments };
       }
 
       function scrollStateForViewport() {
@@ -6750,7 +7332,7 @@ export class KdbResultsPanel {
       }
 
       function headerCellClassName(column) {
-        let className = 'cell';
+        let className = 'cell' + (isKeyColumn(column) ? ' key-column' : '');
         if (columnDragState && columnDragState.sourceColumn === column) {
           className += ' drag-source';
         } else if (columnDragState && columnDragState.targetColumn === column) {
@@ -6821,7 +7403,7 @@ export class KdbResultsPanel {
               selected,
               searchMatch: searchMatched,
               searchActive,
-              className: 'cell' + (hasCells ? '' : ' loading')
+              className: 'cell' + (isKeyColumn(column) ? ' key-column' : '') + (hasCells ? '' : ' loading')
             }));
           }
           fragment.appendChild(rowElement);
@@ -6899,6 +7481,11 @@ export class KdbResultsPanel {
           cell.addEventListener('mouseenter', onRowMouseEnter);
         }
         return cell;
+      }
+
+      function isKeyColumn(column) {
+        const sourcePosition = data.columnPositions[column];
+        return data.keyColumnPositions.indexOf(sourcePosition) !== -1;
       }
 
       function onColumnResizeMouseDown(event) {
@@ -7423,12 +8010,14 @@ export class KdbResultsPanel {
           mode: 'table',
           columns: [],
           columnPositions: [],
+          keyColumnPositions: [],
           allColumns: [],
           hiddenColumnNames: [],
           hiddenSourceOrdinals: [],
           hiddenColumnCount: 0,
           rowCount: 0,
           text: '',
+          qTextRender: normalizeQTextRender(null, ''),
           messages: [],
           guardrailMessage: '',
           query: '',
@@ -7537,6 +8126,14 @@ function panelSettings(): KdbPanelSettings {
       config.get<boolean>('hideLargeSortWarnings'),
       DEFAULT_PANEL_SETTINGS.hideLargeSortWarnings
     ),
+    largeSortWarningRowThreshold: normalizeLargeSortWarningRowThreshold(
+      config.get<number>('largeSortWarningRowThreshold'),
+      DEFAULT_PANEL_SETTINGS.largeSortWarningRowThreshold
+    ),
+    showColumnSummaryStatistics: booleanSetting(
+      config.get<boolean>('showColumnSummaryStatistics'),
+      DEFAULT_PANEL_SETTINGS.showColumnSummaryStatistics
+    ),
     copyExportConfirmCellThreshold: positiveIntegerConfigSetting(
       config.get<number>('copyExportConfirmCellThreshold'),
       DEFAULT_PANEL_SETTINGS.copyExportConfirmCellThreshold
@@ -7547,6 +8144,14 @@ function panelSettings(): KdbPanelSettings {
     ),
     elapsedTimeDisplay: panelElapsedTimeDisplay(config.get<string>('elapsedTimeDisplay')),
     chartDecimalPlaces: chartDecimalPlacesSettingValue(config.get<number>('kdbPanel.chartDecimalPlaces')),
+    qTextSyntaxHighlighting: booleanSetting(
+      config.get<boolean>('qText.syntaxHighlighting'),
+      DEFAULT_PANEL_SETTINGS.qTextSyntaxHighlighting
+    ),
+    qTextDisplayFormatting: booleanSetting(
+      config.get<boolean>('qText.displayFormatting'),
+      DEFAULT_PANEL_SETTINGS.qTextDisplayFormatting
+    ),
     arrayDisplayFormat: panelArrayDisplayFormat(config.get<string>('kdbPanel.arrayDisplayFormat')),
     functionDisplayStrategy: panelQResultDisplayStrategy(config.get<string>('kdbPanel.functionDisplayStrategy'), 'qText'),
     dictionaryDisplayStrategy: panelQResultDisplayStrategy(config.get<string>('kdbPanel.dictionaryDisplayStrategy'), 'grid'),
@@ -7566,6 +8171,13 @@ function persistedColumnWidths(): PositionalColumnWidths {
 
 function panelCellTextOptions(): CellTextOptions {
   return { arrayDisplayFormat: panelSettings().arrayDisplayFormat };
+}
+
+function qTextRenderOptions(settings: KdbPanelSettings): { syntaxHighlighting: boolean; displayFormatting: boolean } {
+  return {
+    syntaxHighlighting: settings.qTextSyntaxHighlighting,
+    displayFormatting: settings.qTextDisplayFormatting,
+  };
 }
 
 function chartMaxSourceRowsSetting(): number {
@@ -7656,6 +8268,12 @@ function panelSettingConfigKey(key: string, density: KdbPanelDensity): string {
   if (key === 'cellWidth' || key === 'rowHeight' || key === 'fontSize') {
     return `${density}.${key}`;
   }
+  if (key === 'qTextSyntaxHighlighting') {
+    return 'qText.syntaxHighlighting';
+  }
+  if (key === 'qTextDisplayFormatting') {
+    return 'qText.displayFormatting';
+  }
   if (
     key === 'arrayDisplayFormat' ||
     key === 'chartDecimalPlaces' ||
@@ -7711,6 +8329,12 @@ const RESULT_SETTING_UPDATE_ALLOWLIST: { [key: string]: PanelSettingUpdateValida
   includeRowIndex: booleanSettingUpdate,
   hideLargeResultWarnings: booleanSettingUpdate,
   hideLargeSortWarnings: booleanSettingUpdate,
+  largeSortWarningRowThreshold: value => integerSettingUpdate(
+    value,
+    MIN_LARGE_SORT_WARNING_ROW_THRESHOLD,
+    MAX_LARGE_SORT_WARNING_ROW_THRESHOLD
+  ),
+  showColumnSummaryStatistics: booleanSettingUpdate,
   copyExportConfirmCellThreshold: positiveIntegerSettingUpdate,
   localDataServerFullExportCellLimit: positiveIntegerSettingUpdate,
   elapsedTimeDisplay: elapsedTimeDisplaySettingUpdate,
@@ -7720,6 +8344,8 @@ const RESULT_SETTING_UPDATE_ALLOWLIST: { [key: string]: PanelSettingUpdateValida
   dictionaryDisplayStrategy: value => qResultDisplayStrategySettingUpdate(value, 'grid'),
   listDisplayStrategy: value => qResultDisplayStrategySettingUpdate(value, 'grid'),
   objectDisplayStrategy: value => qResultDisplayStrategySettingUpdate(value, 'grid'),
+  qTextSyntaxHighlighting: booleanSettingUpdate,
+  qTextDisplayFormatting: booleanSettingUpdate,
 };
 
 function normalizePanelSettingUpdate(key: any, value: any): { key: string; value: PanelSettingUpdateValue } | null {
@@ -7797,6 +8423,11 @@ function positiveIntegerSettingUpdate(value: any): number | null {
   }
   const integer = Math.floor(number);
   return integer >= 1 ? integer : null;
+}
+
+function integerSettingUpdate(value: any, min: number, max: number): number | null {
+  const number = Number(value);
+  return Number.isSafeInteger(number) && number >= min && number <= max ? number : null;
 }
 
 function densitySettingUpdate(value: any): string | null {
@@ -8334,6 +8965,84 @@ function toError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
 }
 
+function validatePanelTextExportLimits(
+  result: ColumnarPanelResult,
+  range: CellRange,
+  includeHeaders: boolean,
+  includeRowIndex: boolean,
+  cellTextOptions: CellTextOptions
+): string | null {
+  const shape = exportShape(range, { includeHeaders, includeRowIndex });
+  if (shape.outputCells > TEXT_EXPORT_MAX_CELLS) {
+    return `Text export contains ${formatCount(shape.outputCells)} cells, above the ${formatCount(TEXT_EXPORT_MAX_CELLS)} cell limit. Export a smaller range.`;
+  }
+  if (shape.outputColumns > TEXT_EXPORT_MAX_COLUMNS) {
+    return `Text export contains ${formatCount(shape.outputColumns)} columns, above the ${formatCount(TEXT_EXPORT_MAX_COLUMNS)} column limit. Export a smaller range.`;
+  }
+  return validatePanelCellCharacterLimit(
+    result,
+    range,
+    includeHeaders,
+    includeRowIndex,
+    cellTextOptions,
+    TEXT_EXPORT_MAX_CELL_CHARS,
+    'Text export'
+  );
+}
+
+function validatePanelXlsxLimits(
+  result: ColumnarPanelResult,
+  range: CellRange,
+  includeHeaders: boolean,
+  includeRowIndex: boolean,
+  cellTextOptions: CellTextOptions
+): string | null {
+  const sheetLimitError = validateXlsxSheetLimits(range, { includeHeaders, includeRowIndex });
+  if (sheetLimitError) return sheetLimitError;
+  const shape = exportShape(range, { includeHeaders, includeRowIndex });
+  if (shape.outputCells > XLSX_EXPORT_MAX_CELLS) {
+    return `XLSX export contains ${formatCount(shape.outputCells)} cells, above the ${formatCount(XLSX_EXPORT_MAX_CELLS)} cell limit. Export a smaller range.`;
+  }
+  return validatePanelCellCharacterLimit(
+    result,
+    range,
+    includeHeaders,
+    includeRowIndex,
+    cellTextOptions,
+    XLSX_EXPORT_MAX_CELL_CHARS,
+    'XLSX export'
+  );
+}
+
+function validatePanelCellCharacterLimit(
+  result: ColumnarPanelResult,
+  range: CellRange,
+  includeHeaders: boolean,
+  includeRowIndex: boolean,
+  cellTextOptions: CellTextOptions,
+  maxChars: number,
+  label: string
+): string | null {
+  if (includeHeaders) {
+    if (includeRowIndex && rowIndexColumnName(result.columns, range).length > maxChars) {
+      return `${label} has a header above the ${formatCount(maxChars)} character cell limit.`;
+    }
+    for (let columnIndex = range.startColumn; columnIndex <= range.endColumn; columnIndex++) {
+      if (String(result.columns[columnIndex]).length > maxChars) {
+        return `${label} has a header above the ${formatCount(maxChars)} character cell limit.`;
+      }
+    }
+  }
+  for (let rowIndex = range.startRow; rowIndex <= range.endRow; rowIndex++) {
+    for (let columnIndex = range.startColumn; columnIndex <= range.endColumn; columnIndex++) {
+      if (result.cellText(rowIndex, columnIndex, cellTextOptions).length > maxChars) {
+        return `${label} has a cell above the ${formatCount(maxChars)} character limit at row ${formatCount(rowIndex + 1)}, column ${formatCount(columnIndex + 1)}.`;
+      }
+    }
+  }
+  return null;
+}
+
 async function columnarToXlsx(
   result: ColumnarPanelResult,
   range: CellRange,
@@ -8341,7 +9050,7 @@ async function columnarToXlsx(
   includeRowIndex: boolean,
   cellTextOptions: CellTextOptions = {}
 ): Promise<Uint8Array> {
-  const limitError = validateXlsxSheetLimits(range, { includeHeaders, includeRowIndex });
+  const limitError = validatePanelXlsxLimits(result, range, includeHeaders, includeRowIndex, cellTextOptions);
   if (limitError) {
     throw new Error(limitError);
   }
@@ -8369,7 +9078,12 @@ async function columnarToXlsx(
     '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>' +
     '</Relationships>');
   zip.file('xl/styles.xml', stylesXml());
-  zip.file('xl/worksheets/sheet1.xml', sheetXml(result, range, includeHeaders, includeRowIndex, cellTextOptions));
+  const worksheetXml = sheetXml(result, range, includeHeaders, includeRowIndex, cellTextOptions);
+  const worksheetBytes = Buffer.byteLength(worksheetXml, 'utf8');
+  if (worksheetBytes > XLSX_EXPORT_MAX_XML_BYTES) {
+    throw new Error(`XLSX worksheet XML is ${formatBytes(worksheetBytes)}, above the ${formatBytes(XLSX_EXPORT_MAX_XML_BYTES)} limit. Export a smaller range.`);
+  }
+  zip.file('xl/worksheets/sheet1.xml', worksheetXml);
   return zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' });
 }
 

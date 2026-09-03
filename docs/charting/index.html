@@ -2,106 +2,106 @@
 <!doctype html>
 <html lang="en" class="no-js">
   <head>
-    
+
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
-      
+
         <meta name="description" content="Practical documentation for the SQLTools kdb driver.">
-      
-      
-      
+
+
+
         <link rel="canonical" href="https://kdb-sqltools.dac.sg/charting/">
-      
-      
+
+
         <link rel="prev" href="../local-data-server/">
-      
-      
-        <link rel="next" href="../charting-roadmap/">
-      
-      
-        
-      
-      
+
+
+        <link rel="next" href="../copy-export/">
+
+
+
+
+
       <link rel="icon" href="../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
-    
-    
-      
+
+
+
         <title>Charting - kdb-sqltools</title>
-      
-    
-    
+
+
+
       <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
-      
-        
+
+
         <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
-      
-      
 
 
-    
-    
-      
-    
-    
-      
-        
-        
+
+
+
+
+
+
+
+
+
+
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
         <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
         <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
-      
-    
-    
-    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
-    
-      
 
-    
-    
+
+
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+
+
+
+
+
   </head>
-  
-  
-    
-    
-      
-    
-    
-    
-    
+
+
+
+
+
+
+
+
+
     <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="black" data-md-color-accent="lime">
-  
-    
+
+
     <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
     <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
     <label class="md-overlay" for="__drawer"></label>
     <div data-md-component="skip">
-      
-        
+
+
         <a href="#charting" class="md-skip">
           Skip to content
         </a>
-      
+
     </div>
     <div data-md-component="announce">
-      
-    </div>
-    
-    
-      
 
-  
+    </div>
+
+
+
+
+
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
     <a href=".." title="kdb-sqltools" class="md-header__button md-logo" aria-label="kdb-sqltools" data-md-component="logo">
-      
-  
+
+
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
 
     </a>
     <label class="md-header__button md-icon" for="__drawer">
-      
+
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
     </label>
     <div class="md-header__title" data-md-component="header-title">
@@ -113,49 +113,49 @@
         </div>
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
-            
+
               Charting
-            
+
           </span>
         </div>
       </div>
     </div>
-    
-      
+
+
         <form class="md-header__option" data-md-component="palette">
-  
-    
-    
-    
+
+
+
+
     <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="black" data-md-color-accent="lime"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
-    
+
       <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
       </label>
-    
-  
-    
-    
-    
+
+
+
+
+
     <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="lime"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
-    
+
       <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
       </label>
-    
-  
+
+
 </form>
-      
-    
-    
+
+
+
       <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
-    
-    
-    
-      
-      
+
+
+
+
+
         <label class="md-header__button md-icon" for="__search">
-          
+
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
         </label>
         <div class="md-search" data-md-component="search" role="dialog">
@@ -164,21 +164,21 @@
     <form class="md-search__form" name="search">
       <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
       <label class="md-search__icon md-icon" for="__search">
-        
+
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
-        
+
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
       </label>
       <nav class="md-search__options" aria-label="Search">
-        
+
         <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
-          
+
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
         </button>
       </nav>
-      
+
         <div class="md-search__suggest" data-md-component="search-suggest"></div>
-      
+
     </form>
     <div class="md-search__output">
       <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
@@ -192,13 +192,13 @@
     </div>
   </div>
 </div>
-      
-    
-    
+
+
+
       <div class="md-header__source">
         <a href="https://github.com/dreth/kdb-sqltools" title="Go to repository" class="md-source" data-md-component="source">
   <div class="md-source__icon md-icon">
-    
+
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
   </div>
   <div class="md-source__repository">
@@ -206,45 +206,45 @@
   </div>
 </a>
       </div>
-    
+
   </nav>
-  
+
 </header>
-    
+
     <div class="md-container" data-md-component="container">
-      
-      
-        
-          
-        
-      
+
+
+
+
+
+
       <main class="md-main" data-md-component="main">
         <div class="md-main__inner md-grid">
-          
-            
-              
+
+
+
               <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
                 <div class="md-sidebar__scrollwrap">
                   <div class="md-sidebar__inner">
-                    
+
 
 
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
     <a href=".." title="kdb-sqltools" class="md-nav__button md-logo" aria-label="kdb-sqltools" data-md-component="logo">
-      
-  
+
+
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
 
     </a>
     kdb-sqltools
   </label>
-  
+
     <div class="md-nav__source">
       <a href="https://github.com/dreth/kdb-sqltools" title="Go to repository" class="md-source" data-md-component="source">
   <div class="md-source__icon md-icon">
-    
+
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
   </div>
   <div class="md-source__repository">
@@ -252,578 +252,551 @@
   </div>
 </a>
     </div>
-  
+
   <ul class="md-nav__list" data-md-scrollfix>
-    
-      
-      
-  
-  
-  
-  
+
+
+
+
+
+
+
     <li class="md-nav__item">
       <a href=".." class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Overview
-  
 
-    
+
+
+  <span class="md-ellipsis">
+
+
+    Overview
+
+
+
   </span>
-  
-  
+
+
 
       </a>
     </li>
-  
 
-    
-      
-      
-  
-  
-  
-  
+
+
+
+
+
+
+
+
     <li class="md-nav__item">
       <a href="../installation/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Installation
-  
 
-    
+
+
+  <span class="md-ellipsis">
+
+
+    Installation
+
+
+
   </span>
-  
-  
+
+
 
       </a>
     </li>
-  
 
-    
-      
-      
-  
-  
-  
-  
+
+
+
+
+
+
+
+
     <li class="md-nav__item">
       <a href="../connections/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Connections
-  
 
-    
+
+
+  <span class="md-ellipsis">
+
+
+    Connections
+
+
+
   </span>
-  
-  
+
+
 
       </a>
     </li>
-  
 
-    
-      
-      
-  
-  
-  
-  
+
+
+
+
+
+
+
+
     <li class="md-nav__item">
       <a href="../running-q/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Running q
-  
 
-    
+
+
+  <span class="md-ellipsis">
+
+
+    Running q
+
+
+
   </span>
-  
-  
+
+
 
       </a>
     </li>
-  
 
-    
-      
-      
-  
-  
-  
-  
+
+
+
+
+
+
+
+
     <li class="md-nav__item">
       <a href="../results-panel/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Results panel
-  
 
-    
+
+
+  <span class="md-ellipsis">
+
+
+    Results panel
+
+
+
   </span>
-  
-  
+
+
 
       </a>
     </li>
-  
 
-    
-      
-      
-  
-  
-  
-  
+
+
+
+
+
+
+
+
     <li class="md-nav__item">
       <a href="../local-data-server/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Local data server
-  
 
-    
+
+
+  <span class="md-ellipsis">
+
+
+    Local data server
+
+
+
   </span>
-  
-  
+
+
 
       </a>
     </li>
-  
 
-    
-      
-      
-  
-  
-    
-  
-  
-  
+
+
+
+
+
+
+
+
+
+
     <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Charting
-  
 
-    
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+
+
+
+
+
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Charting
+
+
+
   </span>
-  
-  
+
+
 
           <span class="md-nav__icon md-icon"></span>
         </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Charting
-  
 
-    
+      <a href="./" class="md-nav__link md-nav__link--active">
+
+
+
+  <span class="md-ellipsis">
+
+
+    Charting
+
+
+
   </span>
-  
-  
+
+
 
       </a>
-      
-        
+
+
 
 <nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
+
+
+
+
+
+
     <label class="md-nav__title" for="__toc">
       <span class="md-nav__icon md-icon"></span>
       Table of contents
     </label>
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
+
         <li class="md-nav__item">
   <a href="#open-a-chart" class="md-nav__link">
     <span class="md-ellipsis">
-      
+
         Open a chart
-      
+
     </span>
   </a>
-  
+
 </li>
-      
+
         <li class="md-nav__item">
   <a href="#type-support" class="md-nav__link">
     <span class="md-ellipsis">
-      
+
         Type support
-      
+
     </span>
   </a>
-  
+
 </li>
-      
+
         <li class="md-nav__item">
   <a href="#candlestick-requirements" class="md-nav__link">
     <span class="md-ellipsis">
-      
+
         Candlestick requirements
-      
+
     </span>
   </a>
-  
+
 </li>
-      
+
         <li class="md-nav__item">
   <a href="#bar-behavior" class="md-nav__link">
     <span class="md-ellipsis">
-      
+
         Bar behavior
-      
+
     </span>
   </a>
-  
+
 </li>
-      
+
         <li class="md-nav__item">
   <a href="#eligible-columns" class="md-nav__link">
     <span class="md-ellipsis">
-      
+
         Eligible columns
-      
+
     </span>
   </a>
-  
+
 </li>
-      
+
         <li class="md-nav__item">
   <a href="#downsampling" class="md-nav__link">
     <span class="md-ellipsis">
-      
+
         Downsampling
-      
+
     </span>
   </a>
-  
+
 </li>
-      
+
         <li class="md-nav__item">
   <a href="#implementation-note" class="md-nav__link">
     <span class="md-ellipsis">
-      
+
         Implementation note
-      
+
     </span>
   </a>
-  
+
 </li>
-      
+
     </ul>
-  
+
 </nav>
-      
+
     </li>
-  
 
-    
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../charting-roadmap/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Charting roadmap
-  
 
-    
-  </span>
-  
-  
 
-      </a>
-    </li>
-  
 
-    
-      
-      
-  
-  
-  
-  
+
+
+
+
+
     <li class="md-nav__item">
       <a href="../copy-export/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Copy and export
-  
 
-    
+
+
+  <span class="md-ellipsis">
+
+
+    Copy and export
+
+
+
   </span>
-  
-  
+
+
 
       </a>
     </li>
-  
 
-    
-      
-      
-  
-  
-  
-  
+
+
+
+
+
+
+
+
     <li class="md-nav__item">
       <a href="../settings/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Settings
-  
 
-    
+
+
+  <span class="md-ellipsis">
+
+
+    Settings
+
+
+
   </span>
-  
-  
+
+
 
       </a>
     </li>
-  
 
-    
-      
-      
-  
-  
-  
-  
+
+
+
+
+
+
+
+
     <li class="md-nav__item">
       <a href="../troubleshooting/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Troubleshooting
-  
 
-    
+
+
+  <span class="md-ellipsis">
+
+
+    Troubleshooting
+
+
+
   </span>
-  
-  
+
+
 
       </a>
     </li>
-  
 
-    
-      
-      
-  
-  
-  
-  
+
+
+
+
+
+
+
+
     <li class="md-nav__item">
       <a href="../feedback/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Feedback
-  
 
-    
+
+
+  <span class="md-ellipsis">
+
+
+    Feedback
+
+
+
   </span>
-  
-  
+
+
 
       </a>
     </li>
-  
 
-    
+
+
   </ul>
 </nav>
                   </div>
                 </div>
               </div>
-            
-            
-              
+
+
+
               <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
                 <div class="md-sidebar__scrollwrap">
                   <div class="md-sidebar__inner">
-                    
+
 
 <nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
+
+
+
+
+
+
     <label class="md-nav__title" for="__toc">
       <span class="md-nav__icon md-icon"></span>
       Table of contents
     </label>
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
+
         <li class="md-nav__item">
   <a href="#open-a-chart" class="md-nav__link">
     <span class="md-ellipsis">
-      
+
         Open a chart
-      
+
     </span>
   </a>
-  
+
 </li>
-      
+
         <li class="md-nav__item">
   <a href="#type-support" class="md-nav__link">
     <span class="md-ellipsis">
-      
+
         Type support
-      
+
     </span>
   </a>
-  
+
 </li>
-      
+
         <li class="md-nav__item">
   <a href="#candlestick-requirements" class="md-nav__link">
     <span class="md-ellipsis">
-      
+
         Candlestick requirements
-      
+
     </span>
   </a>
-  
+
 </li>
-      
+
         <li class="md-nav__item">
   <a href="#bar-behavior" class="md-nav__link">
     <span class="md-ellipsis">
-      
+
         Bar behavior
-      
+
     </span>
   </a>
-  
+
 </li>
-      
+
         <li class="md-nav__item">
   <a href="#eligible-columns" class="md-nav__link">
     <span class="md-ellipsis">
-      
+
         Eligible columns
-      
+
     </span>
   </a>
-  
+
 </li>
-      
+
         <li class="md-nav__item">
   <a href="#downsampling" class="md-nav__link">
     <span class="md-ellipsis">
-      
+
         Downsampling
-      
+
     </span>
   </a>
-  
+
 </li>
-      
+
         <li class="md-nav__item">
   <a href="#implementation-note" class="md-nav__link">
     <span class="md-ellipsis">
-      
+
         Implementation note
-      
+
     </span>
   </a>
-  
+
 </li>
-      
+
     </ul>
-  
+
 </nav>
                   </div>
                 </div>
               </div>
-            
-          
-          
+
+
+
             <div class="md-content" data-md-component="content">
-              
+
               <article class="md-content__inner md-typeset">
-                
-                  
 
 
-  
-  
+
+
+
+
 
 
 <h1 id="charting">Charting</h1>
@@ -838,12 +811,12 @@
 <li>For line, scatter, step, bar, or box, pick one or more numeric y columns. For candlestick, instead pick four distinct numeric columns in the explicit <code>Open</code>, <code>High</code>, <code>Low</code>, and <code>Close</code> selectors.</li>
 <li>Optionally pick a categorical <code>Group by</code> column for line, scatter, step, or bar. Box and candlestick do not support grouping, so the control is hidden and the chart status explains why.</li>
 <li>Press <code>Render</code>.</li>
-<li>Drag to zoom x; use <code>Shift</code>+drag, Pan left/right, or <code>ArrowLeft</code>/<code>ArrowRight</code> to pan x; use <code>Home</code>, double-click, or Reset to restore the full range. <code>Refine view</code> explicitly resamples the current viewport.</li>
+<li>Choose <code>Zoom</code> or <code>Pan</code> for plain chart drags. <code>Shift</code>+drag always pans. Use the full-range navigator to drag the visible window or its edges, click its overview to recenter, or focus it and use <code>ArrowLeft</code>/<code>ArrowRight</code>; use <code>Home</code>, double-click, or Reset to restore the full range.</li>
 <li>After the chart renders, press <code>Export PNG</code> to save the chart as <code>kdb-chart.png</code> or another PNG file.</li>
 </ol>
 <p>Changing the chart type updates control visibility, defaults, validation, and the compact status immediately. It does not remove the currently rendered chart. The panel shows <code>Chart settings changed — Render to update</code> until you press <code>Render</code>; export still applies to the rendered chart.</p>
-<p>uPlot powers the built-in chart. Supported interactions are cursor/crosshair tooltip values, x-only drag zoom, <code>Shift</code>+drag x pan, 20% button/arrow-key pan, explicit viewport refinement, reset, legend labels with live values, legend series toggling, splitter resizing, and PNG export. Zoom and pan use one settled-viewport coordinator. For the same clamped absolute range, pan completion uses the exact unchanged zoom range-loading/resampling decision; mousemove sends no source request, y stays automatic, and a nested zoom composes from the panned absolute viewport. Duplicate notifications are debounced/deduplicated, while reconstruction, resize, settings, and series-visibility rerenders do not recursively request data.</p>
-<p><code>Reset zoom</code> invalidates in-flight refinements, restores the immutable original full sample and x-range, and disables again at that baseline without another q/backend request. A late stale response cannot replace the restored baseline. Candlestick uses a dedicated uPlot canvas hook so its wicks and bodies participate in the same zoom, reset, refinement, and PNG export path.</p>
+<p>uPlot powers the built-in chart. Supported interactions are cursor/crosshair tooltip values, selectable Zoom/Pan drag modes, <code>Shift</code>+drag x pan, a full-range navigator, keyboard pan, reset, legend labels with live values, legend series toggling, splitter resizing, and PNG export. Zoom, pan, and navigator changes use one settled-viewport coordinator. Mouse movement sends no source request, y stays automatic, and a nested zoom composes from the current absolute viewport. Duplicate notifications are debounced/deduplicated, while reconstruction, resize, settings, and series-visibility rerenders do not recursively request data.</p>
+<p>The navigator overview always uses the immutable original full sample; only its window changes. <code>Reset zoom</code> invalidates in-flight range requests, restores that full sample and x-range, and disables again at the baseline without another q/backend request. A late stale response cannot replace the restored baseline. Candlestick uses a dedicated uPlot canvas hook so its wicks and bodies participate in the same zoom, reset, range-loading, and PNG export path.</p>
 <p>X-axis labels are auto-thinned to keep dense numeric and timestamp axes readable while preserving useful grid lines where possible. Timestamp labels use shorter adaptive formats after zoom, and edge labels may be suppressed to avoid clipping. Hover and cursor/crosshair tooltip values still show the precise x value for the selected point.</p>
 <p><code>kdb-sqltools.results.kdbPanel.chartDecimalPlaces</code> controls chart numeric precision for numeric x/y tick labels, tooltip values, legend/live values, box-stat labels, and candlestick OHLC values. It defaults to <code>4</code> and accepts <code>0</code> through <code>12</code>. Very large or very small nonzero values use scientific notation with the configured precision so they do not silently round to <code>0</code>. Temporal timestamp labels do not use this numeric decimal formatting.</p>
 <p>Chart selections are saved only after a successful render, using the visible column names and order as the signature. Later results restore the chart type and only the roles that remain valid for compatible columns, including after VS Code restarts. Candlestick persistence includes x plus all four OHLC roles. Older generic selections and selections whose columns changed fall back safely instead of being reinterpreted as OHLC.</p>
@@ -925,7 +898,7 @@
 <li><code>high &gt;= low</code></li>
 </ul>
 <p>If any retained row fails, the whole candlestick render is rejected with a row/column-oriented error. Values are not reordered, inferred from y-checklist order, silently dropped, or otherwise reinterpreted.</p>
-<p>Candlestick downsampling keeps the roles together. It divides the numeric or temporal x domain into bounded intervals; for each non-empty x bucket it uses the first valid open, maximum high, minimum low, and last valid close in x order while preserving source order for duplicate x values. An aggregate is positioned at the midpoint of its first and last source x, and the response preserves the full source x minimum/maximum so irregular ranges remain correctly scaled and reachable by zoom. It never independently min/max-samples the four columns as unrelated series. The returned result is capped at roughly one candle per horizontal pixel, and zoom refinement uses the same financial aggregation for the selected x range.</p>
+<p>Candlestick downsampling keeps the roles together. It divides the numeric or temporal x domain into bounded intervals; for each non-empty x bucket it uses the first valid open, maximum high, minimum low, and last valid close in x order while preserving source order for duplicate x values. An aggregate is positioned at the midpoint of its first and last source x, and the response preserves the full source x minimum/maximum so irregular ranges remain correctly scaled and reachable by zoom. It never independently min/max-samples the four columns as unrelated series. The initial full-range result remains capped at roughly one candle per horizontal pixel; zoom refinement applies the shared 3,000/7,000 range-density contract while retaining the same coordinated financial aggregation when reduction is required.</p>
 <p>The canvas hook draws a wick from low to high and a width-clamped body from open to close. Up and down candles use predictable contrasting colors plus hollow/filled bodies so direction remains distinguishable in light and dark webview themes without relying on color alone. Dense x ranges retain a legible positive body width. The cursor tooltip shows x, open, high, low, and close, and PNG export includes the rendered candles.</p>
 <h2 id="bar-behavior">Bar behavior</h2>
 <p>Bars use their own clustered drawing path rather than line or filled-area semantics. At each x position, every selected y series and generated group series receives a side-by-side slot; series do not overlap one another.</p>
@@ -964,9 +937,15 @@
 <p>Downsampling happens in the extension host before data is sent to the webview.</p>
 <p>Before downsampling, charting scans source rows in the extension host. <code>kdb-sqltools.results.kdbPanel.chartMaxSourceRows</code> controls the source-row guard. It defaults to <code>2000000</code>, has a minimum of <code>1</code>, and has no hard upper bound. Chart requests above the configured value are rejected before scanning.</p>
 <p>Very large values can make chart rendering slow or temporarily block the extension host, especially with multiple y columns. For very large data, prefer the local data server or sliced results.</p>
-<p>The initial full-range target point count is based on chart width and capped at a safe maximum. Line, scatter, and step target roughly three points per horizontal pixel and use min/max bucket sampling to preserve local spikes and representative source gaps better than uniform stride. Bar first consolidates every compatible selected/grouped series into a complete distinct-x cluster, then evenly thins whole clusters when needed. Box uses coordinated min/q1/median/q3/max statistics for each selected numeric y series; groups too dense for side-by-side boxes are skipped with a status rather than overlapped. Candlestick targets roughly one candle per horizontal pixel and uses coordinated first-open/max-high/min-low/last-close financial buckets.</p>
-<p>Settled viewport refinement scans the same guarded full source result and resamples only the selected absolute x range. A completed pan enters the same unchanged decision as a completed zoom for that range; it does not add another sampling policy. Requests are normally debounced for about 450 ms. Distinct queued ranges and in-flight supersession retain the existing zoom lifecycle so older responses cannot erase newer intent. Identical scale notifications are deduplicated, and scale changes caused by response reconstruction, resize, settings, or hide/show rerenders are suppressed. <code>Refine view</code> explicitly applies that same current-viewport path. The webview does not rescan on mousemove.</p>
-<p><code>kdb-sqltools.results.kdbPanel.chartZoomMinSampledPoints</code> defaults to <code>3000</code> and has a minimum of <code>1</code>. <code>kdb-sqltools.results.kdbPanel.chartZoomMaxSampledPoints</code> defaults to <code>7000</code>; values below the min setting are clamped up to the min. Generic and box refinement returns all eligible rows when they fit below the maximum; larger results use the chart type's reduction model. Candlestick also applies its one-candle-per-pixel target so a narrow plot does not receive thousands of overlapping bodies. The exact eligible row count for a zoom range is known after the refine request and is shown in the chart status.</p>
+<p>Ordinary line, scatter, and step series use a fixed target of 7,000 points for both full and ranged builds, keeping every eligible point when fewer are available. Min/max bucket sampling preserves local spikes and representative source gaps when reduction is needed. Bar first consolidates every compatible selected/grouped series into a complete distinct-x cluster, then evenly thins whole clusters according to visual width. Box uses coordinated min/q1/median/q3/max statistics for each selected numeric y series; groups too dense for side-by-side boxes are skipped with a status rather than overlapped. Candlestick targets roughly one candle per horizontal pixel for the full view and uses coordinated first-open/max-high/min-low/last-close financial buckets.</p>
+<p>After zoom, pan, or navigator movement settles, the webview counts already-sampled x values inside the viewport. At least 3,000 visible sampled points remain local. A sparser viewport automatically scans the same guarded full source result and rebuilds only the selected absolute x range. Requests are normally debounced for about 450 ms, in-flight supersession prevents older responses from erasing newer intent, and programmatic scale changes are suppressed. The webview does not rescan on mousemove.</p>
+<p>The fixed refined-range density contract is:</p>
+<ul>
+<li>Fewer than 3,000 eligible source rows: render every available row; never invent or upsample points.</li>
+<li>From 3,000 through 7,000 eligible rows: retain all available density without forced reduction.</li>
+<li>Above 7,000 eligible rows: use the chart type's reduction model to return about 7,000 points, with only explicitly bounded algorithmic overshoot.</li>
+</ul>
+<p>Type-specific semantic consolidation still applies before density is counted: duplicate x rows that form one bar cluster or OHLC candle are not split into invented visual points. The contract retains every available type-valid point after that required consolidation.</p>
 <p>The chart response includes:</p>
 <ul>
 <li>source row count</li>
@@ -977,7 +956,7 @@
 </ul>
 <p>For generic charts, null and non-finite y values render as gaps for line/step and are skipped for scatter/bar/box statistics. Candlestick uses the stricter all-OHLC row validation described above. Rows with null, non-finite, or incompatible x values are dropped from every chart type.</p>
 <h2 id="implementation-note">Implementation note</h2>
-<p>The chart uses uPlot from local extension assets. The VS Code webview loads the minified uPlot JavaScript and CSS from the packaged extension so charting works offline and remains under the extension CSP. Candlestick wicks/bodies, clustered bars, and box summaries use dedicated canvas drawing paths rather than fake generic line series.</p>
+<p>The chart uses uPlot from local extension assets. The VS Code webview loads the minified uPlot JavaScript and CSS from the packaged extension so charting works offline and remains under the extension CSP. The extension retains the original full source/sample independently from refined responses so nested requests and reset never use a previous reduced response as their baseline. Candlestick wicks/bodies, clustered bars, and box summaries use dedicated canvas drawing paths rather than fake generic line series.</p>
 <p>PNG export saves the rendered uPlot canvas through the extension host, including custom bars, boxes, and candles, not browser download APIs inside the webview.</p>
 <p>For richer Plotly workflows, use the <a href="../local-data-server/">local data server</a> from Python or pandas. <code>plotly-resampler</code> fits that external workflow better than the built-in webview chart.</p>
 
@@ -992,54 +971,54 @@
 
 
 
-                
+
               </article>
             </div>
-          
-          
+
+
 <script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
         </div>
-        
+
           <button type="button" class="md-top md-icon" data-md-component="top" hidden>
-  
+
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
   Back to top
 </button>
-        
+
       </main>
-      
+
         <footer class="md-footer">
-  
+
   <div class="md-footer-meta md-typeset">
     <div class="md-footer-meta__inner md-grid">
       <div class="md-copyright">
-  
-  
+
+
     Made with
     <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
       Material for MkDocs
     </a>
-  
+
 </div>
-      
+
     </div>
   </div>
 </footer>
-      
+
     </div>
     <div class="md-dialog" data-md-component="dialog">
       <div class="md-dialog__inner md-typeset"></div>
     </div>
-    
-    
-    
-      
-      
+
+
+
+
+
       <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "search.highlight", "search.suggest", "toc.follow", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
-    
-    
+
+
       <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
-      
-    
+
+
   </body>
 </html>

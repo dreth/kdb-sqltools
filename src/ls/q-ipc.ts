@@ -1968,6 +1968,8 @@ function qKeyedTableToColumnarPanel(table: QKeyedTable): ColumnarPanelResult {
       return qTablePanelCellValue(table.keyTable, rowIndex, columnIndex);
     }
     return qTablePanelCellValue(table.valueTable, rowIndex, columnIndex - table.keyTable.columns.length);
+  }, {
+    keyColumnOrdinals: table.keyTable.columns.map((_column, columnIndex) => columnIndex),
   });
 }
 

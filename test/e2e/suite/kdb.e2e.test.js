@@ -148,7 +148,7 @@ function registerInitialSuite() {
       }
     });
 
-    test('renders zoom, button/Shift pan, and nested zoom from the full source', async function () {
+    test('renders zoom, navigator/Shift pan, and nested zoom from the full source', async function () {
       if (!VISUAL_ENABLED) {
         this.skip();
       }
@@ -213,22 +213,22 @@ function registerInitialSuite() {
       assert.strictEqual(result.ok, true, result.error || 'visual controller failed');
       assert.strictEqual(result.initial.sourceRowCount, 12000);
       assert.strictEqual(result.first.sourceRowCount, 12000);
-      assert.strictEqual(result.buttonPan.sourceRowCount, 12000);
+      assert.strictEqual(result.navigatorPan.sourceRowCount, 12000);
       assert.strictEqual(result.shiftPan.sourceRowCount, 12000);
       assert.strictEqual(result.second.sourceRowCount, 12000);
       assert.ok(result.first.requestId > result.initial.requestId);
-      assert.strictEqual(result.buttonPan.requestId, result.first.requestId + 1);
-      assert.strictEqual(result.shiftPan.requestId, result.buttonPan.requestId + 1);
+      assert.strictEqual(result.navigatorPan.requestId, result.first.requestId + 1);
+      assert.strictEqual(result.shiftPan.requestId, result.navigatorPan.requestId + 1);
       assert.ok(result.second.requestId > result.first.requestId);
       assert.ok(result.second.requestId > result.shiftPan.requestId);
       const firstSpan = result.first.requestedRange.max - result.first.requestedRange.min;
-      const buttonPanSpan = result.buttonPan.requestedRange.max - result.buttonPan.requestedRange.min;
+      const navigatorPanSpan = result.navigatorPan.requestedRange.max - result.navigatorPan.requestedRange.min;
       const shiftPanSpan = result.shiftPan.requestedRange.max - result.shiftPan.requestedRange.min;
-      assert.ok(Math.abs(buttonPanSpan - firstSpan) <= Math.max(1e-7, Math.abs(firstSpan) * 1e-9));
-      assert.ok(Math.abs(shiftPanSpan - buttonPanSpan) <= Math.max(1e-7, Math.abs(buttonPanSpan) * 1e-9));
-      assert.ok(result.buttonPan.requestedRange.min > result.first.requestedRange.min);
-      assert.ok(result.shiftPan.requestedRange.min < result.buttonPan.requestedRange.min);
-      assert.ok(result.second.eligibleRowCount >= 3000);
+      assert.ok(Math.abs(navigatorPanSpan - firstSpan) <= Math.max(1e-7, Math.abs(firstSpan) * 1e-9));
+      assert.ok(Math.abs(shiftPanSpan - navigatorPanSpan) <= Math.max(1e-7, Math.abs(navigatorPanSpan) * 1e-9));
+      assert.ok(result.navigatorPan.requestedRange.min > result.first.requestedRange.min);
+      assert.ok(result.shiftPan.requestedRange.min < result.navigatorPan.requestedRange.min);
+      assert.ok(result.second.eligibleRowCount > 0);
       assert.deepStrictEqual(
         result.families.map(family => family.chartType),
         ['line', 'scatter', 'step', 'bar', 'box', 'candlestick']

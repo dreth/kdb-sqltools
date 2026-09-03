@@ -33,7 +33,9 @@ The panel settings menu can also update them.
 
 Text formats use cell display text, including the configured array display format.
 
-JSON and NDJSON keep structured values where the driver has structured values available.
+JSON and NDJSON keep structured values where the driver has structured values available. Duplicate selected column names receive deterministic `_2`, `_3`, and later suffixes so values are never overwritten. A row-number column also receives a collision-safe name.
+
+Visible grid truncation and qText display formatting never change copied or exported source values.
 
 ## Guardrails
 
@@ -45,7 +47,12 @@ Large copy and export actions prompt before materializing output. The selected-c
 }
 ```
 
-The setting has a minimum of `1` and no hard upper bound. Raising it can make very large copy/export actions run without prompting and may temporarily block the extension host.
+The setting has a minimum of `1`, but it controls confirmation only. Hard safety limits always apply:
+
+- Clipboard output is limited to 15 MiB. Larger realized output offers file export or cancel; there is no bypass.
+- Text export is limited to 5,000,000 output cells, 100,000 output columns, 8,388,608 characters in one cell, and 128 MiB of realized UTF-8 output.
+- qText uses the same 15 MiB clipboard and 128 MiB file limits.
+- XLSX is limited to 1,000,000 output cells, 32,767 characters in one cell, and 64 MiB of uncompressed worksheet XML, in addition to Excel's sheet dimensions.
 
 Local data server full-result `current.csv`, `current.json`, and `current.ndjson` exports use a separate configurable limit: `kdb-sqltools.results.localDataServerFullExportCellLimit`. The Data server section shows a reminder because raising the copy/export confirmation threshold does not raise the local server hard limit.
 

@@ -16,7 +16,7 @@ New result grouping keeps new kdb result tabs beside existing kdb result tabs wh
 
 ## Large results
 
-The panel virtualizes rows and columns. It transfers only the visible cell window from the extension host to the webview, reducing DOM work for large tables.
+The panel virtualizes rows and columns. It transfers only the visible cell window from the extension host to the webview, reducing DOM work for large tables. Individual cells in a visible slice are capped at 64 KiB of display text and show `… [cell truncated; copy/export uses full value]`; copy and export still use the underlying value. Search examines at most 4 KiB of display text per cell.
 
 The q IPC response is still fully materialized in extension memory before display. Use q-side limits for truly large results:
 
@@ -42,8 +42,10 @@ Server-side interruption is best-effort. If the q process or gateway has already
 | Reset widths | `Reset column widths` clears positional manual widths and returns width resolution to the selected preset/auto-fit behavior. |
 | Reorder | Move a header at least 5 CSS pixels. The drag cue marks the insertion position and the gesture never sorts. `Alt+Left`/`Alt+Right` moves the focused column one position. |
 | Select columns | `Ctrl`/`Cmd`+click or `Ctrl`/`Cmd`+Space selects a full column. Add `Shift` to extend from the selection anchor. |
-| Sort | Click, `Enter`, or `Space` cycles ascending, descending, and immutable source order. Visible indicators and `aria-sort` report the state. |
+| Sort | Click, `Enter`, or `Space` cycles ascending, descending, and immutable source order. Visible indicators and `aria-sort` report the state. Results above the configurable row threshold ask once per displayed result before the first exact sort. |
 | Hidden columns | Hide columns from the panel settings menu for the current panel session. Reset restores all columns. |
+| Key columns | Key columns from keyed q tables receive a subtle theme-aware tint that follows the column through hiding and reordering. |
+| Summaries | Optional bounded column cards report valid/null/distinct counts, common values, and numeric or temporal metrics. Results up to 50,000 rows are exact when the 100,000-cell budget permits; larger results use at most 10,000 evenly spaced rows. |
 
 Column reorder, sort, search, copy, and export use the current visible column order. Hidden-column choices persist only for later results in the same panel when the full column list matches. Positional widths remain tied to the source-column position through hide/reorder operations rather than following a query-specific column name. Header labels expose position/state, focused headers have a visible outline, and resize handles stop pointer propagation; resize drag or double-click reset never sorts.
 
@@ -59,12 +61,12 @@ Output: [format] [Headers] [Row #] [Copy] [Export] [Chart] [Settings] [Cancel] [
 
 | Tool | Behavior |
 | --- | --- |
-| Chart button | Opens the uPlot-powered chart UI for the current visible result. Line, scatter, step, clustered bar, and box use numeric y selections; real candlestick charts instead show explicit, distinct numeric `Open`, `High`, `Low`, and `Close` selectors. All types use numeric/temporal x. `Group by` is available only for line, scatter, step, and bar; box and candlestick hide it with an explanatory status. The panel also provides auto-thinned readable x-axis labels, OHLC-aware tooltips, plain-drag x zoom, `Shift`+drag/button/keyboard x pan, `Refine view`, reset, splitter resize, legend toggling, compatible selection persistence, and PNG export after render. Changing controls leaves the old rendered chart visible until `Render` is pressed. |
+| Chart button | Opens the uPlot-powered chart UI for the current visible result. Line, scatter, step, clustered bar, and box use numeric y selections; real candlestick charts instead show explicit, distinct numeric `Open`, `High`, `Low`, and `Close` selectors. All types use numeric/temporal x. `Group by` is available only for line, scatter, step, and bar; box and candlestick hide it with an explanatory status. The panel provides a full-range navigator, Zoom/Pan drag modes, keyboard panning, reset, splitter resize, legend toggling, compatible selection persistence, and PNG export after render. Changing controls leaves the old rendered chart visible until `Render` is pressed. |
 | Settings menu | Contains collapsible sections for view controls, search, hidden columns, output defaults, and local data server controls. Preferences opens by default; Data server is collapsed by default. The Data server section starts or stops the opt-in `127.0.0.1` server, copies current-result URLs, and reminds users that very large current.* exports may need a higher local server cell limit. |
 
 The local data server and chart both use the extension-side current result. Hidden, reordered, and sorted visible columns are honored where they apply.
 
-For the same clamped absolute range, settled chart pan uses the exact unchanged zoom range-loading/resampling decision. `Shift`+drag grabs the content, buttons and arrow keys move 20% of the visible span, and `Home`, double-click, or Reset restores the immutable full range. Y stays automatic. Mousemove only supplies local feedback; source work starts after completion. Identical scale notifications are deduplicated, programmatic rerenders do not recursively refine, and reset invalidates stale responses while restoring the original sample/domain without backend I/O.
+The navigator always shows the immutable full sample and its current visible window. Drag the window or its edges, click the overview to recenter, or focus it and use the arrow keys; `Home`, double-click, or Reset restores the immutable full range. Plain chart drag follows the selected Zoom/Pan mode, while `Shift`+drag always pans. Y stays automatic. A settled viewport with at least 3,000 already-sampled points remains local; a sparser viewport is automatically resampled from the retained source. Reset invalidates stale responses and restores the original sample/domain without backend I/O.
 
 ## Selection
 
@@ -80,7 +82,7 @@ With no selection, copy and export use all cells.
 
 ## Search
 
-Settings search runs in the extension against visible columns only. It returns capped row-match metadata to the webview, so the panel does not need to transfer every cell to search. The search status indicates capped or partial scans.
+Settings search runs in the extension against visible columns only. It returns capped row-match metadata to the webview, so the panel does not need to transfer every cell to search. Search text is bounded to 4 KiB per cell, and the status indicates capped or partial scans.
 
 ## Array display formats
 
@@ -105,7 +107,7 @@ True q tables and keyed tables always open as grids. Top-level non-table composi
 | `listDisplayStrategy` | `grid` | General, mixed, and object lists. |
 | `objectDisplayStrategy` | `grid` | Plain objects or nested composite values decoded as objects. |
 
-Use `grid` for the existing synthetic table form, or `qText` for deterministic q-like output in a plain text viewer. `qText` renders normal list/object output fully, including metadata lists such as `tables[]`, and only applies a large character safety cap for very large text; capped output is marked with `[truncated]`. Settings JSON also accepts `table` as an alias for `grid`, and `text` as an alias for `qText`.
+Use `grid` for the existing synthetic table form, or `qText` for deterministic q-like output in a plain text viewer. Optional qText syntax highlighting uses a non-evaluating lexer and constructs DOM text nodes only. Optional display formatting is display-only and falls back to the original text if tokenization or structural validation fails; copy and export always retain the original qText. Settings JSON also accepts `table` as an alias for `grid`, and `text` as an alias for `qText`.
 
 Example:
 
