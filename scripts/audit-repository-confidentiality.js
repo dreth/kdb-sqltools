@@ -10,6 +10,7 @@ const MAX_GIT_OUTPUT_BYTES = 512 * 1024 * 1024;
 const CONFIDENTIALITY_POLICY = Object.freeze([
   Object.freeze({ category: 'third-party-identity', mode: 'normalized-sequence', length: 10, sha256: '038d89e80ffcb8f03fc6bab35e7e53717ebf6f83c10b094dcc6d2786ad5d3803' }),
   Object.freeze({ category: 'third-party-identity', mode: 'normalized-sequence', length: 11, sha256: '8e4ecaacfeea4e202813b0935c83a85fbc7250625ade41f417cb28f82156888c' }),
+  Object.freeze({ category: 'internal-process', mode: 'normalized-sequence', length: 6, sha256: '8cfde6efdfc4ed5ab1f6acbbd1ba49bf31932f84d0a4c090eb41c7d151e8b180' }),
   Object.freeze({ category: 'private-organization', mode: 'normalized-sequence', length: 7, sha256: '23da586bf59c2906fb2139f3028b598a65bad8f79764c0cf011247ecf21b4857' }),
   Object.freeze({ category: 'private-repository', mode: 'normalized-sequence', length: 13, sha256: 'b9bc543f8a486ee799f6d7716b424f629dd8d4fc5d1b5f78cc50dcd9b7444d87' }),
   Object.freeze({ category: 'private-repository', mode: 'normalized-sequence', length: 16, sha256: '11c15fa53ad8a5cf7d54d3115a94b349e8e9184bc40dd4b085a2b8c5ab20dff3' }),

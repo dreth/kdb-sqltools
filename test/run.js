@@ -153,6 +153,9 @@ const { DRIVER_ALIASES, DRIVER_ID } = requireOut('constants');
 const { ContextValue } = require('@sqltools/types');
 const connectionSchema = require('../connection.schema.json');
 const packageJson = require('../package.json');
+const {
+  matchingPolicyCategories: matchingConfidentialityPolicyCategories,
+} = require('../scripts/audit-repository-confidentiality');
 
 const queries = queriesModule.default;
 const { normalizeNamespace, qString, qSymbolExpression } = queriesModule;
@@ -251,6 +254,12 @@ function panelFormatElapsedMs(milliseconds, display) {
 }
 
 (async () => {
+  assert.deepStrictEqual(
+    matchingConfidentialityPolicyCategories(Buffer.from([104, 101, 114, 109, 101, 115])),
+    ['internal-process'],
+    'repository confidentiality policy should reject internal process identifiers'
+  );
+
   const connectionA = { id: 'panel-a', name: 'Panel A', password: 'first-config-value' };
   const connectionB = { id: 'panel-b', name: 'Panel B' };
   const connectionC = { id: 'panel-c', name: 'Panel C' };

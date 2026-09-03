@@ -29,7 +29,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-
       - name: Azure login with GitHub OIDC
         uses: azure/login@v3
         with:
