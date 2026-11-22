@@ -10,6 +10,10 @@ meta trade
 tables `.analytics
 ```
 
+## Install
+
+Install [`DanielAlonso.kdb-sqltools` from the Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=DanielAlonso.kdb-sqltools), or run `ext install DanielAlonso.kdb-sqltools` from VS Code Quick Open.
+
 ## Requirements
 
 - VS Code with the `mtxr.sqltools` extension installed ([SQLTools website](https://vscode-sqltools.mteixeira.dev/) / [GitHub](https://github.com/mtxr/vscode-sqltools)).
@@ -287,7 +291,7 @@ Start the compiler in watch mode while launching the extension host from VS Code
 npm run watch
 ```
 
-This repository is not published to the VS Code Marketplace by the build scripts.
+Pushing a `vX.Y.Z` tag runs `.github/workflows/publish.yml`, which publishes the extension to the VS Code Marketplace.
 
 ### E2E Test Pipeline
 
